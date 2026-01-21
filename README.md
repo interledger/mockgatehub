@@ -5,7 +5,7 @@ A lightweight Golang implementation of the Gatehub API designed for local develo
 Official Gatehub documentation can be found [here](https://docs.gatehub.net/api-documentation/c3OPAp5dM191CDAdwyYS).
 
 ## Overview
-
+.
 MockGatehub provides a drop-in replacement for Gatehub's sandbox environment, enabling developers to:
 - Develop and test wallet integrations without real Gatehub credentials
 - Run locally without external API dependencies
