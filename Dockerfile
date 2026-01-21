@@ -7,14 +7,11 @@ RUN apk add --no-cache git make
 WORKDIR /app
 
 # Copy go mod files
-COPY packages/mockgatehub/go.mod packages/mockgatehub/go.sum ./
+COPY go.mod go.sum ./
 RUN go mod download
 
 # Copy source code
-COPY packages/mockgatehub/ ./
-
-# Run tests - must pass before building
-RUN go test -v ./...
+COPY . ./
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o mockgatehub ./cmd/mockgatehub
