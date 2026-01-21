@@ -1,12 +1,14 @@
 # MockGatehub
 
-A lightweight Golang implementation of the Gatehub API designed for local development and testing of the Interledger TestNet wallet application.
+A lightweight Golang implementation of the Gatehub API designed for local development and testing of wallet applications that integrate with Gatehub.
+
+Official Gatehub documentation can be found [here](https://docs.gatehub.net/api-documentation/c3OPAp5dM191CDAdwyYS).
 
 ## Overview
 
 MockGatehub provides a drop-in replacement for Gatehub's sandbox environment, enabling developers to:
 - Develop and test wallet integrations without real Gatehub credentials
-- Run the complete TestNet stack locally
+- Run locally without external API dependencies
 - Test multi-currency operations (11 supported currencies)
 - Verify KYC flows with a realistic iframe + server-side approval
 - Test webhook delivery mechanisms
@@ -25,7 +27,6 @@ MockGatehub provides a drop-in replacement for Gatehub's sandbox environment, en
 ### Running with Docker Compose
 
 ```bash
-cd testnet/docker/local
 docker compose up -d mockgatehub
 ```
 
@@ -38,7 +39,7 @@ The service will be available at `http://localhost:8080`
 | `MOCKGATEHUB_PORT` | `8080` | HTTP server port |
 | `MOCKGATEHUB_REDIS_URL` | - | Redis connection URL (optional) |
 | `MOCKGATEHUB_REDIS_DB` | `0` | Redis database number |
-| `WEBHOOK_URL` | - | Wallet backend webhook endpoint |
+| `WEBHOOK_URL` | - | Application webhook endpoint URL |
 | `WEBHOOK_SECRET` | - | Secret for signing webhooks |
 
 ### Pre-seeded Test Users
@@ -153,7 +154,6 @@ Sent when an external deposit completes
 ### Building Locally
 
 ```bash
-cd packages/mockgatehub
 go mod download
 go build -o mockgatehub ./cmd/mockgatehub
 ./mockgatehub
@@ -243,9 +243,9 @@ curl http://localhost:8080/health
 ```
 
 ### View webhook delivery logs
-Check wallet-backend logs for incoming webhooks:
+Check application logs for incoming webhooks:
 ```bash
-docker-compose logs wallet-backend | grep webhook
+docker compose logs <your-app-service> | grep webhook
 ```
 
 ## Contributing
@@ -254,4 +254,4 @@ See [PROJECT_PLAN.md](PROJECT_PLAN.md) for implementation roadmap and [AGENTS.md
 
 ## License
 
-Part of the Interledger TestNet project. See LICENSE in the repository root.
+Maintained by the Interledger Foundation. See LICENSE in the repository root.

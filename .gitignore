@@ -1,5 +1,5 @@
 # Binaries
-mockgatehub
+/mockgatehub
 *.exe
 *.dll
 *.so
@@ -28,3 +28,9 @@ go.work
 # OS
 .DS_Store
 Thumbs.db
+
+# CI/CD artifacts
+node_modules/
+package.json
+package-lock.json
+.npm/
