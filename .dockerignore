@@ -1,0 +1,17 @@
+.git
+.gitignore
+.github
+.DS_Store
+node_modules
+*.md
+test/
+testenv/
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.env
+.env.local
+coverage.out
+*.test
