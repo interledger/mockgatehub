@@ -1,0 +1,129 @@
+package main
+
+import (
+	"context"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
+	"mockgatehub/internal/config"
+	"mockgatehub/internal/handler"
+	"mockgatehub/internal/logger"
+	"mockgatehub/internal/storage"
+	"mockgatehub/internal/webhook"
+
+	"github.com/go-chi/chi/v5"
+	"github.com/go-chi/chi/v5/middleware"
+)
+
+func main() {
+	logger.Info.Println("Starting MockGatehub...")
+
+	cfg := config.Load()
+	logger.Info.Printf("Configuration: Port=%s, UseRedis=%v", cfg.Port, cfg.UseRedis)
+
+	var store storage.Storage
+	if cfg.UseRedis {
+		logger.Info.Printf("Using Redis storage: %s (DB: %d)", cfg.RedisURL, cfg.RedisDB)
+		redisStore, err := storage.NewRedisStorage(cfg.RedisURL, cfg.RedisDB)
+		if err != nil {
+			logger.Error.Fatalf("Failed to connect to Redis: %v", err)
+		}
+		defer redisStore.Close()
+		store = redisStore
+	} else {
+		logger.Info.Println("Using in-memory storage")
+		store = storage.NewMemoryStorage()
+	}
+
+	if err := storage.SeedTestUsers(store); err != nil {
+		logger.Error.Fatalf("Failed to seed test users: %v", err)
+	}
+
+	webhookManager := webhook.NewManager(cfg.WebhookURL, cfg.WebhookSecret)
+	h := handler.NewHandler(store, webhookManager)
+	r := chi.NewRouter()
+
+	// Built-in middleware
+	r.Use(middleware.RequestID)
+	r.Use(middleware.RealIP)
+	r.Use(middleware.Recoverer)
+	r.Use(middleware.Timeout(60 * time.Second))
+
+	// Custom request logger with detailed output
+	r.Use(func(next http.Handler) http.Handler {
+		return h.RequestLogger(next)
+	})
+
+	setupRoutes(r, h)
+
+	srv := &http.Server{
+		Addr:         ":" + cfg.Port,
+		Handler:      r,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	go func() {
+		logger.Info.Printf("MockGatehub listening on port %s", cfg.Port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Error.Fatalf("Server failed to start: %v", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	logger.Info.Println("Shutting down server...")
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		logger.Error.Fatalf("Server forced to shutdown: %v", err)
+	}
+
+	logger.Info.Println("Server stopped")
+}
+
+func setupRoutes(r chi.Router, h *handler.Handler) {
+	r.Get("/", h.RootHandler)
+	r.Post("/transaction/complete", h.TransactionCompleteHandler)
+	r.Get("/health", h.HealthCheck)
+	r.Get("/api/user-currencies", h.GetUserCurrencies)
+	r.Route("/auth/v1", func(r chi.Router) {
+		r.Post("/tokens", h.CreateToken)
+		r.Post("/users/managed", h.CreateManagedUser)
+		r.Get("/users/managed", h.GetManagedUser)
+		r.Put("/users/managed/email", h.UpdateManagedUserEmail)
+	})
+	r.Route("/id/v1", func(r chi.Router) {
+		r.Get("/users/{userID}", h.GetUser)
+		r.Post("/users/{userID}/hubs/{gatewayID}", h.StartKYC)
+		r.Put("/hubs/{gatewayID}/users/{userID}", h.UpdateKYCState)
+		r.Post("/hubs/{gatewayID}/users/{userID}/overrideRiskLevel", h.OverrideRiskLevel)
+	})
+	r.Get("/iframe/onboarding", h.KYCIframe)
+	r.Post("/iframe/submit", h.KYCIframeSubmit)
+	r.Route("/core/v1", func(r chi.Router) {
+		r.Get("/users/{userID}", h.GetUserWallets)
+		r.Post("/users/{userID}/wallets", h.CreateWallet)
+		r.Get("/users/{userID}/wallets/{walletID}", h.GetWallet)
+		r.Get("/wallets/{walletID}/balances", h.GetWalletBalance)
+		r.Post("/transactions", h.CreateTransaction)
+		r.Get("/transactions/{txID}", h.GetTransaction)
+	})
+	r.Route("/rates/v1", func(r chi.Router) {
+		r.Get("/rates/current", h.GetCurrentRates)
+		r.Get("/liquidity_provider/vaults", h.GetVaults)
+	})
+	r.Route("/cards/v1", func(r chi.Router) {
+		r.Post("/customers/managed", h.CreateManagedCustomer)
+		r.Post("/cards", h.CreateCard)
+		r.Get("/cards/{cardID}", h.GetCard)
+		r.Delete("/cards/{cardID}", h.DeleteCard)
+	})
+}
