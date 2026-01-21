@@ -4,11 +4,11 @@ This document provides comprehensive guidance for AI coding agents working on th
 
 ## Project Context
 
-MockGatehub is a lightweight Golang mock implementation of the Gatehub API, designed specifically to support local development of the Interledger TestNet wallet application. It exists within the larger TestNet monorepo at `packages/mockgatehub/`.
+MockGatehub is a lightweight Golang mock implementation of the Gatehub API, designed to support local development and testing of wallet applications that integrate with Gatehub.
 
 ### Why MockGatehub Exists
 
-The TestNet wallet application integrates with Gatehub for:
+Wallet applications that integrate with Gatehub typically use it for:
 - User identity and KYC verification
 - Fiat currency custody (vaults)
 - Multi-currency deposits and withdrawals
@@ -22,10 +22,10 @@ MockGatehub removes the dependency on real Gatehub credentials and services, ena
 
 ### Critical Constraints
 
-1. **Zero Wallet Code Changes**: MockGatehub must be a drop-in replacement. The wallet backend expects exact Gatehub API compliance.
+1. **API Compliance**: MockGatehub must be a drop-in replacement. Applications expect exact Gatehub API compliance.
 2. **Sandbox Parity Only**: Focus on happy paths and sandbox environment behavior. Production Gatehub features are out of scope.
-3. **Multi-Currency Required**: Support all 11 currencies used in TestNet (XRP, USD, EUR, GBP, ZAR, MXN, SGD, CAD, EGG, PEB, PKR).
-4. **Immutable Vault UUIDs**: Vault identifiers are hardcoded and must never change (wallet database stores these).
+3. **Multi-Currency Required**: Support all 11 currencies (XRP, USD, EUR, GBP, ZAR, MXN, SGD, CAD, EGG, PEB, PKR).
+4. **Immutable Vault UUIDs**: Vault identifiers are hardcoded and must never change (application databases may store these).
 
 ## Architecture Overview
 
@@ -40,7 +40,7 @@ MockGatehub removes the dependency on real Gatehub credentials and services, ena
 ### Directory Structure
 
 ```
-packages/mockgatehub/
+mockgatehub/
 ├── cmd/mockgatehub/           # Application entry point
 │   └── main.go                # HTTP server setup, routing
 ├── internal/                  # Private application code
@@ -411,24 +411,22 @@ go func() {
 MOCKGATEHUB_PORT=8080                          # HTTP port
 MOCKGATEHUB_REDIS_URL=redis://localhost:6379  # Redis connection
 MOCKGATEHUB_REDIS_DB=1                         # Redis database number
-WEBHOOK_URL=http://wallet-backend:3003/gatehub-webhooks
+WEBHOOK_URL=http://your-app:3003/gatehub-webhooks
 WEBHOOK_SECRET=your-secret-here
 ```
 
 **Docker Compose Integration**:
-Already configured in `docker/local/docker-compose.yml`:
+Configure in your `docker-compose.yml`:
 - Service name: `mockgatehub`
-- Container name: `mockgatehub-local`
 - Port mapping: `8080:8080`
-- Network: `testnet` bridge
-- Depends on: `redis-local`
+- Environment variables as shown above
+- Optionally depends on Redis for persistent storage
 
 ## Development Workflow
 
 ### 1. Making Changes
 
 ```bash
-cd packages/mockgatehub
 go mod tidy                    # Update dependencies
 go test ./...                  # Run unit tests
 cd testenv && go run testscript.go  # Run integration tests
@@ -451,30 +449,28 @@ MOCKGATEHUB_REDIS_DB=1 \
 
 ```bash
 # Build fresh image
-cd /path/to/testnet
-docker build -f packages/mockgatehub/Dockerfile -t local-mockgatehub .
+docker build -t local-mockgatehub .
 
 # Test in isolated environment
-cd packages/mockgatehub/testenv
+cd testenv
 go run testscript.go
 
-# Deploy to main development stack
-cd ../../../docker/local
-docker-compose up -d mockgatehub
-docker-compose logs -f mockgatehub
+# Deploy with Docker Compose
+cd ..
+docker compose up -d mockgatehub
+docker compose logs -f mockgatehub
 ```
 
 ### 4. Full Integration Testing
 
 ```bash
 # Option 1: Isolated test environment (recommended for development)
-cd packages/mockgatehub/testenv
+cd testenv
 go run testscript.go
 
-# Option 2: With full wallet stack
-cd docker/local
-docker-compose up -d  # Starts wallet, rafiki, mockgatehub, etc.
-# Test via wallet UI or API
+# Option 2: With your application stack
+docker compose up -d  # Starts your app services with mockgatehub
+# Test via your application UI or API
 ```
 
 ## Troubleshooting
@@ -484,7 +480,7 @@ docker-compose up -d  # Starts wallet, rafiki, mockgatehub, etc.
 - Check directory structure matches expected layout
 
 ### "undefined: Storage"
-- Import paths must use full module name: `github.com/interledger/testnet/packages/mockgatehub/internal/storage`
+- Import paths must use the full module name from `go.mod`
 - Run `go mod tidy` to resolve dependencies
 
 ### Tests failing with Redis
@@ -499,8 +495,8 @@ docker-compose up -d  # Starts wallet, rafiki, mockgatehub, etc.
 
 ### Webhooks not arriving
 - Check `WEBHOOK_URL` environment variable
-- Verify wallet-backend is running and accessible
-- Check logs: `docker-compose logs mockgatehub webhook-manager`
+- Verify your application backend is running and accessible
+- Check logs: `docker compose logs mockgatehub`
 
 ## AI Agent Best Practices
 
@@ -532,8 +528,8 @@ docker-compose up -d  # Starts wallet, rafiki, mockgatehub, etc.
 - [ ] Coverage acceptable: `go test -cover ./...` (aim for 80%+)
 - [ ] Integration test passes: `cd testenv && go run testscript.go`
 - [ ] Docker build succeeds
-- [ ] Full stack starts: `docker-compose up` (in `docker/local`)
-- [ ] Wallet application works with MockGatehub
+- [ ] Full stack starts: `docker compose up`
+- [ ] Application works with MockGatehub
 - [ ] Test environment isolated: No port conflicts with main environment
 
 ### Critical: Maintain testenv/
@@ -562,8 +558,8 @@ go run testscript.go  # Starts containers, runs all tests, cleans up
 **If tests fail after your changes**:
 1. Check what changed in API responses
 2. Update test assertions in testscript.go
-3. Ensure backward compatibility (wallet code depends on exact response format)
-4. If breaking change is necessary, document it and coordinate with wallet team
+3. Ensure backward compatibility (applications depend on exact Gatehub API response format)
+4. If breaking change is necessary, document it clearly in the changelog
 
 ## Key Files Reference
 
@@ -587,7 +583,7 @@ go run testscript.go  # Starts containers, runs all tests, cleans up
 
 Your changes should maintain or improve:
 - **Test Coverage**: ≥80%
-- **API Compliance**: Wallet code runs without modification
+- **API Compliance**: Applications run without modification
 - **Docker Build Time**: Keep under 2 minutes
 - **Response Time**: All endpoints < 100ms (local)
 - **Memory Usage**: < 100MB for in-memory mode
@@ -597,13 +593,13 @@ Your changes should maintain or improve:
 When encountering ambiguity:
 1. Check existing implementation in similar endpoints
 2. Refer to Gatehub sandbox API documentation (if accessible)
-3. Test against wallet application behavior
-4. Default to simplest solution that maintains wallet compatibility
+3. Test against your application's expected behavior
+4. Default to simplest solution that maintains API compatibility
 
-Remember: MockGatehub is a development tool. Prioritize simplicity, testability, and wallet compatibility over feature completeness.
+Remember: MockGatehub is a development tool. Prioritize simplicity, testability, and API compatibility over feature completeness.
 
 ---
 
-**Last Updated**: January 20, 2026  
+**Last Updated**: January 21, 2026  
 **Maintainers**: Interledger Foundation  
-**Repository**: https://github.com/interledger/testnet
+**Repository**: https://github.com/interledger/mockgatehub
