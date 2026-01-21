@@ -25,11 +25,19 @@ FROM alpine:latest
 
 RUN apk --no-cache add ca-certificates curl tzdata
 
-WORKDIR /root/
+# Create non-root user
+RUN addgroup -g 1000 mockgatehub && \
+    adduser -D -u 1000 -G mockgatehub mockgatehub
 
-# Copy binary and web assets
-COPY --from=builder /app/mockgatehub .
-COPY --from=builder /app/web ./web
+# Set working directory
+WORKDIR /app
+
+# Copy binary and web assets from builder
+COPY --from=builder --chown=mockgatehub:mockgatehub /app/mockgatehub .
+COPY --from=builder --chown=mockgatehub:mockgatehub /app/web ./web
+
+# Switch to non-root user
+USER mockgatehub
 
 EXPOSE 8080
 
