@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,6 +18,8 @@ import (
 const (
 	mockGatehubURL = "http://localhost:28080"
 	maxWaitSeconds = 30
+	testAppID      = "local-test-app-id"
+	testAppSecret  = "local-test-app-secret"
 )
 
 // ANSI color codes
@@ -238,14 +243,9 @@ func runTests() {
 	// Test 6: Start KYC
 	runTest("Start KYC (Auto-Approval)", func() (bool, string) {
 		var result map[string]interface{}
-		if err := postJSONWithHeaders(
+		if err := postJSON(
 			fmt.Sprintf("/id/v1/users/%s/hubs/gw", userID),
 			map[string]string{},
-			map[string]string{
-				"x-gatehub-app-id":    "test-app",
-				"x-gatehub-timestamp": strconv.FormatInt(time.Now().Unix(), 10),
-				"x-gatehub-signature": "dummy",
-			},
 			&result,
 		); err != nil {
 			return false, err.Error()
@@ -260,13 +260,8 @@ func runTests() {
 	// Test 7: Get user KYC state (should be action_required after StartKYC)
 	runTest("Get User KYC State", func() (bool, string) {
 		var result map[string]interface{}
-		if err := getJSONWithHeaders(
+		if err := getJSON(
 			fmt.Sprintf("/id/v1/users/%s", userID),
-			map[string]string{
-				"x-gatehub-app-id":    "test-app",
-				"x-gatehub-timestamp": strconv.FormatInt(time.Now().Unix(), 10),
-				"x-gatehub-signature": "dummy",
-			},
 			&result,
 		); err != nil {
 			return false, err.Error()
@@ -283,14 +278,9 @@ func runTests() {
 			"currency": "XRP",
 		}
 		var result map[string]interface{}
-		if err := postJSONWithHeaders(
+		if err := postJSON(
 			fmt.Sprintf("/core/v1/users/%s/wallets", userID),
 			body,
-			map[string]string{
-				"x-gatehub-app-id":    "test-app",
-				"x-gatehub-timestamp": strconv.FormatInt(time.Now().Unix(), 10),
-				"x-gatehub-signature": "dummy",
-			},
 			&result,
 		); err != nil {
 			return false, err.Error()
@@ -306,13 +296,8 @@ func runTests() {
 	// Test 9: Get wallet balance
 	runTest("Get Wallet Balance", func() (bool, string) {
 		var balances []interface{}
-		if err := getJSONWithHeaders(
+		if err := getJSON(
 			fmt.Sprintf("/core/v1/wallets/%s/balances", walletAddress),
-			map[string]string{
-				"x-gatehub-app-id":    "test-app",
-				"x-gatehub-timestamp": strconv.FormatInt(time.Now().Unix(), 10),
-				"x-gatehub-signature": "dummy",
-			},
 			&balances,
 		); err != nil {
 			return false, err.Error()
@@ -399,11 +384,7 @@ func runTests() {
 	err := postJSONWithHeaders(
 		"/core/v1/transactions",
 		body,
-		map[string]string{
-			"x-gatehub-app-id":    "test-app",
-			"x-gatehub-timestamp": strconv.FormatInt(time.Now().Unix(), 10),
-			"x-gatehub-signature": "dummy",
-		},
+		nil,
 		&result,
 	)
 	if err != nil {
@@ -440,6 +421,25 @@ func runTest(name string, testFunc func() (bool, string)) {
 		fmt.Println()
 		failed++
 	}
+	fmt.Println()
+}
+
+// generateSignature generates HMAC-SHA256 signature for requests
+func generateSignature(timestamp, method, path, body, secret string) string {
+	message := timestamp + method + path + body
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(message))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// addAuthHeaders adds HMAC signature headers to a request
+func addAuthHeaders(req *http.Request, body []byte) {
+	timestamp := strconv.FormatInt(time.Now().Unix(), 10)
+	signature := generateSignature(timestamp, req.Method, req.URL.Path, string(body), testAppSecret)
+
+	req.Header.Set("x-gatehub-app-id", testAppID)
+	req.Header.Set("x-gatehub-timestamp", timestamp)
+	req.Header.Set("x-gatehub-signature", signature)
 }
 
 func getJSON(path string, result interface{}) error {
@@ -450,6 +450,11 @@ func getJSONWithHeaders(path string, headers map[string]string, result interface
 	req, err := http.NewRequest("GET", mockGatehubURL+path, nil)
 	if err != nil {
 		return err
+	}
+
+	// Add authentication headers (unless custom headers already set them)
+	if _, hasAuth := headers["x-gatehub-app-id"]; !hasAuth {
+		addAuthHeaders(req, nil)
 	}
 
 	for k, v := range headers {
@@ -490,6 +495,12 @@ func postJSONWithHeaders(path string, body interface{}, headers map[string]strin
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+
+	// Add authentication headers (unless custom headers already set them)
+	if _, hasAuth := headers["x-gatehub-app-id"]; !hasAuth {
+		addAuthHeaders(req, jsonBody)
+	}
+
 	for k, v := range headers {
 		req.Header.Set(k, v)
 	}

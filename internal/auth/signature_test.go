@@ -61,3 +61,44 @@ func TestGenerateSignature_Different(t *testing.T) {
 
 	assert.NotEqual(t, sig1, sig2, "Different inputs should produce different signatures")
 }
+
+func TestGenerateGatehubSignature(t *testing.T) {
+	tests := []struct {
+		name      string
+		timestamp string
+		method    string
+		url       string
+		body      string
+		secret    string
+	}{
+		{
+			name:      "gatehub format with query params",
+			timestamp: "1704067200000",
+			method:    "POST",
+			url:       "/auth/v1/tokens?clientId=test-client",
+			body:      `{"scope":["auth"]}`,
+			secret:    "local-test-app-secret",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := GenerateGatehubSignature(tt.timestamp, tt.method, tt.url, tt.body, tt.secret)
+			assert.NotEmpty(t, got)
+			assert.Len(t, got, 64) // SHA256 produces 64 hex characters
+		})
+	}
+}
+
+func TestGenerateGatehubSignature_Deterministic(t *testing.T) {
+	timestamp := "1704067200000"
+	method := "POST"
+	url := "/auth/v1/tokens"
+	body := `{"scope":["auth"]}`
+	secret := "local-test-app-secret"
+
+	sig1 := GenerateGatehubSignature(timestamp, method, url, body, secret)
+	sig2 := GenerateGatehubSignature(timestamp, method, url, body, secret)
+
+	assert.Equal(t, sig1, sig2, "Same Gatehub format inputs should produce same signature")
+}

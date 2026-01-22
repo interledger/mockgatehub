@@ -7,22 +7,26 @@ import (
 
 // Config holds application configuration
 type Config struct {
-	Port          string
-	RedisURL      string
-	RedisDB       int
-	WebhookURL    string
-	WebhookSecret string
-	UseRedis      bool
+	Port                  string
+	RedisURL              string
+	RedisDB               int
+	WebhookURL            string
+	WebhookSecret         string
+	UseRedis              bool
+	EnforceAuthentication bool
+	ValidCredentials      map[string]string // appID -> secret
 }
 
 // Load reads configuration from environment variables
 func Load() *Config {
 	cfg := &Config{
-		Port:          getEnv("MOCKGATEHUB_PORT", "8080"),
-		RedisURL:      getEnv("MOCKGATEHUB_REDIS_URL", ""),
-		RedisDB:       getEnvInt("MOCKGATEHUB_REDIS_DB", 0),
-		WebhookURL:    getEnv("WEBHOOK_URL", ""),
-		WebhookSecret: getEnv("WEBHOOK_SECRET", "mock-secret"),
+		Port:                  getEnv("MOCKGATEHUB_PORT", "8080"),
+		RedisURL:              getEnv("MOCKGATEHUB_REDIS_URL", ""),
+		RedisDB:               getEnvInt("MOCKGATEHUB_REDIS_DB", 0),
+		WebhookURL:            getEnv("WEBHOOK_URL", ""),
+		WebhookSecret:         getEnv("WEBHOOK_SECRET", "mock-secret"),
+		EnforceAuthentication: getEnvBool("MOCKGATEHUB_ENFORCE_AUTHENTICATION", true),
+		ValidCredentials:      parseCredentials(getEnv("MOCKGATEHUB_VALID_CREDENTIALS", "local-test-app-id:local-test-app-secret")),
 	}
 
 	// Use Redis if URL is provided
@@ -47,4 +51,46 @@ func getEnvInt(key string, defaultVal int) int {
 		}
 	}
 	return defaultVal
+}
+
+// getEnvBool gets boolean environment variable with fallback
+func getEnvBool(key string, defaultVal bool) bool {
+	if val := os.Getenv(key); val != "" {
+		return val == "true" || val == "1" || val == "yes"
+	}
+	return defaultVal
+}
+
+// parseCredentials parses credentials from format: "appId1:secret1,appId2:secret2"
+func parseCredentials(credStr string) map[string]string {
+	creds := make(map[string]string)
+	if credStr == "" {
+		return creds
+	}
+
+	for _, pair := range splitString(credStr, ',') {
+		parts := splitString(pair, ':')
+		if len(parts) == 2 {
+			creds[parts[0]] = parts[1]
+		}
+	}
+	return creds
+}
+
+// splitString splits a string by delimiter (helper for parsing)
+func splitString(s string, delim byte) []string {
+	var result []string
+	var current []byte
+	for i := 0; i < len(s); i++ {
+		if s[i] == delim {
+			result = append(result, string(current))
+			current = []byte{}
+		} else {
+			current = append(current, s[i])
+		}
+	}
+	if len(current) > 0 {
+		result = append(result, string(current))
+	}
+	return result
 }

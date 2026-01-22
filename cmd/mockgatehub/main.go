@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"mockgatehub/internal/auth"
 	"mockgatehub/internal/config"
 	"mockgatehub/internal/handler"
 	"mockgatehub/internal/logger"
@@ -57,7 +58,28 @@ func main() {
 		return h.RequestLogger(next)
 	})
 
+	// Authentication middleware (applied to protected routes)
+	if cfg.EnforceAuthentication {
+		logger.Info.Printf("Authentication enforcement ENABLED. Valid app IDs: %v", cfg.ValidCredentials)
+		authMiddleware := auth.Middleware(cfg.ValidCredentials)
+		r.Use(authMiddleware)
+	} else {
+		logger.Info.Println("WARNING: Authentication enforcement DISABLED")
+	}
+
 	setupRoutes(r, h)
+
+	// Log unmatched routes to surface any misrouted traffic
+	r.NotFound(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logger.Info.Printf("[NOTFOUND] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+		http.NotFound(w, r)
+	}))
+
+	// Log method-not-allowed for visibility
+	r.MethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logger.Info.Printf("[METHODNOTALLOWED] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+	}))
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
