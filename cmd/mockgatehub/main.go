@@ -17,80 +17,33 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
-	"go.uber.org/zap"
 )
 
 func main() {
+	logger.Info.Println("Starting MockGatehub...")
+
 	cfg := config.Load()
-
-	// Initialize logger with configured log level
-	if err := logger.Initialize(cfg.LogLevel); err != nil {
-		logger.Fatal("failed to initialize logger", zap.Error(err))
-	}
-
-	logger.Info("starting MockGatehub")
-
-	// Log all startup configuration at INFO level
-	logger.Info("configuration loaded",
-		zap.String("log_level", cfg.LogLevel),
-		zap.String("port", cfg.Port),
-		zap.String("redis_url", cfg.RedisURL),
-		zap.Int("redis_db", cfg.RedisDB),
-		zap.Bool("use_redis", cfg.UseRedis),
-		zap.Bool("enforce_authentication", cfg.EnforceAuthentication),
-		zap.String("webhook_url", cfg.WebhookURL),
-		zap.String("webhook_secret", cfg.WebhookSecret),
-		zap.Strings("valid_app_ids", getAppIDList(cfg.ValidCredentials)),
-	)
+	logger.Info.Printf("Configuration: Port=%s, UseRedis=%v", cfg.Port, cfg.UseRedis)
 
 	var store storage.Storage
 	if cfg.UseRedis {
-		logger.Info("setting up redis storage", zap.String("url", cfg.RedisURL), zap.Int("db", cfg.RedisDB))
+		logger.Info.Printf("Using Redis storage: %s (DB: %d)", cfg.RedisURL, cfg.RedisDB)
 		redisStore, err := storage.NewRedisStorage(cfg.RedisURL, cfg.RedisDB)
 		if err != nil {
-			logger.Fatal("failed to connect to redis", zap.Error(err))
+			logger.Error.Fatalf("Failed to connect to Redis: %v", err)
 		}
 		defer redisStore.Close()
 		store = redisStore
 	} else {
-		logger.Info("setting up in-memory storage")
+		logger.Info.Println("Using in-memory storage")
 		store = storage.NewMemoryStorage()
 	}
 
 	if err := storage.SeedTestUsers(store); err != nil {
-		logger.Fatal("failed to seed test users", zap.Error(err))
+		logger.Error.Fatalf("Failed to seed test users: %v", err)
 	}
 
-	// Initialize webhook queue and worker
-	var webhookQueue *webhook.Queue
-	var webhookWorker *webhook.Worker
-
-	if cfg.UseRedis {
-		// Use Redis-backed queue for webhook delivery
-		redisStore, ok := store.(*storage.RedisStorage)
-		if !ok {
-			logger.Fatal("redis storage type assertion failed")
-		}
-		webhookQueue = webhook.NewQueue(redisStore.GetClient())
-		logger.Info("using redis-backed webhook queue")
-	} else {
-		// For in-memory mode, we still need Redis for webhook queue
-		// Create a dedicated Redis connection just for webhooks
-		logger.Warn("in-memory storage mode requires redis for webhook queue")
-		logger.Info("connecting to redis for webhook queue", zap.String("url", cfg.RedisURL), zap.Int("db", cfg.RedisDB))
-		redisClient, err := storage.NewRedisClient(cfg.RedisURL, cfg.RedisDB)
-		if err != nil {
-			logger.Fatal("failed to connect to redis for webhook queue", zap.Error(err))
-		}
-		webhookQueue = webhook.NewQueue(redisClient)
-	}
-
-	webhookManager := webhook.NewManager(cfg.WebhookURL, cfg.WebhookSecret, webhookQueue)
-	webhookWorker = webhook.NewWorker(webhookQueue, webhookManager)
-
-	// Start webhook worker in background
-	webhookWorker.StartAsync()
-	logger.Info("webhook worker started")
+	webhookManager := webhook.NewManager(cfg.WebhookURL, cfg.WebhookSecret)
 	h := handler.NewHandler(store, webhookManager)
 	r := chi.NewRouter()
 
@@ -107,24 +60,24 @@ func main() {
 
 	// Authentication middleware (applied to protected routes)
 	if cfg.EnforceAuthentication {
-		logger.Info("authentication enforcement enabled", zap.Strings("valid_app_ids", getAppIDList(cfg.ValidCredentials)))
+		logger.Info.Printf("Authentication enforcement ENABLED. Valid app IDs: %v", cfg.ValidCredentials)
 		authMiddleware := auth.Middleware(cfg.ValidCredentials)
 		r.Use(authMiddleware)
 	} else {
-		logger.Warn("authentication enforcement disabled")
+		logger.Info.Println("WARNING: Authentication enforcement DISABLED")
 	}
 
 	setupRoutes(r, h)
 
 	// Log unmatched routes to surface any misrouted traffic
 	r.NotFound(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logger.Info("route not found", zap.String("method", r.Method), zap.String("path", r.URL.Path), zap.String("remote_addr", r.RemoteAddr))
+		logger.Info.Printf("[NOTFOUND] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 		http.NotFound(w, r)
 	}))
 
 	// Log method-not-allowed for visibility
 	r.MethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logger.Info("method not allowed", zap.String("method", r.Method), zap.String("path", r.URL.Path), zap.String("remote_addr", r.RemoteAddr))
+		logger.Info.Printf("[METHODNOTALLOWED] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 	}))
 
@@ -137,9 +90,9 @@ func main() {
 	}
 
 	go func() {
-		logger.Info("mockgatehub listening", zap.String("port", cfg.Port))
+		logger.Info.Printf("MockGatehub listening on port %s", cfg.Port)
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Fatal("server failed to start", zap.Error(err))
+			logger.Error.Fatalf("Server failed to start: %v", err)
 		}
 	}()
 
@@ -147,22 +100,15 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	logger.Info("shutting down server")
-
-	// Stop webhook worker
-	if webhookWorker != nil {
-		logger.Info("stopping webhook worker")
-		webhookWorker.Stop()
-	}
-
+	logger.Info.Println("Shutting down server...")
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {
-		logger.Fatal("server forced to shutdown", zap.Error(err))
+		logger.Error.Fatalf("Server forced to shutdown: %v", err)
 	}
 
-	logger.Info("server stopped")
+	logger.Info.Println("Server stopped")
 }
 
 func setupRoutes(r chi.Router, h *handler.Handler) {
@@ -201,15 +147,5 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		r.Post("/cards", h.CreateCard)
 		r.Get("/cards/{cardID}", h.GetCard)
 		r.Delete("/cards/{cardID}", h.DeleteCard)
-		r.Get("/transaction/pending-confirmations", h.GetPendingConfirmations)
 	})
-}
-
-// getAppIDList returns a list of registered app IDs for logging
-func getAppIDList(validCredentials map[string]string) []string {
-	appIDs := make([]string, 0, len(validCredentials))
-	for appID := range validCredentials {
-		appIDs = append(appIDs, appID)
-	}
-	return appIDs
 }

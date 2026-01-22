@@ -8,7 +8,6 @@ import (
 // Config holds application configuration
 type Config struct {
 	Port                  string
-	LogLevel              string
 	RedisURL              string
 	RedisDB               int
 	WebhookURL            string
@@ -22,7 +21,6 @@ type Config struct {
 func Load() *Config {
 	cfg := &Config{
 		Port:                  getEnv("MOCKGATEHUB_PORT", "8080"),
-		LogLevel:              getEnv("LOG_LEVEL", "info"),
 		RedisURL:              getEnv("MOCKGATEHUB_REDIS_URL", ""),
 		RedisDB:               getEnvInt("MOCKGATEHUB_REDIS_DB", 0),
 		WebhookURL:            getEnv("WEBHOOK_URL", ""),
