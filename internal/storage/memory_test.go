@@ -124,9 +124,12 @@ func TestMemoryStorage_CreateTransaction(t *testing.T) {
 	store := NewMemoryStorage()
 
 	tx := &models.Transaction{
-		UserID:   "user-123",
-		Amount:   100.50,
-		Currency: "USD",
+		UserID:      "user-123",
+		Amount:      "100.50",
+		TotalAmount: "100.50",
+		Fee:         "0.00",
+		Currency:    "USD",
+		Status:      1,
 	}
 
 	err := store.CreateTransaction(tx)
@@ -139,9 +142,12 @@ func TestMemoryStorage_GetTransaction(t *testing.T) {
 	store := NewMemoryStorage()
 
 	tx := &models.Transaction{
-		UserID:   "user-123",
-		Amount:   100.50,
-		Currency: "USD",
+		UserID:      "user-123",
+		Amount:      "100.50",
+		TotalAmount: "100.50",
+		Fee:         "0.00",
+		Currency:    "USD",
+		Status:      1,
 	}
 	err := store.CreateTransaction(tx)
 	require.NoError(t, err)
@@ -149,6 +155,7 @@ func TestMemoryStorage_GetTransaction(t *testing.T) {
 	retrieved, err := store.GetTransaction(tx.ID)
 	require.NoError(t, err)
 	assert.Equal(t, tx.Amount, retrieved.Amount)
+	assert.Equal(t, "100.50", retrieved.Amount)
 }
 
 func TestMemoryStorage_Balance(t *testing.T) {
@@ -218,3 +225,67 @@ func TestMemoryStorage_Concurrent(t *testing.T) {
 	// Verify all users were created
 	assert.Len(t, store.users, 10)
 }
+
+func TestMemoryStorage_TransactionWithAllFields(t *testing.T) {
+	store := NewMemoryStorage()
+
+	tx := &models.Transaction{
+		UserID:           "user-456",
+		UID:              "ext-ref-123",
+		Amount:           "250.75",
+		TotalAmount:      "252.50",
+		Fee:              "1.75",
+		Currency:         "EUR",
+		VaultUUID:        "a09a0a2c-1a3a-44c5-a1b9-603a6eea9341",
+		ReceivingAddress: "rTestAddr123",
+		Type:             1,
+		DepositType:      "external",
+		Status:           1,
+	}
+
+	err := store.CreateTransaction(tx)
+	require.NoError(t, err)
+	assert.NotEmpty(t, tx.ID)
+
+	retrieved, err := store.GetTransaction(tx.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "250.75", retrieved.Amount)
+	assert.Equal(t, "252.50", retrieved.TotalAmount)
+	assert.Equal(t, "1.75", retrieved.Fee)
+	assert.Equal(t, 1, retrieved.Status)
+	assert.Equal(t, "ext-ref-123", retrieved.UID)
+}
+
+func TestMemoryStorage_TransactionStatusTypes(t *testing.T) {
+	store := NewMemoryStorage()
+
+	testCases := []struct {
+		name   string
+		status int
+	}{
+		{"pending", 0},
+		{"completed", 1},
+		{"failed", 2},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tx := &models.Transaction{
+				UserID:      "user-789",
+				Amount:      "100.00",
+				TotalAmount: "100.00",
+				Fee:         "0.00",
+				Currency:    "USD",
+				Status:      tc.status,
+			}
+
+			err := store.CreateTransaction(tx)
+			require.NoError(t, err)
+
+			retrieved, err := store.GetTransaction(tx.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tc.status, retrieved.Status)
+		})
+	}
+}
+

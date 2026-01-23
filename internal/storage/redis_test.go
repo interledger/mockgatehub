@@ -77,10 +77,12 @@ func TestRedisStorage(t *testing.T) {
 		require.NoError(t, err)
 
 		tx := &models.Transaction{
-			UserID:   user.ID,
-			Amount:   100.50,
-			Currency: "USD",
-			Status:   "completed",
+			UserID:      user.ID,
+			Amount:      "100.50",
+			TotalAmount: "100.50",
+			Fee:         "0.00",
+			Currency:    "USD",
+			Status:      1, // 1 = completed
 		}
 
 		err = store.CreateTransaction(tx)
@@ -91,6 +93,8 @@ func TestRedisStorage(t *testing.T) {
 		retrieved, err := store.GetTransaction(tx.ID)
 		require.NoError(t, err)
 		assert.Equal(t, tx.Amount, retrieved.Amount)
+		assert.Equal(t, "100.50", retrieved.Amount)
+		assert.Equal(t, 1, retrieved.Status)
 	})
 
 	t.Run("Balance Operations", func(t *testing.T) {

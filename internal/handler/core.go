@@ -284,16 +284,23 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 		req.VaultUUID = consts.SandboxVaultIDs[req.Currency]
 	}
 
+	// Format amounts as strings to match GateHub API
+	amountStr := fmt.Sprintf("%.2f", req.Amount)
+	feeStr := "0.00"            // Mock: no fees in sandbox
+	totalAmountStr := amountStr // Total = amount + fee
+
 	tx := &models.Transaction{
 		UserID:           req.UserID,
 		UID:              req.UID,
-		Amount:           req.Amount,
+		Amount:           amountStr,
+		TotalAmount:      totalAmountStr,
+		Fee:              feeStr,
 		Currency:         req.Currency,
 		VaultUUID:        req.VaultUUID,
 		ReceivingAddress: req.ReceivingAddress,
 		Type:             req.Type,
 		DepositType:      req.DepositType,
-		Status:           "completed",
+		Status:           1, // 1 = completed
 	}
 
 	if err := h.store.CreateTransaction(tx); err != nil {
@@ -308,12 +315,12 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info.Printf("Created transaction: %s (%.2f %s)", tx.ID, tx.Amount, tx.Currency)
+	logger.Info.Printf("Created transaction: %s (%s %s)", tx.ID, tx.Amount, tx.Currency)
 
 	if req.DepositType == consts.DepositTypeExternal {
 		go h.webhookManager.SendAsync(consts.WebhookEventDepositCompleted, req.UserID, models.DepositWebhookData{
 			TransactionID: tx.ID,
-			Amount:        tx.Amount,
+			Amount:        tx.Amount, // Already a string
 			Currency:      tx.Currency,
 		})
 	}

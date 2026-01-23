@@ -88,7 +88,7 @@ type CurrenciesResponse struct {
 
 // DepositWebhookData represents the data payload for deposit webhooks.
 type DepositWebhookData struct {
-	TransactionID string  `json:"transaction_id"`
-	Amount        float64 `json:"amount"`
-	Currency      string  `json:"currency"`
+	TransactionID string `json:"transaction_id"`
+	Amount        string `json:"amount"`
+	Currency      string `json:"currency"`
 }

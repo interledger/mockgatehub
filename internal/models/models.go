@@ -46,15 +46,17 @@ type Wallet struct {
 
 // Transaction represents a deposit or transaction
 type Transaction struct {
-	ID               string    `json:"id"`
+	ID               string    `json:"uuid"` // GateHub uses "uuid" not "id"
 	UserID           string    `json:"user_id"`
-	UID              string    `json:"uid"` // External reference
-	Amount           float64   `json:"amount"`
+	UID              string    `json:"uid"`          // External reference
+	Amount           string    `json:"amount"`       // String to match GateHub API
+	TotalAmount      string    `json:"total_amount"` // Total including fees
+	Fee              string    `json:"fee"`          // Fee amount
 	Currency         string    `json:"currency"`
 	VaultUUID        string    `json:"vault_uuid"`
 	ReceivingAddress string    `json:"receiving_address"`
 	Type             int       `json:"type"`         // 1=deposit, 2=hosted
 	DepositType      string    `json:"deposit_type"` // external/hosted
-	Status           string    `json:"status"`
+	Status           int       `json:"status"`       // 0=pending, 1=completed, 2=failed
 	CreatedAt        time.Time `json:"created_at"`
 }
