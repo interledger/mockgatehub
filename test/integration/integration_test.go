@@ -389,4 +389,3 @@ func TestMultipleCurrencyDeposits(t *testing.T) {
 
 	logger.Info.Println("[TEST] ✅ Multi-currency deposits successful!")
 }
-
