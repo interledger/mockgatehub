@@ -6,14 +6,13 @@ import (
 	"mockgatehub/internal/logger"
 
 	"github.com/go-chi/chi/v5"
-	"go.uber.org/zap"
 )
 
 // Card endpoint stubs - minimal implementation for sandbox
 
 // CreateManagedCustomer creates a card customer (stub)
 func (h *Handler) CreateManagedCustomer(w http.ResponseWriter, r *http.Request) {
-	logger.Info("create managed customer called (stub)")
+	logger.Info.Println("CreateManagedCustomer called (stub)")
 	h.sendJSON(w, http.StatusOK, map[string]interface{}{
 		"walletAddress": "mock-wallet-address",
 		"customers": map[string]interface{}{
@@ -40,7 +39,7 @@ func (h *Handler) CreateManagedCustomer(w http.ResponseWriter, r *http.Request) 
 
 // CreateCard creates a new card (stub)
 func (h *Handler) CreateCard(w http.ResponseWriter, r *http.Request) {
-	logger.Info("create card called (stub)")
+	logger.Info.Println("CreateCard called (stub)")
 	h.sendJSON(w, http.StatusOK, map[string]interface{}{
 		"id":     "mock-card-id",
 		"status": "active",
@@ -52,7 +51,7 @@ func (h *Handler) CreateCard(w http.ResponseWriter, r *http.Request) {
 // GetCard retrieves card details (stub)
 func (h *Handler) GetCard(w http.ResponseWriter, r *http.Request) {
 	cardID := chi.URLParam(r, "cardID")
-	logger.Info("get card called (stub)", zap.String("card_id", cardID))
+	logger.Info.Printf("GetCard called for: %s (stub)", cardID)
 
 	h.sendJSON(w, http.StatusOK, map[string]interface{}{
 		"id":     cardID,
@@ -64,8 +63,8 @@ func (h *Handler) GetCard(w http.ResponseWriter, r *http.Request) {
 
 // DeleteCard deletes a card (stub)
 func (h *Handler) DeleteCard(w http.ResponseWriter, r *http.Request) {
-	_ = chi.URLParam(r, "cardID")
-	// Card deleted
+	cardID := chi.URLParam(r, "cardID")
+	logger.Info.Printf("DeleteCard called for: %s (stub)", cardID)
 
 	h.sendJSON(w, http.StatusOK, map[string]interface{}{
 		"message": "Card deleted successfully",
@@ -75,7 +74,7 @@ func (h *Handler) DeleteCard(w http.ResponseWriter, r *http.Request) {
 // GetPendingConfirmations retrieves pending 3DS confirmations (stub)
 // Returns empty list for local development since there are no real 3DS challenges
 func (h *Handler) GetPendingConfirmations(w http.ResponseWriter, r *http.Request) {
-	logger.Info("get pending confirmations called (stub)")
+	logger.Info.Println("GetPendingConfirmations called (stub)")
 	h.sendJSON(w, http.StatusOK, map[string]interface{}{
 		"pendingConfirmations": []interface{}{},
 	})
