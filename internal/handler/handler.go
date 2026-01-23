@@ -2,15 +2,18 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"io"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
 	"mockgatehub/internal/consts"
 	"mockgatehub/internal/logger"
+	"mockgatehub/internal/models"
 	"mockgatehub/internal/storage"
 	"mockgatehub/internal/utils"
 	"mockgatehub/internal/webhook"
@@ -212,7 +215,7 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 		}
 	}
 
-	// For deposit type, send a webhook to wallet-backend
+	// For deposit type, create a transaction and send a webhook to wallet-backend
 	if paymentType == "deposit" {
 		// Decode bearer to get user UUID
 		// In a real implementation, we would validate the JWT token
@@ -230,17 +233,51 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 					walletAddress := wallets[0].Address
 
 					// Get vault_uuid for the currency (from consts)
+					if txReq.Currency == "" {
+						txReq.Currency = "USD"
+					}
+
 					vaultUUID := consts.SandboxVaultIDs[txReq.Currency]
 					if vaultUUID == "" {
 						// Fallback to USD vault if currency not found
-						vaultUUID = consts.SandboxVaultIDs["USD"]
+						txReq.Currency = "USD"
+						vaultUUID = consts.SandboxVaultIDs[txReq.Currency]
 						logger.Warn.Printf("[HANDLER] Unknown currency %s, using USD vault", txReq.Currency)
+					}
+
+					amountFloat, err := strconv.ParseFloat(txReq.Amount, 64)
+					if err != nil {
+						logger.Warn.Printf("[HANDLER] Invalid amount %q, defaulting to 100.00", txReq.Amount)
+						amountFloat = 100.00
+					}
+					amountStr := fmt.Sprintf("%.2f", amountFloat)
+
+					txID := utils.GenerateUUID()
+
+					tx := &models.Transaction{
+						ID:               txID,
+						UserID:           userUUID,
+						Amount:           amountFloat,
+						Currency:         txReq.Currency,
+						VaultUUID:        vaultUUID,
+						ReceivingAddress: walletAddress,
+						Type:             consts.TransactionTypeDeposit,
+						DepositType:      consts.DepositTypeExternal,
+						Status:           "completed",
+					}
+
+					if err := h.store.CreateTransaction(tx); err != nil {
+						logger.Error.Printf("[HANDLER] Failed to create transaction %s: %v", txID, err)
+					}
+
+					if err := h.store.AddBalance(userUUID, txReq.Currency, amountFloat); err != nil {
+						logger.Error.Printf("[HANDLER] Failed to update balance for user %s: %v", userUUID, err)
 					}
 
 					// Send deposit webhook (matches GateHub webhook spec) with dynamic values
 					h.webhookManager.SendAsync("core.deposit.completed", userUUID, map[string]interface{}{
-						"tx_uuid":      utils.GenerateUUID(),
-						"amount":       txReq.Amount,   // From iframe form
+						"tx_uuid":      txID,
+						"amount":       amountStr,      // From iframe form
 						"currency":     txReq.Currency, // From iframe form
 						"vault_uuid":   vaultUUID,      // Vault UUID for this currency
 						"address":      walletAddress,  // The wallet address that received the deposit

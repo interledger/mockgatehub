@@ -36,30 +36,30 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 		verificationStatus = 1
 	}
 
-	response := map[string]interface{}{
-		"id":         user.ID,
-		"email":      user.Email,
-		"activated":  user.Activated,
-		"managed":    user.Managed,
-		"role":       user.Role,
-		"features":   user.Features,
-		"kyc_state":  user.KYCState,
-		"risk_level": user.RiskLevel,
-		"created_at": user.CreatedAt,
-		"profile": map[string]string{
-			"first_name":           "",
-			"last_name":            "",
-			"address_country_code": "",
-			"address_city":         "",
-			"address_street1":      "",
-			"address_street2":      "",
+	response := models.GetUserResponse{
+		ID:        user.ID,
+		Email:     user.Email,
+		Activated: user.Activated,
+		Managed:   user.Managed,
+		Role:      user.Role,
+		Features:  user.Features,
+		KYCState:  user.KYCState,
+		RiskLevel: user.RiskLevel,
+		CreatedAt: user.CreatedAt,
+		Profile: models.UserProfile{
+			FirstName:          "",
+			LastName:           "",
+			AddressCountryCode: "",
+			AddressCity:        "",
+			AddressStreet1:     "",
+			AddressStreet2:     "",
 		},
-		"verifications": []map[string]interface{}{
+		Verifications: []models.UserVerification{
 			{
-				"uuid":          "mock-verification-uuid",
-				"status":        verificationStatus, // 0 = pending/action_required, 1 = verified/accepted
-				"state":         1,
-				"provider_type": "sumsub",
+				UUID:         "mock-verification-uuid",
+				Status:       verificationStatus,
+				State:        1,
+				ProviderType: "sumsub",
 			},
 		},
 	}

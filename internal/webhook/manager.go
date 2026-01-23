@@ -46,7 +46,7 @@ func NewManager(webhookURL, webhookSecret string) *Manager {
 }
 
 // SendAsync sends a webhook asynchronously with retry logic
-func (m *Manager) SendAsync(eventType, userID string, data map[string]interface{}) {
+func (m *Manager) SendAsync(eventType, userID string, data any) {
 	if m.webhookURL == "" {
 		logger.Info.Printf("[WEBHOOK] Skipping webhook send - no URL configured (event: %s, user: %s)", eventType, userID)
 		return
@@ -65,7 +65,7 @@ func (m *Manager) SendAsync(eventType, userID string, data map[string]interface{
 }
 
 // sendWithRetry attempts to send webhook with exponential backoff
-func (m *Manager) sendWithRetry(eventType, userID string, data map[string]interface{}, maxRetries int) error {
+func (m *Manager) sendWithRetry(eventType, userID string, data any, maxRetries int) error {
 	var lastErr error
 
 	for attempt := 1; attempt <= maxRetries; attempt++ {
@@ -90,7 +90,9 @@ func (m *Manager) sendWithRetry(eventType, userID string, data map[string]interf
 }
 
 // send performs the actual HTTP webhook request
-func (m *Manager) send(eventType, userID string, data map[string]interface{}) error {
+func (m *Manager) send(eventType, userID string, data any) error {
+	normalized := normalizeVerificationPayload(eventType, data)
+
 	// Build payload - testnet wallet-backend expects timestamp as milliseconds string
 	now := time.Now()
 	payload := WebhookPayload{
@@ -99,7 +101,7 @@ func (m *Manager) send(eventType, userID string, data map[string]interface{}) er
 		EventType:   eventType,                          // e.g., "core.deposit.completed"
 		UserUUID:    userID,                             // GateHub user UUID
 		Environment: "sandbox",                          // Always sandbox for mockgatehub
-		Data:        data,
+		Data:        normalized,
 	}
 
 	body, err := json.Marshal(payload)
@@ -154,4 +156,55 @@ func (m *Manager) send(eventType, userID string, data map[string]interface{}) er
 	}
 
 	return nil
+}
+
+func normalizeVerificationPayload(eventType string, data any) map[string]interface{} {
+	converted := coerceToMap(data)
+
+	switch eventType {
+	case "id.verification.accepted", "id.verification.rejected", "id.verification.action_required":
+		if _, ok := converted["gateway"]; !ok {
+			converted["gateway"] = "paywiser"
+		}
+		if _, ok := converted["verified"]; !ok {
+			short := "action_required"
+			status := 0
+			switch eventType {
+			case "id.verification.accepted":
+				short = "accepted"
+				status = 1
+			case "id.verification.rejected":
+				short = "rejected"
+				status = 2
+			}
+			converted["verified"] = map[string]interface{}{
+				"short":  short,
+				"status": status,
+			}
+		}
+	}
+
+	return converted
+}
+
+func coerceToMap(data any) map[string]interface{} {
+	if data == nil {
+		return map[string]interface{}{}
+	}
+
+	if typed, ok := data.(map[string]interface{}); ok {
+		return typed
+	}
+
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		return map[string]interface{}{}
+	}
+
+	var converted map[string]interface{}
+	if err := json.Unmarshal(bytes, &converted); err != nil {
+		return map[string]interface{}{}
+	}
+
+	return converted
 }
