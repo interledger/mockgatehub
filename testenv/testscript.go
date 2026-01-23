@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	mockGatehubURL = "http://localhost:28080"
+	mockGatehubURL = "http://localhost:25151"
 	maxWaitSeconds = 30
 	testAppID      = "local-test-app-id"
 	testAppSecret  = "local-test-app-secret"

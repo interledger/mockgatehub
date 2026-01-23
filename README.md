@@ -94,6 +94,7 @@ Two test users are automatically created:
 - `POST /cards` - Create card (stub)
 - `GET /cards/{cardID}` - Get card (stub)
 - `DELETE /cards/{cardID}` - Delete card (stub)
+- `GET /transaction/pending-confirmations` - Get pending 3DS confirmations (stub, returns empty list)
 
 ## Supported Currencies
 

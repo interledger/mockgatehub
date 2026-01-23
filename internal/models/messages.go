@@ -19,12 +19,25 @@ type GetUserResponse struct {
 
 // UserProfile represents the profile payload returned by GateHub user state.
 type UserProfile struct {
+	UUID               string `json:"uuid"`
+	BirthDay           int    `json:"birth_day"`
+	BirthMonth         int    `json:"birth_month"`
+	BirthYear          int    `json:"birth_year"`
+	Gender             string `json:"gender"`
 	FirstName          string `json:"first_name"`
+	MiddleName         string `json:"middle_name"`
 	LastName           string `json:"last_name"`
+	Citizenship        string `json:"citizenship"`
+	AddressPostalCode  string `json:"address_postal_code"`
+	AddressSubdivision string `json:"address_subdivision"`
 	AddressCountryCode string `json:"address_country_code"`
 	AddressCity        string `json:"address_city"`
 	AddressStreet1     string `json:"address_street1"`
 	AddressStreet2     string `json:"address_street2"`
+	BirthCity          string `json:"birth_city"`
+	BirthCountryCode   string `json:"birth_country_code"`
+	TaxResidency       string `json:"tax_residency"`
+	ExpectedVolume     string `json:"expected_volume"`
 }
 
 // UserVerification represents a verification entry in the user response.

@@ -13,6 +13,25 @@ type User struct {
 	KYCState  string    `json:"kyc_state"`  // accepted/rejected/action_required
 	RiskLevel string    `json:"risk_level"` // low/medium/high
 	CreatedAt time.Time `json:"created_at"`
+	// Profile fields
+	FirstName          string `json:"first_name"`
+	MiddleName         string `json:"middle_name"`
+	LastName           string `json:"last_name"`
+	Gender             string `json:"gender"`
+	BirthYear          int    `json:"birth_year"`
+	BirthMonth         int    `json:"birth_month"`
+	BirthDay           int    `json:"birth_day"`
+	BirthCity          string `json:"birth_city"`
+	BirthCountryCode   string `json:"birth_country_code"`
+	Citizenship        string `json:"citizenship"`
+	AddressStreet1     string `json:"address_street1"`
+	AddressStreet2     string `json:"address_street2"`
+	AddressCity        string `json:"address_city"`
+	AddressPostalCode  string `json:"address_postal_code"`
+	AddressSubdivision string `json:"address_subdivision"`
+	AddressCountryCode string `json:"address_country_code"`
+	TaxResidency       string `json:"tax_residency"`
+	ExpectedVolume     string `json:"expected_volume"`
 }
 
 // Wallet represents an XRPL wallet

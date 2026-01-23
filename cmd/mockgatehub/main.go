@@ -147,5 +147,6 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		r.Post("/cards", h.CreateCard)
 		r.Get("/cards/{cardID}", h.GetCard)
 		r.Delete("/cards/{cardID}", h.DeleteCard)
+		r.Get("/transaction/pending-confirmations", h.GetPendingConfirmations)
 	})
 }
