@@ -288,3 +288,4 @@ func TestMemoryStorage_TransactionStatusTypes(t *testing.T) {
 		})
 	}
 }
+

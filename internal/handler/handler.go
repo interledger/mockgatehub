@@ -251,19 +251,23 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 						amountFloat = 100.00
 					}
 					amountStr := fmt.Sprintf("%.2f", amountFloat)
+					feeStr := "0.00"            // No fees in sandbox
+					totalAmountStr := amountStr // Total = amount + fees
 
 					txID := utils.GenerateUUID()
 
 					tx := &models.Transaction{
 						ID:               txID,
 						UserID:           userUUID,
-						Amount:           amountFloat,
+						Amount:           amountStr,
+						TotalAmount:      totalAmountStr,
+						Fee:              feeStr,
 						Currency:         txReq.Currency,
 						VaultUUID:        vaultUUID,
 						ReceivingAddress: walletAddress,
 						Type:             consts.TransactionTypeDeposit,
 						DepositType:      consts.DepositTypeExternal,
-						Status:           "completed",
+						Status:           1, // 1 = completed
 					}
 
 					if err := h.store.CreateTransaction(tx); err != nil {
