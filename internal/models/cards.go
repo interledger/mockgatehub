@@ -142,6 +142,10 @@ type GetCardTokenArgs struct {
 	PublicKey *string `json:"publicKey,omitempty"`
 }
 
+type ChangePinArgs struct {
+	Cypher string `json:"cypher"`
+}
+
 type CardTokenLink struct {
 	Href   string `json:"href"`
 	Rel    string `json:"rel"`

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"mockgatehub/internal/consts"
@@ -607,6 +608,10 @@ func (h *Handler) GetCardToken(w http.ResponseWriter, r *http.Request) {
 		h.sendError(w, http.StatusBadRequest, "tokenType is required")
 		return
 	}
+	if tokenType != "card-data" && tokenType != "pin" && tokenType != "pin-change" {
+		h.sendError(w, http.StatusBadRequest, "unsupported tokenType")
+		return
+	}
 
 	var req models.GetCardTokenArgs
 	if err := h.decodeJSON(r, &req); err != nil {
@@ -625,18 +630,96 @@ func (h *Handler) GetCardToken(w http.ResponseWriter, r *http.Request) {
 	}
 
 	token := fmt.Sprintf("mock-%s-%s-%s", tokenType, req.CardID, utils.GenerateUUID())
-	response := models.CardTokenResponse{
-		Token: token,
-		Links: []models.CardTokenLink{
+	response := models.CardTokenResponse{Token: token}
+	if tokenType == "pin-change" {
+		response.Links = []models.CardTokenLink{
+			{
+				Href:   "/cards/v1/pin/change",
+				Rel:    "pin-change",
+				Method: http.MethodPost,
+			},
+		}
+	} else {
+		response.Links = []models.CardTokenLink{
 			{
 				Href:   fmt.Sprintf("/cards/v1/token/%s/data?token=%s", tokenType, token),
 				Rel:    "data",
 				Method: http.MethodGet,
 			},
-		},
+		}
 	}
 
 	h.sendJSON(w, http.StatusOK, response)
+}
+
+// GetTokenData returns tokenized card data or pin cipher
+func (h *Handler) GetTokenData(w http.ResponseWriter, r *http.Request) {
+	tokenType := chi.URLParam(r, "tokenType")
+	if tokenType == "" {
+		h.sendError(w, http.StatusBadRequest, "tokenType is required")
+		return
+	}
+	if tokenType != "card-data" && tokenType != "pin" {
+		h.sendError(w, http.StatusBadRequest, "unsupported tokenType")
+		return
+	}
+
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		h.sendError(w, http.StatusBadRequest, "token is required")
+		return
+	}
+
+	cardID, err := parseCardToken(token, tokenType)
+	if err != nil {
+		h.sendError(w, http.StatusBadRequest, "invalid token")
+		return
+	}
+
+	if _, err := h.store.GetCard(cardID); err != nil {
+		h.sendError(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	if tokenType == "card-data" {
+		h.sendJSON(w, http.StatusOK, map[string]string{"cipher": "mock-encrypted-card-data"})
+		return
+	}
+
+	h.sendJSON(w, http.StatusOK, map[string]string{"cipher": "mock-encrypted-pin"})
+}
+
+// ChangePin accepts a tokenized pin change request
+func (h *Handler) ChangePin(w http.ResponseWriter, r *http.Request) {
+	authHeader := r.Header.Get("Authorization")
+	if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
+		h.sendError(w, http.StatusUnauthorized, "missing bearer token")
+		return
+	}
+
+	token := strings.TrimPrefix(authHeader, "Bearer ")
+	cardID, err := parseCardToken(token, "pin-change")
+	if err != nil {
+		h.sendError(w, http.StatusUnauthorized, "invalid token")
+		return
+	}
+
+	if _, err := h.store.GetCard(cardID); err != nil {
+		h.sendError(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	var req models.ChangePinArgs
+	if err := h.decodeJSON(r, &req); err != nil {
+		h.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Cypher == "" {
+		h.sendError(w, http.StatusBadRequest, "cypher is required")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // CreateCardTransaction creates a mock card transaction and emits a webhook
@@ -785,6 +868,29 @@ func validateDeliveryAddress(req models.CreateCustomerDeliveryAddressArgs) error
 	}
 
 	return nil
+}
+
+func parseCardToken(token string, tokenType string) (string, error) {
+	prefix := fmt.Sprintf("mock-%s-", tokenType)
+	if !strings.HasPrefix(token, prefix) {
+		return "", fmt.Errorf("invalid token")
+	}
+
+	remainder := strings.TrimPrefix(token, prefix)
+	if len(remainder) <= 37 {
+		return "", fmt.Errorf("invalid token")
+	}
+	sep := len(remainder) - 37
+	if remainder[sep] != '-' {
+		return "", fmt.Errorf("invalid token")
+	}
+
+	cardID := remainder[:sep]
+	if cardID == "" {
+		return "", fmt.Errorf("invalid token")
+	}
+
+	return cardID, nil
 }
 
 func derefString(value *string) string {

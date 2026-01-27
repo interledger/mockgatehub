@@ -105,6 +105,7 @@ func waitForServices() error {
 
 func runTests() {
 	var userID, token, walletAddress, customerID, accountID, cardID, deliveryAddressID, orderedCardID string
+	var cardDataToken, pinToken, pinChangeToken string
 
 	// Test 1: Health check
 	runTest("Health Check", func() (bool, string) {
@@ -504,7 +505,108 @@ func runTests() {
 		if token == "" || len(links) == 0 {
 			return false, "Missing token or links"
 		}
+		cardDataToken = token
 		return true, fmt.Sprintf("Token=%s...", token[:12])
+	})
+
+	// Test 7.86: Get card data from token
+	runTest("Get Card Data", func() (bool, string) {
+		var result map[string]interface{}
+		if err := getJSONWithHeaders(
+			fmt.Sprintf("/cards/v1/token/card-data/data?token=%s", cardDataToken),
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+		cipher, _ := result["cipher"].(string)
+		return cipher != "", "Card data cipher returned"
+	})
+
+	// Test 7.87: Get PIN token
+	runTest("Get PIN Token", func() (bool, string) {
+		body := map[string]interface{}{
+			"cardId": cardID,
+		}
+		var result map[string]interface{}
+		if err := postJSONWithHeaders(
+			"/cards/v1/token/pin",
+			body,
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+
+		token, _ := result["token"].(string)
+		if token == "" {
+			return false, "Missing pin token"
+		}
+		pinToken = token
+		return true, fmt.Sprintf("Token=%s...", token[:12])
+	})
+
+	// Test 7.88: Get PIN data from token
+	runTest("Get PIN Data", func() (bool, string) {
+		var result map[string]interface{}
+		if err := getJSONWithHeaders(
+			fmt.Sprintf("/cards/v1/token/pin/data?token=%s", pinToken),
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+		cipher, _ := result["cipher"].(string)
+		return cipher != "", "PIN cipher returned"
+	})
+
+	// Test 7.89: Get PIN change token
+	runTest("Get PIN Change Token", func() (bool, string) {
+		body := map[string]interface{}{
+			"cardId": cardID,
+		}
+		var result map[string]interface{}
+		if err := postJSONWithHeaders(
+			"/cards/v1/token/pin-change",
+			body,
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+
+		token, _ := result["token"].(string)
+		if token == "" {
+			return false, "Missing pin change token"
+		}
+		pinChangeToken = token
+		return true, fmt.Sprintf("Token=%s...", token[:12])
+	})
+
+	// Test 7.90: Change PIN
+	runTest("Change PIN", func() (bool, string) {
+		body := map[string]interface{}{
+			"cypher": "mock-encrypted-pin",
+		}
+		if err := postJSONWithHeadersExpectStatus(
+			"/cards/v1/pin/change",
+			body,
+			map[string]string{
+				"Authorization": "Bearer " + pinChangeToken,
+			},
+			http.StatusNoContent,
+		); err != nil {
+			return false, err.Error()
+		}
+		return true, "PIN change accepted"
 	})
 
 	// Test 7.9: Lock and unlock card
@@ -936,6 +1038,48 @@ func postJSONWithHeaders(path string, body interface{}, headers map[string]strin
 	}
 
 	return json.Unmarshal(respBody, result)
+}
+
+func postJSONWithHeadersExpectStatus(path string, body interface{}, headers map[string]string, expectedStatus int) error {
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("POST", mockGatehubURL+path, bytes.NewReader(jsonBody))
+	if err != nil {
+		return err
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	if headers == nil {
+		headers = map[string]string{}
+	}
+	if _, hasAuth := headers["x-gatehub-app-id"]; !hasAuth {
+		addAuthHeaders(req, jsonBody)
+	}
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode != expectedStatus {
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return nil
 }
 
 func putJSONWithHeaders(path string, body interface{}, headers map[string]string, result interface{}) error {
