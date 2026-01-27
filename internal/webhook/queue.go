@@ -9,7 +9,6 @@ import (
 	"mockgatehub/internal/utils"
 
 	"github.com/redis/go-redis/v9"
-	"go.uber.org/zap"
 )
 
 const (
@@ -72,7 +71,7 @@ func (q *Queue) Enqueue(ctx context.Context, eventType, userID string, data any)
 		return "", fmt.Errorf("failed to enqueue job: %w", err)
 	}
 
-	logger.Info("enqueued webhook job", zap.String("job_id", jobID), zap.String("event", eventType), zap.String("user", userID))
+	logger.Info.Printf("[QUEUE] Enqueued webhook job: id=%s, event=%s, user=%s", jobID, eventType, userID)
 	return jobID, nil
 }
 
@@ -94,7 +93,7 @@ func (q *Queue) GetReadyJobs(ctx context.Context, limit int64) ([]*Job, error) {
 	for _, jobID := range results {
 		job, err := q.getJob(ctx, jobID)
 		if err != nil {
-			logger.Error("failed to load job", zap.String("job_id", jobID), zap.Error(err))
+			logger.Error.Printf("[QUEUE] Failed to load job %s: %v", jobID, err)
 			continue
 		}
 
@@ -127,7 +126,7 @@ func (q *Queue) MarkCompleted(ctx context.Context, jobID string) error {
 		return fmt.Errorf("failed to remove job from queue: %w", err)
 	}
 
-	logger.Info("marked job as completed", zap.String("job_id", jobID))
+	logger.Info.Printf("[QUEUE] Marked job as completed: id=%s", jobID)
 	return nil
 }
 
@@ -156,11 +155,7 @@ func (q *Queue) MarkFailed(ctx context.Context, jobID string, errMsg string) err
 			return fmt.Errorf("failed to remove failed job from queue: %w", err)
 		}
 
-		logger.Error("job permanently failed",
-			zap.Int("attempts", job.Attempts),
-			zap.String("job_id", jobID),
-			zap.String("error", errMsg),
-		)
+		logger.Error.Printf("[QUEUE] Job permanently failed after %d attempts: id=%s, error=%s", job.Attempts, jobID, errMsg)
 		return nil
 	}
 
@@ -179,12 +174,7 @@ func (q *Queue) MarkFailed(ctx context.Context, jobID string, errMsg string) err
 		return fmt.Errorf("failed to reschedule job: %w", err)
 	}
 
-	logger.Warn("rescheduled job",
-		zap.Int("attempt", job.Attempts),
-		zap.Int("max_attempts", maxAttempts),
-		zap.String("job_id", jobID),
-		zap.String("retry_at", job.NotBefore.Format(time.RFC3339)),
-	)
+	logger.Warn.Printf("[QUEUE] Rescheduled job (attempt %d/%d): id=%s, retry_at=%s", job.Attempts, maxAttempts, jobID, job.NotBefore.Format(time.RFC3339))
 	return nil
 }
 

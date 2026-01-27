@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"mockgatehub/internal/logger"
-
-	"go.uber.org/zap"
 )
 
 // Worker processes webhook jobs from the queue
@@ -31,7 +29,7 @@ func NewWorker(queue *Queue, manager *Manager) *Worker {
 
 // Start begins processing webhook jobs (blocking)
 func (w *Worker) Start() {
-	logger.Info("starting webhook worker", zap.Duration("poll_interval", pollInterval))
+	logger.Info.Printf("[WORKER] Starting webhook worker (poll interval: %v)", pollInterval)
 
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
@@ -39,7 +37,7 @@ func (w *Worker) Start() {
 	for {
 		select {
 		case <-w.ctx.Done():
-			logger.Info("stopping webhook worker")
+			logger.Info.Printf("[WORKER] Stopping webhook worker")
 			return
 		case <-ticker.C:
 			w.processReadyJobs()
@@ -56,7 +54,7 @@ func (w *Worker) Stop() {
 func (w *Worker) processReadyJobs() {
 	jobs, err := w.queue.GetReadyJobs(w.ctx, batchSize)
 	if err != nil {
-		logger.Error("failed to fetch ready jobs", zap.Error(err))
+		logger.Error.Printf("[WORKER] Failed to fetch ready jobs: %v", err)
 		return
 	}
 
@@ -64,7 +62,7 @@ func (w *Worker) processReadyJobs() {
 		return // No jobs ready
 	}
 
-	logger.Info("found ready jobs to process", zap.Int("count", len(jobs)))
+	logger.Info.Printf("[WORKER] Found %d ready job(s) to process", len(jobs))
 
 	for _, job := range jobs {
 		w.processJob(job)
@@ -73,13 +71,8 @@ func (w *Worker) processReadyJobs() {
 
 // processJob processes a single webhook job
 func (w *Worker) processJob(job *Job) {
-	logger.Info("processing webhook job",
-		zap.String("job_id", job.ID),
-		zap.String("event", job.EventType),
-		zap.String("user", job.UserID),
-		zap.Int("attempt", job.Attempts+1),
-		zap.Int("max_attempts", maxAttempts),
-	)
+	logger.Info.Printf("[WORKER] Processing job: id=%s, event=%s, user=%s, attempt=%d/%d",
+		job.ID, job.EventType, job.UserID, job.Attempts+1, maxAttempts)
 
 	// Send webhook using manager's send method
 	err := w.manager.send(job.EventType, job.UserID, job.Data)
@@ -88,19 +81,19 @@ func (w *Worker) processJob(job *Job) {
 		// Mark as failed and reschedule
 		errMsg := err.Error()
 		if markErr := w.queue.MarkFailed(w.ctx, job.ID, errMsg); markErr != nil {
-			logger.Error("failed to mark job as failed", zap.Error(markErr))
+			logger.Error.Printf("[WORKER] Failed to mark job as failed: %v", markErr)
 		}
-		logger.Warn("webhook job failed", zap.String("job_id", job.ID), zap.String("error", errMsg))
+		logger.Warn.Printf("[WORKER] Job failed: id=%s, error=%s", job.ID, errMsg)
 		return
 	}
 
 	// Mark as completed
 	if err := w.queue.MarkCompleted(w.ctx, job.ID); err != nil {
-		logger.Error("failed to mark job as completed", zap.Error(err))
+		logger.Error.Printf("[WORKER] Failed to mark job as completed: %v", err)
 		return
 	}
 
-	logger.Info("webhook job completed successfully", zap.String("job_id", job.ID))
+	logger.Info.Printf("[WORKER] ✅ Job completed successfully: id=%s", job.ID)
 }
 
 // StartAsync starts the worker in a goroutine
@@ -108,10 +101,10 @@ func (w *Worker) StartAsync() {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
-				logger.Error("panic in webhook worker", zap.Any("panic", r))
+				logger.Error.Printf("[WORKER] Panic in webhook worker: %v", r)
 				// Restart worker after panic
 				time.Sleep(5 * time.Second)
-				logger.Info("restarting webhook worker after panic")
+				logger.Info.Printf("[WORKER] Restarting webhook worker after panic")
 				w.StartAsync()
 			}
 		}()

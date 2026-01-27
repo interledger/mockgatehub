@@ -317,11 +317,20 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info.Printf("Created transaction: %s (%s %s)", tx.ID, tx.Amount, tx.Currency)
 
-	if req.DepositType == consts.DepositTypeExternal {
+	// Send webhook for both external and hosted deposits
+	// Hosted transfers need webhook notification so PayIn workflow doesn't hang indefinitely
+	// waiting for a 20-minute polling cycle. PayIn workflow waits for either:
+	// 1. core.deposit.completed webhook signal, OR
+	// 2. 20-minute polling timer to check transaction status
+	// By sending webhook immediately, we allow the workflow to complete promptly.
+	if req.DepositType == consts.DepositTypeExternal || req.DepositType == consts.DepositTypeHosted {
 		go h.webhookManager.SendAsync(consts.WebhookEventDepositCompleted, req.UserID, models.DepositWebhookData{
-			TransactionID: tx.ID,
+			TransactionID: tx.ID,     // legacy key some consumers still read
+			TxUUID:        tx.ID,     // wallet backend expects tx_uuid
 			Amount:        tx.Amount, // Already a string
 			Currency:      tx.Currency,
+			Address:       tx.ReceivingAddress, // optional for hosted transfers
+			DepositType:   tx.DepositType,
 		})
 	}
 
