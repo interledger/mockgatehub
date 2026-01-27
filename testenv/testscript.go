@@ -1,3 +1,6 @@
+//go:build legacy_testenv
+// +build legacy_testenv
+
 package main
 
 import (
