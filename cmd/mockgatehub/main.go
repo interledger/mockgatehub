@@ -187,6 +187,11 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		r.Put("/cards/{cardID}/block", h.BlockCard)
 		r.Delete("/cards/{cardID}/card", h.DeleteCard)
 		r.Post("/token/{tokenType}", h.GetCardToken)
+		r.Post("/transactions", h.CreateCardTransaction)
+		r.Get("/transactions/{txID}", h.GetCardTransaction)
 		r.Get("/transaction/pending-confirmations", h.GetPendingConfirmations)
+		r.Get("/customers/{customerID}/addresses", h.GetDeliveryAddresses)
+		r.Post("/customers/{customerID}/addresses", h.CreateCustomerDeliveryAddress)
+		r.Post("/cards/{accountID}/card", h.OrderCard)
 	})
 }

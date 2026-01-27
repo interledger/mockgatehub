@@ -23,12 +23,20 @@ type Storage interface {
 	GetAccount(id string) (*models.Account, error)
 	UpdateAccount(account *models.Account) error
 
+	// Card Delivery Addresses
+	CreateCustomerAddress(customerID string, address *models.CustomerDeliveryAddress) error
+	GetCustomerAddresses(customerID string) ([]*models.CustomerDeliveryAddress, error)
+
 	// Cards
 	CreateCard(card *models.Card) error
 	GetCard(id string) (*models.Card, error)
 	UpdateCard(card *models.Card) error
 	GetCardsByCustomer(customerID string) ([]*models.Card, error)
 	GetCardsByAccount(accountID string) ([]*models.Card, error)
+
+	// Card Transactions
+	CreateCardTransaction(tx *models.CardTransaction) error
+	GetCardTransaction(id string) (*models.CardTransaction, error)
 
 	// Wallets
 	CreateWallet(wallet *models.Wallet) error

@@ -320,6 +320,57 @@ func (s *RedisStorage) UpdateAccount(account *models.Account) error {
 	return nil
 }
 
+// Card delivery address operations
+
+func (s *RedisStorage) CreateCustomerAddress(customerID string, address *models.CustomerDeliveryAddress) error {
+	if customerID == "" {
+		return errors.New("customer ID is required")
+	}
+	if address == nil {
+		return errors.New("address is required")
+	}
+	if address.ID == "" {
+		address.ID = utils.GenerateUUID()
+	}
+
+	data, err := json.Marshal(address)
+	if err != nil {
+		return fmt.Errorf("failed to marshal address: %w", err)
+	}
+
+	if err := s.client.Set(s.ctx, s.customerAddressKey(address.ID), data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to store address: %w", err)
+	}
+
+	if err := s.client.SAdd(s.ctx, s.customerAddressesKey(customerID), address.ID).Err(); err != nil {
+		return fmt.Errorf("failed to add address to customer set: %w", err)
+	}
+
+	return nil
+}
+
+func (s *RedisStorage) GetCustomerAddresses(customerID string) ([]*models.CustomerDeliveryAddress, error) {
+	ids, err := s.client.SMembers(s.ctx, s.customerAddressesKey(customerID)).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get customer addresses: %w", err)
+	}
+
+	addresses := make([]*models.CustomerDeliveryAddress, 0, len(ids))
+	for _, id := range ids {
+		data, err := s.client.Get(s.ctx, s.customerAddressKey(id)).Result()
+		if err != nil {
+			continue
+		}
+		var addr models.CustomerDeliveryAddress
+		if err := json.Unmarshal([]byte(data), &addr); err != nil {
+			continue
+		}
+		addresses = append(addresses, &addr)
+	}
+
+	return addresses, nil
+}
+
 // Card operations
 
 func (s *RedisStorage) CreateCard(card *models.Card) error {
@@ -419,6 +470,42 @@ func (s *RedisStorage) GetCardsByAccount(accountID string) ([]*models.Card, erro
 	}
 
 	return cards, nil
+}
+
+// Card transaction operations
+
+func (s *RedisStorage) CreateCardTransaction(tx *models.CardTransaction) error {
+	if tx.TransactionID == "" {
+		return errors.New("transactionId is required")
+	}
+
+	data, err := json.Marshal(tx)
+	if err != nil {
+		return fmt.Errorf("failed to marshal card transaction: %w", err)
+	}
+
+	if err := s.client.Set(s.ctx, s.cardTransactionKey(tx.TransactionID), data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to store card transaction: %w", err)
+	}
+
+	return nil
+}
+
+func (s *RedisStorage) GetCardTransaction(id string) (*models.CardTransaction, error) {
+	data, err := s.client.Get(s.ctx, s.cardTransactionKey(id)).Result()
+	if err == redis.Nil {
+		return nil, errors.New("card transaction not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get card transaction: %w", err)
+	}
+
+	var tx models.CardTransaction
+	if err := json.Unmarshal([]byte(data), &tx); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal card transaction: %w", err)
+	}
+
+	return &tx, nil
 }
 
 // Wallet operations
@@ -606,6 +693,18 @@ func (s *RedisStorage) accountCardsKey(accountID string) string {
 
 func (s *RedisStorage) cardKey(id string) string {
 	return fmt.Sprintf("card:%s", id)
+}
+
+func (s *RedisStorage) customerAddressesKey(customerID string) string {
+	return fmt.Sprintf("customer:%s:addresses", customerID)
+}
+
+func (s *RedisStorage) customerAddressKey(addressID string) string {
+	return fmt.Sprintf("customer:address:%s", addressID)
+}
+
+func (s *RedisStorage) cardTransactionKey(id string) string {
+	return fmt.Sprintf("cardtx:%s", id)
 }
 
 func (s *RedisStorage) walletKey(address string) string {

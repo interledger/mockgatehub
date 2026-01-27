@@ -104,7 +104,7 @@ func waitForServices() error {
 }
 
 func runTests() {
-	var userID, token, walletAddress, customerID, cardID string
+	var userID, token, walletAddress, customerID, accountID, cardID, deliveryAddressID, orderedCardID string
 
 	// Test 1: Health check
 	runTest("Health Check", func() (bool, string) {
@@ -339,6 +339,11 @@ func runTests() {
 		if !ok {
 			return false, "Invalid account payload"
 		}
+		id, ok = account["id"].(string)
+		if !ok || id == "" {
+			return false, "Missing account ID"
+		}
+		accountID = id
 		cards, ok := account["cards"].([]interface{})
 		if !ok || len(cards) == 0 {
 			return false, "Missing cards"
@@ -352,7 +357,92 @@ func runTests() {
 			return false, "Missing card ID"
 		}
 		cardID = id
-		return true, fmt.Sprintf("Customer=%s Card=%s", customerID, cardID)
+		return true, fmt.Sprintf("Customer=%s Account=%s Card=%s", customerID, accountID, cardID)
+	})
+
+	// Test 7.65: Create delivery address
+	runTest("Create Delivery Address", func() (bool, string) {
+		body := map[string]interface{}{
+			"type":        "HOME",
+			"countryCode": "DEU",
+			"line1":       "Main Street 1",
+			"city":        "Berlin",
+			"zipCode":     "10115",
+			"reason":      "Initial delivery address",
+		}
+		var result []map[string]interface{}
+		if err := postJSONWithHeaders(
+			fmt.Sprintf("/cards/v1/customers/%s/addresses", customerID),
+			body,
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+
+		if len(result) == 0 {
+			return false, "No addresses returned"
+		}
+		id, ok := result[0]["id"].(string)
+		if !ok || id == "" {
+			return false, "Missing address ID"
+		}
+		deliveryAddressID = id
+		return true, fmt.Sprintf("Address=%s", deliveryAddressID)
+	})
+
+	// Test 7.66: Get delivery addresses
+	runTest("Get Delivery Addresses", func() (bool, string) {
+		var result []map[string]interface{}
+		if err := getJSONWithHeaders(
+			fmt.Sprintf("/cards/v1/customers/%s/addresses", customerID),
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+
+		if len(result) == 0 {
+			return false, "No addresses returned"
+		}
+		return true, fmt.Sprintf("Returned %d addresses", len(result))
+	})
+
+	// Test 7.67: Order additional card
+	runTest("Order Additional Card", func() (bool, string) {
+		body := map[string]interface{}{
+			"currency":          "EUR",
+			"productCode":       "PWSR_DEBP_2404",
+			"nameOnCard":        "Test User 2",
+			"deliveryAddressId": deliveryAddressID,
+			"walletAddress":     walletAddress,
+			"card": map[string]interface{}{
+				"productCode": "PWSR_DEBP_2404",
+			},
+		}
+		var result map[string]interface{}
+		if err := postJSONWithHeaders(
+			fmt.Sprintf("/cards/v1/cards/%s/card", accountID),
+			body,
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+
+		id, ok := result["id"].(string)
+		if !ok || id == "" {
+			return false, "Missing ordered card ID"
+		}
+		orderedCardID = id
+		relation, _ := result["relationType"].(string)
+		return relation == "SECONDARY", fmt.Sprintf("Ordered card=%s relation=%s", orderedCardID, relation)
 	})
 
 	// Test 7.7: List cards
@@ -481,6 +571,51 @@ func runTests() {
 		}
 		success, _ := result["success"].(bool)
 		return success, "Card closed"
+	})
+
+	// Test 7.11: Create and get card transaction
+	runTest("Create Card Transaction", func() (bool, string) {
+		merchant := "Mock Shop"
+		body := map[string]interface{}{
+			"cardId":       cardID,
+			"amount":       "12.34",
+			"currency":     "EUR",
+			"type":         0,
+			"merchantName": merchant,
+		}
+		var result map[string]interface{}
+		if err := postJSONWithHeaders(
+			"/cards/v1/transactions",
+			body,
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+
+		txID, _ := result["transactionId"].(string)
+		if txID == "" {
+			return false, "Missing transactionId"
+		}
+
+		var fetched map[string]interface{}
+		if err := getJSONWithHeaders(
+			fmt.Sprintf("/cards/v1/transactions/%s", txID),
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&fetched,
+		); err != nil {
+			return false, err.Error()
+		}
+
+		fetchedID, _ := fetched["transactionId"].(string)
+		if fetchedID != txID {
+			return false, "Fetched transactionId mismatch"
+		}
+		return true, fmt.Sprintf("Transaction=%s", txID)
 	})
 
 	// Test 8: Create additional wallet

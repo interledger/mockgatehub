@@ -115,6 +115,15 @@ type CreateCustomerDeliveryAddressArgs struct {
 	Reason      string  `json:"reason"`
 }
 
+type OrderCardArgs struct {
+	Currency          string      `json:"currency"`
+	ProductCode       string      `json:"productCode"`
+	NameOnCard        string      `json:"nameOnCard"`
+	DeliveryAddressID *string     `json:"deliveryAddressId,omitempty"`
+	WalletAddress     string      `json:"walletAddress"`
+	Card              NewCardArgs `json:"card"`
+}
+
 type FreezeCardArgs struct {
 	ReasonCode string  `json:"-"`
 	Note       *string `json:"note,omitempty"`
@@ -142,4 +151,54 @@ type CardTokenLink struct {
 type CardTokenResponse struct {
 	Token string          `json:"token"`
 	Links []CardTokenLink `json:"links"`
+}
+
+type CreateCardTransactionArgs struct {
+	CardID          string  `json:"cardId"`
+	Amount          string  `json:"amount"`
+	Currency        string  `json:"currency"`
+	Type            int     `json:"type"`
+	MerchantName    *string `json:"merchantName,omitempty"`
+	MerchantCity    *string `json:"merchantCity,omitempty"`
+	MerchantCountry *string `json:"merchantCountry,omitempty"`
+}
+
+type CardTransaction struct {
+	VaultID                   *int    `json:"vaultId"`
+	CardID                    *int    `json:"cardId"`
+	TransactionID             string  `json:"transactionId"`
+	RefTransactionID          *string `json:"refTransactionId"`
+	ResponseCode              *string `json:"responseCode"`
+	GHResponseCode            string  `json:"ghResponseCode"`
+	GHResponseDescription     string  `json:"ghResponseDescription"`
+	TransactionAmount         *string `json:"transactionAmount"`
+	TransactionCurrency       *string `json:"transactionCurrency"`
+	BillingAmount             *string `json:"billingAmount"`
+	BillingCurrency           *string `json:"billingCurrency"`
+	IsTrxAmountConverted      bool    `json:"isTrxAmountConverted"`
+	TerminalID                string  `json:"terminalId"`
+	CardScheme                int     `json:"cardScheme"`
+	Type                      int     `json:"type"`
+	Source                    *string `json:"source"`
+	EntryMode                 *int    `json:"entryMode"`
+	AuthorizationCode         *string `json:"authorizationCode"`
+	SplitIntoMultiple         *bool   `json:"splitIntoMultiple"`
+	Authentication            *int    `json:"authentication"`
+	AuthenticationProtocol    *int    `json:"authenticationProtocol"`
+	Wallet                    *int    `json:"wallet"`
+	TransactionDateTime       *string `json:"transactionDateTime"`
+	ProcessDateTime           *string `json:"processDateTime"`
+	CreatedAt                 string  `json:"createdAt"`
+	TxStatus                  *string `json:"txStatus"`
+	Operation                 int     `json:"operation"`
+	Mcc                       *string `json:"mcc"`
+	MerchantStreet            *string `json:"merchantStreet"`
+	MerchantCity              *string `json:"merchantCity"`
+	MerchantZip               *string `json:"merchantZip"`
+	MerchantCountry           *string `json:"merchantCountry"`
+	MerchantName              *string `json:"merchantName"`
+	MerchantID                *string `json:"merchantId"`
+	TransactionClassification *string `json:"transactionClassification"`
+	SpendExchangeRate         *string `json:"spendExchangeRate"`
+	SpendCurrency             *string `json:"spendCurrency"`
 }
