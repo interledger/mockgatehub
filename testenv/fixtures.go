@@ -311,3 +311,23 @@ func (h *harness) completeDeposit(iframeToken string, amount float64, currency s
 	}
 	return nil
 }
+
+func (h *harness) getCardApplicationProducts(userID, appID string) (*cardProductsResponse, error) {
+	headers := map[string]string{"x-gatehub-managed-user-uuid": userID}
+	var resp cardProductsResponse
+	path := fmt.Sprintf("/cards/v1/card-applications/%s/card-products", appID)
+	if err := h.getJSON(path, &resp, headers); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+func (h *harness) orderPlasticCard(userID, cardID string) (*plasticCardResponse, error) {
+	headers := map[string]string{"x-gatehub-managed-user-uuid": userID}
+	var resp plasticCardResponse
+	path := fmt.Sprintf("/cards/v1/cards/%s/plastic", cardID)
+	if err := h.postJSON(path, map[string]interface{}{}, headers, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}

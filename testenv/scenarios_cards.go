@@ -113,6 +113,81 @@ func scenarioCards() scenario {
 	}
 }
 
+func scenarioCardProducts() scenario {
+	return scenario{
+		name: "Card products and plastic ordering",
+		run: func(h *harness) (string, error) {
+			email := fmt.Sprintf("products+%d@example.com", time.Now().UnixNano())
+			userID, err := h.bootstrapAcceptedUser(email)
+			if err != nil {
+				return "", fmt.Errorf("bootstrap user: %w", err)
+			}
+
+			wallet, err := h.createWallet(userID, "Products Wallet")
+			if err != nil {
+				return "", fmt.Errorf("create wallet: %w", err)
+			}
+
+			customer, err := h.createCustomerAndCard(userID, wallet.Address, "Test User")
+			if err != nil {
+				return "", fmt.Errorf("create customer: %w", err)
+			}
+
+			if len(customer.Customer.Accounts) == 0 || len(customer.Customer.Accounts[0].Cards) == 0 {
+				return "", fmt.Errorf("customer missing account/card")
+			}
+
+			card := customer.Customer.Accounts[0].Cards[0]
+
+			// Test: Get card application products
+			products, err := h.getCardApplicationProducts(userID, "test-app")
+			if err != nil {
+				return "", fmt.Errorf("get card products: %w", err)
+			}
+			if len(products.Data) == 0 {
+				return "", fmt.Errorf("no card products returned")
+			}
+
+			// Verify expected product codes
+			productCodes := make(map[string]bool)
+			for _, p := range products.Data {
+				productCodes[p.Code] = true
+			}
+			if !productCodes["PROD_VIRTUAL_CARD"] {
+				return "", fmt.Errorf("PROD_VIRTUAL_CARD not in products")
+			}
+			if !productCodes["PROD_PLASTIC_CARD"] {
+				return "", fmt.Errorf("PROD_PLASTIC_CARD not in products")
+			}
+
+			// Test: Order plastic card
+			plasticOrder, err := h.orderPlasticCard(userID, card.ID)
+			if err != nil {
+				return "", fmt.Errorf("order plastic card: %w", err)
+			}
+			if plasticOrder.OrderID == "" {
+				return "", fmt.Errorf("plastic order missing orderId")
+			}
+			if plasticOrder.Status != "PENDING" {
+				return "", fmt.Errorf("expected plastic order status PENDING, got %s", plasticOrder.Status)
+			}
+			if plasticOrder.Type != "PLASTIC" {
+				return "", fmt.Errorf("expected plastic order type PLASTIC, got %s", plasticOrder.Type)
+			}
+
+			// Verify delivery address is populated
+			if plasticOrder.DeliveryAddress == nil {
+				return "", fmt.Errorf("plastic order missing delivery address")
+			}
+			if plasticOrder.DeliveryAddress.FirstName == "" {
+				return "", fmt.Errorf("delivery address missing firstName")
+			}
+
+			return fmt.Sprintf("products %d plastic %s", len(products.Data), plasticOrder.OrderID), nil
+		},
+	}
+}
+
 func derefString(v *string) string {
 	if v == nil {
 		return ""

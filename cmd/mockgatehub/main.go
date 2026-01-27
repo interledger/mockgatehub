@@ -189,6 +189,7 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		r.Put("/cards/{cardID}/unlock", h.UnlockCard)
 		r.Put("/cards/{cardID}/block", h.BlockCard)
 		r.Delete("/cards/{cardID}/card", h.DeleteCard)
+		r.Post("/cards/{cardID}/plastic", h.CreatePlasticForCard)
 		r.Post("/token/{tokenType}", h.GetCardToken)
 		r.Get("/token/{tokenType}/data", h.GetTokenData)
 		r.Post("/pin/change", h.ChangePin)
@@ -200,5 +201,6 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		r.Get("/customers/{customerID}/addresses", h.GetDeliveryAddresses)
 		r.Post("/customers/{customerID}/addresses", h.CreateCustomerDeliveryAddress)
 		r.Post("/cards/{accountID}/card", h.OrderCard)
+		r.Get("/card-applications/{appID}/card-products", h.GetCardApplicationProducts)
 	})
 }

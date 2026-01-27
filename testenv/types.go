@@ -137,3 +137,44 @@ type pending3DSItem struct {
 	PurchaseDate     string `json:"purchaseDate"`
 	Timeout          string `json:"timeout"`
 }
+
+// Phase 6: Card Products & Plastic
+type cardProductsResponse struct {
+	Data       []cardProduct `json:"data"`
+	Pagination pagination    `json:"pagination"`
+}
+
+type cardProduct struct {
+	ID          string `json:"id"`
+	Code        string `json:"code"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Type        string `json:"type"`
+	Currency    string `json:"currency"`
+	Active      bool   `json:"active"`
+}
+
+type pagination struct {
+	PageNumber int `json:"pageNumber"`
+	PageSize   int `json:"pageSize"`
+	TotalPages int `json:"totalPages"`
+}
+
+type plasticCardResponse struct {
+	Message         string                  `json:"message"`
+	OrderID         string                  `json:"orderId"`
+	CardID          string                  `json:"cardId"`
+	Status          string                  `json:"status"`
+	Type            string                  `json:"type"`
+	EstimatedDate   string                  `json:"estimatedDate"`
+	DeliveryAddress *plasticDeliveryAddress `json:"deliveryAddress"`
+}
+
+type plasticDeliveryAddress struct {
+	FirstName   string `json:"firstName"`
+	LastName    string `json:"lastName"`
+	AddressLine string `json:"addressLine1"`
+	City        string `json:"city"`
+	ZipCode     string `json:"zipCode"`
+	Country     string `json:"country"`
+}

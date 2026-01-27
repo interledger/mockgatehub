@@ -15,7 +15,8 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
+# Clean Go cache and build the application
+RUN go clean -cache
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o mockgatehub ./cmd/mockgatehub
 
 # Final stage

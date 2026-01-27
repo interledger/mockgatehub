@@ -1242,4 +1242,90 @@ func derefString(value *string) string {
 	return *value
 }
 
+// GetCardApplicationProducts returns available card products for a given application
+// Endpoint: GET /cards/v1/card-applications/{appID}/card-products
+func (h *Handler) GetCardApplicationProducts(w http.ResponseWriter, r *http.Request) {
+	appID := chi.URLParam(r, "appID")
+	if appID == "" {
+		h.sendError(w, http.StatusBadRequest, "appID is required")
+		return
+	}
+
+	// Hardcoded card products response (sandbox simulation)
+	products := map[string]interface{}{
+		"data": []map[string]interface{}{
+			{
+				"id":          "PROD_VIRTUAL_CARD",
+				"code":        "PROD_VIRTUAL_CARD",
+				"name":        "Virtual Card EUR",
+				"description": "Virtual Mastercard for online purchases in EUR",
+				"type":        "VIRTUAL",
+				"currency":    "EUR",
+				"active":      true,
+			},
+			{
+				"id":          "PROD_PLASTIC_CARD",
+				"code":        "PROD_PLASTIC_CARD",
+				"name":        "Plastic Card EUR",
+				"description": "Physical Mastercard for in-store and online purchases in EUR",
+				"type":        "PLASTIC",
+				"currency":    "EUR",
+				"active":      true,
+			},
+		},
+		"pagination": map[string]interface{}{
+			"pageNumber": 1,
+			"pageSize":   10,
+			"totalPages": 1,
+		},
+	}
+
+	h.sendJSON(w, http.StatusOK, products)
+}
+
+// CreatePlasticForCard creates a physical card for an existing card
+// Endpoint: POST /cards/v1/cards/{cardID}/plastic
+// This is a stub that always returns success (plastic cards are not physically shipped in mock)
+func (h *Handler) CreatePlasticForCard(w http.ResponseWriter, r *http.Request) {
+	cardID := chi.URLParam(r, "cardID")
+	if cardID == "" {
+		h.sendError(w, http.StatusBadRequest, "cardID is required")
+		return
+	}
+
+	// Verify card exists
+	card, err := h.store.GetCard(cardID)
+	if err != nil {
+		h.sendError(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	// Update card to mark plastic as created
+	card.PlasticCreated = true
+	if err := h.store.UpdateCard(card); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to update card")
+		return
+	}
+
+	// Return success response with plastic order details
+	response := map[string]interface{}{
+		"message":       "Plastic card order created successfully",
+		"orderId":       utils.GenerateUUID(),
+		"cardId":        cardID,
+		"status":        "PENDING",
+		"type":          "PLASTIC",
+		"estimatedDate": time.Now().AddDate(0, 0, 7).Format("2006-01-02"),
+		"deliveryAddress": map[string]interface{}{
+			"firstName":    "Mock",
+			"lastName":     "User",
+			"addressLine1": "123 Mock Street",
+			"city":         "Mock City",
+			"zipCode":      "12345",
+			"country":      "Mock Country",
+		},
+	}
+
+	h.sendJSON(w, http.StatusCreated, response)
+}
+
 // NOTE: real implementation exists above; stub removed

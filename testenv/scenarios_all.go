@@ -9,5 +9,6 @@ func allScenarios() []scenario {
 		scenarioIframeDeposit(),
 		scenarioRatesAndVaults(),
 		scenarioCards(),
+		scenarioCardProducts(),
 	}
 }
