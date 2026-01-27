@@ -195,6 +195,8 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		r.Post("/transactions", h.CreateCardTransaction)
 		r.Get("/transactions/{txID}", h.GetCardTransaction)
 		r.Get("/transaction/pending-confirmations", h.GetPendingConfirmations)
+		r.Post("/transaction/{txID}", h.ThreeDSPaymentConfirmation)
+		r.Post("/test/3ds/challenge", h.CreateThreeDSChallenge)
 		r.Get("/customers/{customerID}/addresses", h.GetDeliveryAddresses)
 		r.Post("/customers/{customerID}/addresses", h.CreateCustomerDeliveryAddress)
 		r.Post("/cards/{accountID}/card", h.OrderCard)

@@ -966,10 +966,189 @@ func (h *Handler) GetCardTransactions(w http.ResponseWriter, r *http.Request) {
 	h.sendJSON(w, http.StatusOK, response)
 }
 
-// GetPendingConfirmations returns an empty 3DS confirmation list (stub for now).
+// GetPendingConfirmations returns pending 3DS challenges for the authenticated user
 func (h *Handler) GetPendingConfirmations(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get(managedUserHeader)
+	if userID == "" {
+		h.sendError(w, http.StatusBadRequest, "x-gatehub-managed-user-uuid header is required")
+		return
+	}
+
+	challenges, err := h.store.GetPendingThreeDSChallenges(userID)
+	if err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to get pending confirmations")
+		return
+	}
+
+	// Convert to API format
+	var confirmations []models.PendingThreeDSConfirmation
+	for _, challenge := range challenges {
+		confirmations = append(confirmations, models.PendingThreeDSConfirmation{
+			TransactionID:    challenge.TransactionID,
+			MerchantName:     challenge.MerchantName,
+			PurchaseAmount:   challenge.PurchaseAmount,
+			PurchaseCurrency: challenge.PurchaseCurrency,
+			PurchaseDate:     challenge.PurchaseDate,
+			Timeout:          challenge.Timeout.Format(time.RFC3339),
+		})
+	}
+
 	h.sendJSON(w, http.StatusOK, map[string]interface{}{
-		"pendingConfirmations": []interface{}{},
+		"pendingConfirmations": confirmations,
+	})
+}
+
+// ThreeDSPaymentConfirmation confirms or declines a 3DS payment
+func (h *Handler) ThreeDSPaymentConfirmation(w http.ResponseWriter, r *http.Request) {
+	txID := chi.URLParam(r, "txID")
+	if txID == "" {
+		h.sendError(w, http.StatusBadRequest, "transaction ID is required")
+		return
+	}
+
+	userID := r.Header.Get(managedUserHeader)
+	if userID == "" {
+		h.sendError(w, http.StatusBadRequest, "x-gatehub-managed-user-uuid header is required")
+		return
+	}
+
+	var req models.ThreeDSPaymentConfirmationArgs
+	if err := h.decodeJSON(r, &req); err != nil {
+		h.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.AuthMethod == "" {
+		h.sendError(w, http.StatusBadRequest, "authMethod is required")
+		return
+	}
+
+	// Get the challenge
+	challenge, err := h.store.GetThreeDSChallenge(txID)
+	if err != nil {
+		h.sendError(w, http.StatusNotFound, "3DS challenge not found")
+		return
+	}
+
+	// Verify ownership
+	if challenge.UserID != userID {
+		h.sendError(w, http.StatusForbidden, "not authorized")
+		return
+	}
+
+	// Check if not already resolved
+	if challenge.Status != "pending" {
+		h.sendError(w, http.StatusBadRequest, "challenge already resolved")
+		return
+	}
+
+	// Check if not expired
+	if time.Now().After(challenge.Timeout) {
+		challenge.Status = "expired"
+		_ = h.store.UpdateThreeDSChallenge(challenge)
+		h.sendError(w, http.StatusGone, "challenge expired")
+		return
+	}
+
+	// Update status based on confirmation
+	if req.Confirmed {
+		challenge.Status = "approved"
+	} else {
+		challenge.Status = "declined"
+	}
+
+	if err := h.store.UpdateThreeDSChallenge(challenge); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to update challenge")
+		return
+	}
+
+	h.sendJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"status":  challenge.Status,
+	})
+}
+
+// CreateThreeDSChallenge creates a mock 3DS challenge for testing
+func (h *Handler) CreateThreeDSChallenge(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get(managedUserHeader)
+	if userID == "" {
+		h.sendError(w, http.StatusBadRequest, "x-gatehub-managed-user-uuid header is required")
+		return
+	}
+
+	var req struct {
+		CardID           string `json:"cardId"`
+		MerchantName     string `json:"merchantName"`
+		PurchaseAmount   string `json:"purchaseAmount"`
+		PurchaseCurrency string `json:"purchaseCurrency"`
+		TimeoutMinutes   int    `json:"timeoutMinutes"` // Default: 5 minutes
+	}
+
+	if err := h.decodeJSON(r, &req); err != nil {
+		h.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.CardID == "" {
+		h.sendError(w, http.StatusBadRequest, "cardId is required")
+		return
+	}
+
+	card, err := h.store.GetCard(req.CardID)
+	if err != nil {
+		h.sendError(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	// Set defaults
+	if req.MerchantName == "" {
+		req.MerchantName = "Test Merchant"
+	}
+	if req.PurchaseAmount == "" {
+		req.PurchaseAmount = "100.00"
+	}
+	if req.PurchaseCurrency == "" {
+		req.PurchaseCurrency = "EUR"
+	}
+	if req.TimeoutMinutes == 0 {
+		req.TimeoutMinutes = 5
+	}
+
+	now := time.Now()
+	timeout := now.Add(time.Duration(req.TimeoutMinutes) * time.Minute)
+	txID := utils.GenerateUUID()
+
+	challenge := models.ThreeDSChallenge{
+		TransactionID:    txID,
+		CardID:           card.ID,
+		UserID:           userID,
+		MerchantName:     req.MerchantName,
+		PurchaseAmount:   req.PurchaseAmount,
+		PurchaseCurrency: req.PurchaseCurrency,
+		PurchaseDate:     now.Format(time.RFC3339),
+		Timeout:          timeout,
+		Status:           "pending",
+		CreatedAt:        now,
+	}
+
+	if err := h.store.CreateThreeDSChallenge(&challenge); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to create challenge")
+		return
+	}
+
+	h.sendJSON(w, http.StatusCreated, challenge)
+
+	// Send webhook
+	go h.webhookManager.SendAsync(consts.WebhookEventCard3DS, userID, map[string]interface{}{
+		"type": "3ds_challenge",
+		"payload": map[string]interface{}{
+			"transactionId":    challenge.TransactionID,
+			"merchantName":     challenge.MerchantName,
+			"purchaseAmount":   challenge.PurchaseAmount,
+			"purchaseCurrency": challenge.PurchaseCurrency,
+			"purchaseDate":     challenge.PurchaseDate,
+			"timeout":          challenge.Timeout.Format(time.RFC3339),
+		},
 	})
 }
 

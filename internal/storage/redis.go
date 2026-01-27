@@ -708,6 +708,128 @@ func (s *RedisStorage) DeductBalance(userID, currency string, amount float64) er
 	return s.AddBalance(userID, currency, -amount)
 }
 
+// 3DS Challenges
+
+func (s *RedisStorage) CreateThreeDSChallenge(challenge *models.ThreeDSChallenge) error {
+	if challenge.TransactionID == "" {
+		return errors.New("transaction ID is required")
+	}
+
+	if challenge.CreatedAt.IsZero() {
+		challenge.CreatedAt = time.Now()
+	}
+
+	data, err := json.Marshal(challenge)
+	if err != nil {
+		return fmt.Errorf("failed to marshal 3DS challenge: %w", err)
+	}
+
+	// Calculate TTL based on timeout
+	ttl := time.Until(challenge.Timeout)
+	if ttl < 0 {
+		return errors.New("3DS challenge timeout is in the past")
+	}
+	// Add a buffer to TTL to ensure we can mark it as expired
+	ttl = ttl + 10*time.Minute
+
+	// Store the challenge
+	if err := s.client.Set(s.ctx, s.threeDSChallengeKey(challenge.TransactionID), data, ttl).Err(); err != nil {
+		return fmt.Errorf("failed to store 3DS challenge: %w", err)
+	}
+
+	// Add to user's pending challenges set (sorted by timeout)
+	score := float64(challenge.Timeout.Unix())
+	if err := s.client.ZAdd(s.ctx, s.userThreeDSChallengesKey(challenge.UserID), redis.Z{
+		Score:  score,
+		Member: challenge.TransactionID,
+	}).Err(); err != nil {
+		return fmt.Errorf("failed to index 3DS challenge: %w", err)
+	}
+
+	return nil
+}
+
+func (s *RedisStorage) GetThreeDSChallenge(txID string) (*models.ThreeDSChallenge, error) {
+	data, err := s.client.Get(s.ctx, s.threeDSChallengeKey(txID)).Result()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return nil, errors.New("3DS challenge not found")
+		}
+		return nil, fmt.Errorf("failed to get 3DS challenge: %w", err)
+	}
+
+	var challenge models.ThreeDSChallenge
+	if err := json.Unmarshal([]byte(data), &challenge); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal 3DS challenge: %w", err)
+	}
+
+	return &challenge, nil
+}
+
+func (s *RedisStorage) GetPendingThreeDSChallenges(userID string) ([]*models.ThreeDSChallenge, error) {
+	now := time.Now().Unix()
+
+	// Get all transaction IDs from the sorted set that haven't timed out yet
+	txIDs, err := s.client.ZRangeByScore(s.ctx, s.userThreeDSChallengesKey(userID), &redis.ZRangeBy{
+		Min: strconv.FormatInt(now, 10),
+		Max: "+inf",
+	}).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get pending 3DS challenges: %w", err)
+	}
+
+	var pending []*models.ThreeDSChallenge
+	for _, txID := range txIDs {
+		challenge, err := s.GetThreeDSChallenge(txID)
+		if err != nil {
+			// Challenge may have expired or been deleted
+			continue
+		}
+
+		// Only return if still pending
+		if challenge.Status == "pending" {
+			pending = append(pending, challenge)
+		}
+	}
+
+	return pending, nil
+}
+
+func (s *RedisStorage) UpdateThreeDSChallenge(challenge *models.ThreeDSChallenge) error {
+	// Check if exists
+	exists, err := s.client.Exists(s.ctx, s.threeDSChallengeKey(challenge.TransactionID)).Result()
+	if err != nil {
+		return fmt.Errorf("failed to check 3DS challenge existence: %w", err)
+	}
+	if exists == 0 {
+		return errors.New("3DS challenge not found")
+	}
+
+	data, err := json.Marshal(challenge)
+	if err != nil {
+		return fmt.Errorf("failed to marshal 3DS challenge: %w", err)
+	}
+
+	// Maintain existing TTL
+	ttl, err := s.client.TTL(s.ctx, s.threeDSChallengeKey(challenge.TransactionID)).Result()
+	if err != nil {
+		return fmt.Errorf("failed to get TTL: %w", err)
+	}
+
+	if err := s.client.Set(s.ctx, s.threeDSChallengeKey(challenge.TransactionID), data, ttl).Err(); err != nil {
+		return fmt.Errorf("failed to update 3DS challenge: %w", err)
+	}
+
+	// If status changed from pending, remove from user's pending set
+	if challenge.Status != "pending" {
+		if err := s.client.ZRem(s.ctx, s.userThreeDSChallengesKey(challenge.UserID), challenge.TransactionID).Err(); err != nil {
+			return fmt.Errorf("failed to remove from pending set: %w", err)
+		}
+	}
+
+	return nil
+}
+
 // Key helpers
 
 func (s *RedisStorage) userKey(id string) string {
@@ -780,4 +902,12 @@ func (s *RedisStorage) txKey(id string) string {
 
 func (s *RedisStorage) balanceKey(userID, currency string) string {
 	return fmt.Sprintf("balance:%s:%s", userID, currency)
+}
+
+func (s *RedisStorage) threeDSChallengeKey(txID string) string {
+	return fmt.Sprintf("3ds:challenge:%s", txID)
+}
+
+func (s *RedisStorage) userThreeDSChallengesKey(userID string) string {
+	return fmt.Sprintf("user:%s:3ds:challenges", userID)
 }

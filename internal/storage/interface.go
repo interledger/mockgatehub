@@ -56,4 +56,10 @@ type Storage interface {
 	GetBalance(userID, currency string) (float64, error)
 	AddBalance(userID, currency string, amount float64) error
 	DeductBalance(userID, currency string, amount float64) error
+
+	// 3DS Challenges
+	CreateThreeDSChallenge(challenge *models.ThreeDSChallenge) error
+	GetThreeDSChallenge(txID string) (*models.ThreeDSChallenge, error)
+	GetPendingThreeDSChallenges(userID string) ([]*models.ThreeDSChallenge, error)
+	UpdateThreeDSChallenge(challenge *models.ThreeDSChallenge) error
 }

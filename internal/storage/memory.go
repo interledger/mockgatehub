@@ -22,6 +22,7 @@ type MemoryStorage struct {
 	cardTransactionsByCard map[string][]string                          // cardID -> transactionIDs
 	cardLimits             map[string][]models.CardLimit                // cardID -> limits
 	customerAddresses      map[string][]*models.CustomerDeliveryAddress // customerID -> addresses
+	threeDSChallenges      map[string]*models.ThreeDSChallenge          // transactionID -> ThreeDSChallenge
 	wallets                map[string]*models.Wallet                    // address -> Wallet
 	transactions           map[string]*models.Transaction               // txID -> Transaction
 	balances               map[string]map[string]float64                // userID -> currency -> amount
@@ -40,6 +41,7 @@ func NewMemoryStorage() *MemoryStorage {
 		cardTransactionsByCard: make(map[string][]string),
 		cardLimits:             make(map[string][]models.CardLimit),
 		customerAddresses:      make(map[string][]*models.CustomerDeliveryAddress),
+		threeDSChallenges:      make(map[string]*models.ThreeDSChallenge),
 		wallets:                make(map[string]*models.Wallet),
 		transactions:           make(map[string]*models.Transaction),
 		balances:               make(map[string]map[string]float64),
@@ -568,5 +570,68 @@ func (s *MemoryStorage) DeductBalance(userID, currency string, amount float64) e
 	}
 
 	s.balances[userID][currency] -= amount
+	return nil
+}
+
+// CreateThreeDSChallenge creates a new 3DS challenge
+func (s *MemoryStorage) CreateThreeDSChallenge(challenge *models.ThreeDSChallenge) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if challenge.TransactionID == "" {
+		return fmt.Errorf("transaction ID is required")
+	}
+
+	if challenge.CreatedAt.IsZero() {
+		challenge.CreatedAt = time.Now()
+	}
+
+	s.threeDSChallenges[challenge.TransactionID] = challenge
+	return nil
+}
+
+// GetThreeDSChallenge retrieves a 3DS challenge by transaction ID
+func (s *MemoryStorage) GetThreeDSChallenge(txID string) (*models.ThreeDSChallenge, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	challenge, exists := s.threeDSChallenges[txID]
+	if !exists {
+		return nil, fmt.Errorf("3DS challenge not found")
+	}
+
+	return challenge, nil
+}
+
+// GetPendingThreeDSChallenges retrieves all pending 3DS challenges for a user
+func (s *MemoryStorage) GetPendingThreeDSChallenges(userID string) ([]*models.ThreeDSChallenge, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var pending []*models.ThreeDSChallenge
+	now := time.Now()
+
+	for _, challenge := range s.threeDSChallenges {
+		if challenge.UserID == userID && challenge.Status == "pending" {
+			// Check if not expired
+			if challenge.Timeout.After(now) {
+				pending = append(pending, challenge)
+			}
+		}
+	}
+
+	return pending, nil
+}
+
+// UpdateThreeDSChallenge updates a 3DS challenge
+func (s *MemoryStorage) UpdateThreeDSChallenge(challenge *models.ThreeDSChallenge) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.threeDSChallenges[challenge.TransactionID]; !exists {
+		return fmt.Errorf("3DS challenge not found")
+	}
+
+	s.threeDSChallenges[challenge.TransactionID] = challenge
 	return nil
 }

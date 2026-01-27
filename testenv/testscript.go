@@ -106,6 +106,7 @@ func waitForServices() error {
 func runTests() {
 	var userID, token, walletAddress, customerID, accountID, cardID, deliveryAddressID, orderedCardID string
 	var cardDataToken, pinToken, pinChangeToken string
+	var threeDSTransactionID string
 
 	// Test 1: Health check
 	runTest("Health Check", func() (bool, string) {
@@ -789,6 +790,95 @@ func runTests() {
 			return false, "No transactions returned"
 		}
 		return true, fmt.Sprintf("Returned %d transactions", len(data))
+	})
+
+	// Test 7.13: Create 3DS challenge
+	runTest("Create 3DS Challenge", func() (bool, string) {
+		body := map[string]interface{}{
+			"cardId":           cardID,
+			"merchantName":     "Test E-commerce",
+			"purchaseAmount":   "250.00",
+			"purchaseCurrency": "EUR",
+			"timeoutMinutes":   5,
+		}
+		var result map[string]interface{}
+		if err := postJSONWithHeaders(
+			"/cards/v1/test/3ds/challenge",
+			body,
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+
+		txID, _ := result["transactionId"].(string)
+		if txID == "" {
+			return false, "Missing transactionId"
+		}
+		threeDSTransactionID = txID
+		return true, fmt.Sprintf("Challenge=%s", txID)
+	})
+
+	// Test 7.14: Get pending 3DS confirmations
+	runTest("Get Pending 3DS Confirmations", func() (bool, string) {
+		var result map[string]interface{}
+		if err := getJSONWithHeaders(
+			"/cards/v1/transaction/pending-confirmations",
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+
+		confirmations, _ := result["pendingConfirmations"].([]interface{})
+		if len(confirmations) == 0 {
+			return false, "No pending confirmations"
+		}
+		return true, fmt.Sprintf("Found %d pending confirmation(s)", len(confirmations))
+	})
+
+	// Test 7.15: Approve 3DS payment
+	runTest("Approve 3DS Payment", func() (bool, string) {
+		body := map[string]interface{}{
+			"confirmed":  true,
+			"authMethod": "biometric",
+		}
+		var result map[string]interface{}
+		if err := postJSONWithHeaders(
+			fmt.Sprintf("/cards/v1/transaction/%s", threeDSTransactionID),
+			body,
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+
+		success, _ := result["success"].(bool)
+		status, _ := result["status"].(string)
+		return success && status == "approved", fmt.Sprintf("Status=%s", status)
+	})
+
+	// Test 7.16: Verify no pending confirmations after approval
+	runTest("Verify No Pending After Approval", func() (bool, string) {
+		var result map[string]interface{}
+		if err := getJSONWithHeaders(
+			"/cards/v1/transaction/pending-confirmations",
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+
+		confirmations, _ := result["pendingConfirmations"].([]interface{})
+		return len(confirmations) == 0, fmt.Sprintf("Found %d pending (expected 0)", len(confirmations))
 	})
 
 	// Test 8: Create additional wallet

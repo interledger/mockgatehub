@@ -103,6 +103,7 @@ const (
 	WebhookEventDepositCompleted  = "core.deposit.completed"
 	WebhookEventCardCreated       = "cards.card.created"
 	WebhookEventCardTransaction   = "cards.transaction.event"
+	WebhookEventCard3DS           = "cards.3ds.auth_3ds_confirmation"
 )
 
 // Card status values (GateHub Cards)

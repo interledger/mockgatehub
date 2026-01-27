@@ -225,3 +225,33 @@ type CardTransaction struct {
 	SpendExchangeRate         *string `json:"spendExchangeRate"`
 	SpendCurrency             *string `json:"spendCurrency"`
 }
+
+// 3DS-related models
+
+type PendingThreeDSConfirmation struct {
+	TransactionID    string `json:"transactionId"`
+	MerchantName     string `json:"merchantName"`
+	PurchaseAmount   string `json:"purchaseAmount"`
+	PurchaseCurrency string `json:"purchaseCurrency"`
+	PurchaseDate     string `json:"purchaseDate"`
+	Timeout          string `json:"timeout"` // ISO 8601 timestamp
+}
+
+type ThreeDSPaymentConfirmationArgs struct {
+	TransactionID string `json:"-"`         // URL param
+	Confirmed     bool   `json:"confirmed"` // true = approve, false = decline
+	AuthMethod    string `json:"authMethod"` // "biometric" | "pin" | "password"
+}
+
+type ThreeDSChallenge struct {
+	TransactionID    string    `json:"transactionId"`
+	CardID           string    `json:"cardId"`
+	UserID           string    `json:"userId"`
+	MerchantName     string    `json:"merchantName"`
+	PurchaseAmount   string    `json:"purchaseAmount"`
+	PurchaseCurrency string    `json:"purchaseCurrency"`
+	PurchaseDate     string    `json:"purchaseDate"`
+	Timeout          time.Time `json:"timeout"`
+	Status           string    `json:"status"` // "pending" | "approved" | "declined" | "expired"
+	CreatedAt        time.Time `json:"createdAt"`
+}
