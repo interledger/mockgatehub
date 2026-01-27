@@ -37,7 +37,7 @@ func NewTestServer() *TestServer {
 		panic(fmt.Sprintf("Failed to seed test users: %v", err))
 	}
 
-	webhookManager := webhook.NewManager("", "test-secret")
+	webhookManager := webhook.NewManager("", "test-secret", nil)
 	h := handler.NewHandler(store, webhookManager)
 
 	r := chi.NewRouter()

@@ -43,7 +43,36 @@ func main() {
 		logger.Error.Fatalf("Failed to seed test users: %v", err)
 	}
 
-	webhookManager := webhook.NewManager(cfg.WebhookURL, cfg.WebhookSecret)
+	// Initialize webhook queue and worker
+	var webhookQueue *webhook.Queue
+	var webhookWorker *webhook.Worker
+
+	if cfg.UseRedis {
+		// Use Redis-backed queue for webhook delivery
+		redisStore, ok := store.(*storage.RedisStorage)
+		if !ok {
+			logger.Error.Fatalf("Redis storage type assertion failed")
+		}
+		webhookQueue = webhook.NewQueue(redisStore.GetClient())
+		logger.Info.Println("Using Redis-backed webhook queue")
+	} else {
+		// For in-memory mode, we still need Redis for webhook queue
+		// Create a dedicated Redis connection just for webhooks
+		logger.Warn.Println("WARNING: In-memory storage mode requires Redis for webhook queue")
+		logger.Warn.Printf("Connecting to Redis for webhook queue: %s (DB: %d)", cfg.RedisURL, cfg.RedisDB)
+		redisClient, err := storage.NewRedisClient(cfg.RedisURL, cfg.RedisDB)
+		if err != nil {
+			logger.Error.Fatalf("Failed to connect to Redis for webhook queue: %v", err)
+		}
+		webhookQueue = webhook.NewQueue(redisClient)
+	}
+
+	webhookManager := webhook.NewManager(cfg.WebhookURL, cfg.WebhookSecret, webhookQueue)
+	webhookWorker = webhook.NewWorker(webhookQueue, webhookManager)
+
+	// Start webhook worker in background
+	webhookWorker.StartAsync()
+	logger.Info.Println("Webhook worker started")
 	h := handler.NewHandler(store, webhookManager)
 	r := chi.NewRouter()
 
@@ -101,6 +130,13 @@ func main() {
 	<-quit
 
 	logger.Info.Println("Shutting down server...")
+
+	// Stop webhook worker
+	if webhookWorker != nil {
+		logger.Info.Println("Stopping webhook worker...")
+		webhookWorker.Stop()
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 

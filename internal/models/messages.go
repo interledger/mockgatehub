@@ -87,8 +87,12 @@ type CurrenciesResponse struct {
 }
 
 // DepositWebhookData represents the data payload for deposit webhooks.
+// Wallet backend expects GateHub parity fields: tx_uuid + deposit_type + address.
 type DepositWebhookData struct {
-	TransactionID string `json:"transaction_id"`
+	TransactionID string `json:"transaction_id"` // legacy field (kept for compatibility)
+	TxUUID        string `json:"tx_uuid"`        // primary transaction identifier used by wallet backend
 	Amount        string `json:"amount"`
 	Currency      string `json:"currency"`
+	Address       string `json:"address,omitempty"`
+	DepositType   string `json:"deposit_type,omitempty"` // hosted | external
 }

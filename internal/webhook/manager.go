@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ type Manager struct {
 	webhookURL    string
 	webhookSecret string
 	httpClient    *http.Client
+	queue         *Queue // Redis-backed job queue
 }
 
 // WebhookPayload represents the webhook request body (matches wallet-backend IWebhookData)
@@ -31,7 +33,7 @@ type WebhookPayload struct {
 }
 
 // NewManager creates a new webhook manager
-func NewManager(webhookURL, webhookSecret string) *Manager {
+func NewManager(webhookURL, webhookSecret string, queue *Queue) *Manager {
 	logger.Info.Printf("[WEBHOOK] Initializing webhook manager")
 	logger.Info.Printf("[WEBHOOK]   URL: %s", webhookURL)
 	logger.Info.Printf("[WEBHOOK]   Secret: %s (length: %d)", webhookSecret, len(webhookSecret))
@@ -42,54 +44,34 @@ func NewManager(webhookURL, webhookSecret string) *Manager {
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		queue: queue,
 	}
 }
 
-// SendAsync sends a webhook asynchronously with retry logic
+// SendAsync enqueues a webhook job for asynchronous delivery
 func (m *Manager) SendAsync(eventType, userID string, data any) {
 	if m.webhookURL == "" {
 		logger.Info.Printf("[WEBHOOK] Skipping webhook send - no URL configured (event: %s, user: %s)", eventType, userID)
 		return
 	}
 
-	logger.Info.Printf("[WEBHOOK] Queuing async webhook: event=%s, user=%s", eventType, userID)
+	logger.Info.Printf("[WEBHOOK] Enqueueing webhook: event=%s, user=%s", eventType, userID)
 	logger.Info.Printf("[WEBHOOK]   Data: %+v", data)
 
-	go func() {
-		if err := m.sendWithRetry(eventType, userID, data, 3); err != nil {
-			logger.Error.Printf("[WEBHOOK] Failed to deliver webhook after retries: %v", err)
-		} else {
-			logger.Info.Printf("[WEBHOOK] ✅ Webhook delivered successfully: event=%s, user=%s", eventType, userID)
-		}
-	}()
-}
-
-// sendWithRetry attempts to send webhook with exponential backoff
-func (m *Manager) sendWithRetry(eventType, userID string, data any, maxRetries int) error {
-	var lastErr error
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		logger.Info.Printf("[WEBHOOK] Attempt %d/%d: Sending webhook to %s", attempt, maxRetries, m.webhookURL)
-
-		err := m.send(eventType, userID, data)
-		if err == nil {
-			return nil
-		}
-
-		lastErr = err
-		logger.Error.Printf("[WEBHOOK] Attempt %d failed: %v", attempt, err)
-
-		if attempt < maxRetries {
-			backoff := time.Duration(attempt*attempt) * time.Second
-			logger.Info.Printf("[WEBHOOK] Retrying in %v...", backoff)
-			time.Sleep(backoff)
-		}
+	ctx := context.Background()
+	jobID, err := m.queue.Enqueue(ctx, eventType, userID, data)
+	if err != nil {
+		logger.Error.Printf("[WEBHOOK] Failed to enqueue webhook: %v", err)
+		return
 	}
 
-	return fmt.Errorf("all %d attempts failed, last error: %w", maxRetries, lastErr)
+	logger.Info.Printf("[WEBHOOK] Webhook enqueued successfully: job_id=%s", jobID)
 }
 
-// send performs the actual HTTP webhook request
+// send is now public (called by worker) and performs a single send attempt
+// Worker handles retry logic via queue rescheduling
+
+// Send performs the actual HTTP webhook request (called by worker)
 func (m *Manager) send(eventType, userID string, data any) error {
 	normalized := normalizeVerificationPayload(eventType, data)
 

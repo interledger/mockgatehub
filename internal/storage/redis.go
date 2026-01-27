@@ -21,6 +21,27 @@ type RedisStorage struct {
 	ctx    context.Context
 }
 
+// NewRedisClient creates a standalone Redis client (for webhook queue in memory mode)
+func NewRedisClient(redisURL string, db int) (*redis.Client, error) {
+	opt, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Redis URL: %w", err)
+	}
+
+	opt.DB = db
+
+	client := redis.NewClient(opt)
+	ctx := context.Background()
+
+	// Ping to verify connection
+	if err := client.Ping(ctx).Err(); err != nil {
+		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
+	}
+
+	logger.Info.Printf("Created standalone Redis client: %s (DB: %d)", redisURL, db)
+	return client, nil
+}
+
 // NewRedisStorage creates a new Redis storage instance
 func NewRedisStorage(redisURL string, db int) (*RedisStorage, error) {
 	opt, err := redis.ParseURL(redisURL)
@@ -49,6 +70,11 @@ func NewRedisStorage(redisURL string, db int) (*RedisStorage, error) {
 // Close closes the Redis connection
 func (s *RedisStorage) Close() error {
 	return s.client.Close()
+}
+
+// GetClient returns the underlying Redis client (for webhook queue)
+func (s *RedisStorage) GetClient() *redis.Client {
+	return s.client
 }
 
 // User operations
