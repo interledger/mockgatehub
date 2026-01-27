@@ -127,3 +127,19 @@ type UnfreezeCardArgs struct {
 type CloseCardArgs struct {
 	ReasonCode string `json:"-"`
 }
+
+type GetCardTokenArgs struct {
+	CardID    string  `json:"cardId"`
+	PublicKey *string `json:"publicKey,omitempty"`
+}
+
+type CardTokenLink struct {
+	Href   string `json:"href"`
+	Rel    string `json:"rel"`
+	Method string `json:"method"`
+}
+
+type CardTokenResponse struct {
+	Token string          `json:"token"`
+	Links []CardTokenLink `json:"links"`
+}

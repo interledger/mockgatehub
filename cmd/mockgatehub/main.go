@@ -184,7 +184,9 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		r.Get("/cards/{cardID}/card", h.GetCard)
 		r.Put("/cards/{cardID}/lock", h.LockCard)
 		r.Put("/cards/{cardID}/unlock", h.UnlockCard)
+		r.Put("/cards/{cardID}/block", h.BlockCard)
 		r.Delete("/cards/{cardID}/card", h.DeleteCard)
+		r.Post("/token/{tokenType}", h.GetCardToken)
 		r.Get("/transaction/pending-confirmations", h.GetPendingConfirmations)
 	})
 }

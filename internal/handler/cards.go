@@ -293,6 +293,47 @@ func (h *Handler) UnlockCard(w http.ResponseWriter, r *http.Request) {
 	h.sendJSON(w, http.StatusOK, card)
 }
 
+// BlockCard permanently blocks a card
+func (h *Handler) BlockCard(w http.ResponseWriter, r *http.Request) {
+	cardID := chi.URLParam(r, "cardID")
+	if cardID == "" {
+		h.sendError(w, http.StatusBadRequest, "card ID is required")
+		return
+	}
+
+	reasonCode := r.URL.Query().Get("reasonCode")
+	if reasonCode == "" {
+		h.sendError(w, http.StatusBadRequest, "reasonCode is required")
+		return
+	}
+
+	card, err := h.store.GetCard(cardID)
+	if err != nil {
+		h.sendError(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	if card.Status == consts.CardStatusSoftDelete {
+		h.sendError(w, http.StatusBadRequest, "card is closed")
+		return
+	}
+	if card.Status == consts.CardStatusBlocked {
+		h.sendError(w, http.StatusBadRequest, "card already blocked")
+		return
+	}
+
+	card.Status = consts.CardStatusBlocked
+	card.StatusReasonCode = &reasonCode
+	card.LockLevel = nil
+
+	if err := h.store.UpdateCard(card); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to update card")
+		return
+	}
+
+	h.sendJSON(w, http.StatusOK, card)
+}
+
 // DeleteCard closes (soft-deletes) a card
 func (h *Handler) DeleteCard(w http.ResponseWriter, r *http.Request) {
 	cardID := chi.URLParam(r, "cardID")
@@ -307,6 +348,11 @@ func (h *Handler) DeleteCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if card.Status == consts.CardStatusSoftDelete {
+		h.sendError(w, http.StatusBadRequest, "card already closed")
+		return
+	}
+
 	card.Status = consts.CardStatusSoftDelete
 	card.StatusReasonCode = nil
 	card.LockLevel = nil
@@ -317,6 +363,45 @@ func (h *Handler) DeleteCard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.sendJSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
+// GetCardToken returns a short-lived token for card data access
+func (h *Handler) GetCardToken(w http.ResponseWriter, r *http.Request) {
+	tokenType := chi.URLParam(r, "tokenType")
+	if tokenType == "" {
+		h.sendError(w, http.StatusBadRequest, "tokenType is required")
+		return
+	}
+
+	var req models.GetCardTokenArgs
+	if err := h.decodeJSON(r, &req); err != nil {
+		h.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.CardID == "" {
+		h.sendError(w, http.StatusBadRequest, "cardId is required")
+		return
+	}
+
+	if _, err := h.store.GetCard(req.CardID); err != nil {
+		h.sendError(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	token := fmt.Sprintf("mock-%s-%s-%s", tokenType, req.CardID, utils.GenerateUUID())
+	response := models.CardTokenResponse{
+		Token: token,
+		Links: []models.CardTokenLink{
+			{
+				Href:   fmt.Sprintf("/cards/v1/token/%s/data?token=%s", tokenType, token),
+				Rel:    "data",
+				Method: http.MethodGet,
+			},
+		},
+	}
+
+	h.sendJSON(w, http.StatusOK, response)
 }
 
 // GetPendingConfirmations returns an empty 3DS confirmation list (stub for now).

@@ -392,6 +392,31 @@ func runTests() {
 		return status == "Active", fmt.Sprintf("Status=%s", status)
 	})
 
+	// Test 7.85: Get card token
+	runTest("Get Card Token", func() (bool, string) {
+		body := map[string]interface{}{
+			"cardId": cardID,
+		}
+		var result map[string]interface{}
+		if err := postJSONWithHeaders(
+			"/cards/v1/token/card-data",
+			body,
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+
+		token, _ := result["token"].(string)
+		links, _ := result["links"].([]interface{})
+		if token == "" || len(links) == 0 {
+			return false, "Missing token or links"
+		}
+		return true, fmt.Sprintf("Token=%s...", token[:12])
+	})
+
 	// Test 7.9: Lock and unlock card
 	runTest("Lock Card", func() (bool, string) {
 		var result map[string]interface{}
@@ -423,6 +448,23 @@ func runTests() {
 		}
 		status, _ := result["status"].(string)
 		return status == "Active", fmt.Sprintf("Status=%s", status)
+	})
+
+	// Test 7.95: Block card
+	runTest("Block Card", func() (bool, string) {
+		var result map[string]interface{}
+		if err := putJSONWithHeaders(
+			fmt.Sprintf("/cards/v1/cards/%s/block?reasonCode=LostCard", cardID),
+			map[string]interface{}{},
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+		status, _ := result["status"].(string)
+		return status == "Blocked", fmt.Sprintf("Status=%s", status)
 	})
 
 	// Test 7.10: Close card
