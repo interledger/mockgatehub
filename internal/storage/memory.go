@@ -185,6 +185,22 @@ func (s *MemoryStorage) GetTransaction(id string) (*models.Transaction, error) {
 	return tx, nil
 }
 
+// UpdateTransactionStatus updates the status of an existing transaction
+func (s *MemoryStorage) UpdateTransactionStatus(id string, status int) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, exists := s.transactions[id]
+	if !exists {
+		return fmt.Errorf("transaction not found")
+	}
+
+	tx.Status = status
+	s.transactions[id] = tx
+
+	return nil
+}
+
 // GetBalance retrieves balance for a user and currency
 func (s *MemoryStorage) GetBalance(userID, currency string) (float64, error) {
 	s.mu.RLock()

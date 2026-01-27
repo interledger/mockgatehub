@@ -37,7 +37,7 @@ func NewTestServer() *TestServer {
 		panic(fmt.Sprintf("Failed to seed test users: %v", err))
 	}
 
-	webhookManager := webhook.NewManager("", "test-secret")
+	webhookManager := webhook.NewManager("", "test-secret", nil)
 	h := handler.NewHandler(store, webhookManager)
 
 	r := chi.NewRouter()
@@ -205,9 +205,10 @@ func TestFullUserJourney(t *testing.T) {
 	var tx models.Transaction
 	err = json.NewDecoder(rr.Body).Decode(&tx)
 	require.NoError(t, err)
-	assert.Equal(t, 500.00, tx.Amount)
+	assert.Equal(t, "500.00", tx.Amount)
 	assert.Equal(t, "USD", tx.Currency)
-	logger.Info.Printf("[TEST] Deposited: %.2f %s (TX: %s)", tx.Amount, tx.Currency, tx.ID)
+	assert.Equal(t, 1, tx.Status)
+	logger.Info.Printf("[TEST] Deposited: %s %s (TX: %s)", tx.Amount, tx.Currency, tx.ID)
 
 	// 6. Check balance (all currencies)
 	logger.Info.Println("[TEST] Step 6: Check balance")
@@ -245,4 +246,146 @@ func TestKYCIframe(t *testing.T) {
 	assert.Contains(t, rr.Header().Get("Content-Type"), "text/html")
 	assert.Contains(t, rr.Body.String(), "KYC Verification")
 	assert.Contains(t, rr.Body.String(), "MockGatehub")
+}
+
+func TestTransactionAPICompliance(t *testing.T) {
+	logger.Info.Println("\n=== Testing Transaction API Compliance ===")
+	ts := NewTestServer()
+
+	// Create user and wallet
+	user := &models.User{Email: "txtest@example.com"}
+	err := ts.Store.CreateUser(user)
+	require.NoError(t, err)
+
+	wallet := &models.Wallet{
+		Address: "rTestTxAddr123",
+		UserID:  user.ID,
+		Name:    "Test Wallet",
+	}
+	err = ts.Store.CreateWallet(wallet)
+	require.NoError(t, err)
+
+	// Create transaction via API
+	depositReq := models.CreateTransactionRequest{
+		UserID:           user.ID,
+		Amount:           123.45,
+		Currency:         "EUR",
+		VaultUUID:        "a09a0a2c-1a3a-44c5-a1b9-603a6eea9341",
+		ReceivingAddress: wallet.Address,
+		Type:             1,
+		DepositType:      "external",
+	}
+
+	rr := ts.MakeRequest("POST", "/core/v1/transactions", depositReq)
+	require.Equal(t, http.StatusCreated, rr.Code, "Failed to create transaction: %s", rr.Body.String())
+
+	var tx models.Transaction
+	err = json.NewDecoder(rr.Body).Decode(&tx)
+	require.NoError(t, err)
+
+	// Verify all fields are correctly formatted
+	t.Run("Amount fields are strings", func(t *testing.T) {
+		assert.Equal(t, "123.45", tx.Amount)
+		assert.Equal(t, "123.45", tx.TotalAmount)
+		assert.Equal(t, "0.00", tx.Fee)
+	})
+
+	t.Run("Status is integer", func(t *testing.T) {
+		assert.Equal(t, 1, tx.Status)
+	})
+
+	t.Run("Transaction fields are present", func(t *testing.T) {
+		assert.NotEmpty(t, tx.ID)
+		assert.Equal(t, "EUR", tx.Currency)
+		assert.Equal(t, user.ID, tx.UserID)
+		assert.Equal(t, wallet.Address, tx.ReceivingAddress)
+		assert.NotZero(t, tx.CreatedAt)
+	})
+
+	// Retrieve transaction and verify format
+	t.Run("GET transaction returns same format", func(t *testing.T) {
+		txPath := fmt.Sprintf("/core/v1/transactions/%s", tx.ID)
+		rr := ts.MakeRequest("GET", txPath, nil)
+		require.Equal(t, http.StatusOK, rr.Code)
+
+		var retrieved models.Transaction
+		err := json.NewDecoder(rr.Body).Decode(&retrieved)
+		require.NoError(t, err)
+
+		assert.Equal(t, "123.45", retrieved.Amount)
+		assert.Equal(t, 1, retrieved.Status)
+		assert.Equal(t, tx.ID, retrieved.ID)
+	})
+
+	logger.Info.Println("[TEST] ✅ Transaction API compliance verified!")
+}
+
+func TestMultipleCurrencyDeposits(t *testing.T) {
+	logger.Info.Println("\n=== Testing Multiple Currency Deposits ===")
+	ts := NewTestServer()
+
+	// Create user
+	user := &models.User{Email: "multicurrency@example.com"}
+	err := ts.Store.CreateUser(user)
+	require.NoError(t, err)
+
+	// Approve user
+	user.KYCState = "accepted"
+	err = ts.Store.UpdateUser(user)
+	require.NoError(t, err)
+
+	// Create wallet
+	wallet := &models.Wallet{
+		Address: "rMultiCurrAddr",
+		UserID:  user.ID,
+		Name:    "Multi-Currency Wallet",
+	}
+	err = ts.Store.CreateWallet(wallet)
+	require.NoError(t, err)
+
+	// Test deposits in different currencies
+	currencies := []struct {
+		code   string
+		vault  string
+		amount float64
+	}{
+		{"USD", "450d2156-132a-4d3f-88c5-74822547658d", 100.00},
+		{"EUR", "a09a0a2c-1a3a-44c5-a1b9-603a6eea9341", 200.50},
+		{"GBP", "992b932d-7e9e-44b0-90ea-b82a530b6784", 75.25},
+	}
+
+	for _, curr := range currencies {
+		t.Run(curr.code, func(t *testing.T) {
+			depositReq := models.CreateTransactionRequest{
+				UserID:           user.ID,
+				Amount:           curr.amount,
+				Currency:         curr.code,
+				VaultUUID:        curr.vault,
+				ReceivingAddress: wallet.Address,
+				Type:             1,
+				DepositType:      "external",
+			}
+
+			rr := ts.MakeRequest("POST", "/core/v1/transactions", depositReq)
+			require.Equal(t, http.StatusCreated, rr.Code)
+
+			var tx models.Transaction
+			err := json.NewDecoder(rr.Body).Decode(&tx)
+			require.NoError(t, err)
+
+			expectedAmount := fmt.Sprintf("%.2f", curr.amount)
+			assert.Equal(t, expectedAmount, tx.Amount)
+			assert.Equal(t, curr.code, tx.Currency)
+			assert.Equal(t, 1, tx.Status)
+
+			logger.Info.Printf("[TEST] %s deposit: %s (status: %d)", curr.code, tx.Amount, tx.Status)
+		})
+	}
+
+	// Verify balances
+	balancePath := fmt.Sprintf("/core/v1/wallets/%s/balance", wallet.Address)
+	rr := ts.MakeRequest("GET", balancePath, nil)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	logger.Info.Println("[TEST] ✅ Multi-currency deposits successful!")
 }

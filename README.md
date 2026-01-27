@@ -39,6 +39,8 @@ The service will be available at `http://localhost:8080`
 | `MOCKGATEHUB_PORT` | `8080` | HTTP server port |
 | `MOCKGATEHUB_REDIS_URL` | - | Redis connection URL (optional) |
 | `MOCKGATEHUB_REDIS_DB` | `0` | Redis database number |
+| `MOCKGATEHUB_ENFORCE_AUTHENTICATION` | `true` | Enable HMAC signature validation |
+| `MOCKGATEHUB_VALID_CREDENTIALS` | `local-test-app-id:local-test-app-secret` | Comma-separated list of valid credentials in format `appId:secret,appId2:secret2` |
 | `WEBHOOK_URL` | - | Application webhook endpoint URL |
 | `WEBHOOK_SECRET` | - | Secret for signing webhooks |
 
@@ -92,6 +94,7 @@ Two test users are automatically created:
 - `POST /cards` - Create card (stub)
 - `GET /cards/{cardID}` - Get card (stub)
 - `DELETE /cards/{cardID}` - Delete card (stub)
+- `GET /transaction/pending-confirmations` - Get pending 3DS confirmations (stub, returns empty list)
 
 ## Supported Currencies
 
@@ -206,7 +209,7 @@ web/                      # Static assets (KYC iframe)
 
 - **Sandbox Only**: Designed for development, not production use
 - **Happy Paths**: Focuses on successful flows; limited error scenarios
-- **No Authentication**: HMAC signature validation is implemented but not enforced by default
+- **Authentication Required**: HMAC-SHA256 signature validation enforced on all requests (matching real GateHub behavior)
 - **Card Endpoints**: Stubbed with minimal functionality
 - **No Rate Limiting**: Suitable for development only
 
@@ -224,6 +227,53 @@ The KYC flow now mirrors GateHub more closely while remaining wallet-compatible 
 Notes:
 - If `user_id` is not included in the iframe form, the server attempts to map it from the `bearer` token that was created via `/auth/v1/tokens`.
 - The form parser supports both `multipart/form-data` and `application/x-www-form-urlencoded`.
+
+## Authentication
+
+All API requests to MockGatehub require HMAC-SHA256 signatures, matching real GateHub behavior.
+
+### Default Test Credentials
+
+For local development, MockGatehub accepts these credentials by default:
+- **App ID**: `local-test-app-id`
+- **Secret**: `local-test-app-secret`
+
+### Request Signing
+
+All requests must include these headers:
+- `x-gatehub-app-id`: Application identifier
+- `x-gatehub-timestamp`: Unix timestamp (seconds)
+- `x-gatehub-signature`: HMAC-SHA256(timestamp + method + path + body, secret)
+
+Example using curl:
+```bash
+TIMESTAMP=$(date +%s)
+BODY='{"email":"user@example.com"}'
+SIGNATURE=$(echo -n "${TIMESTAMP}POST/auth/v1/tokens${BODY}" | openssl dgst -sha256 -hmac "local-test-app-secret" -hex | cut -d' ' -f2)
+
+curl -X POST http://localhost:8080/auth/v1/tokens \
+  -H "x-gatehub-app-id: local-test-app-id" \
+  -H "x-gatehub-timestamp: $TIMESTAMP" \
+  -H "x-gatehub-signature: $SIGNATURE" \
+  -H "Content-Type: application/json" \
+  -d "$BODY"
+```
+
+### Custom Credentials
+
+To use different credentials, set the environment variable:
+```bash
+MOCKGATEHUB_VALID_CREDENTIALS=custom-app-id:custom-secret,another-app:another-secret
+```
+
+### Disable Authentication (Development Only)
+
+To skip signature validation for rapid testing:
+```bash
+MOCKGATEHUB_ENFORCE_AUTHENTICATION=false
+```
+
+**Warning**: Only use this in development. Always enable authentication for any realistic testing.
 
 ## Troubleshooting
 

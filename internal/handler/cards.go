@@ -70,3 +70,12 @@ func (h *Handler) DeleteCard(w http.ResponseWriter, r *http.Request) {
 		"message": "Card deleted successfully",
 	})
 }
+
+// GetPendingConfirmations retrieves pending 3DS confirmations (stub)
+// Returns empty list for local development since there are no real 3DS challenges
+func (h *Handler) GetPendingConfirmations(w http.ResponseWriter, r *http.Request) {
+	logger.Info.Println("GetPendingConfirmations called (stub)")
+	h.sendJSON(w, http.StatusOK, map[string]interface{}{
+		"pendingConfirmations": []interface{}{},
+	})
+}

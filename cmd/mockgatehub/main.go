@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"mockgatehub/internal/auth"
 	"mockgatehub/internal/config"
 	"mockgatehub/internal/handler"
 	"mockgatehub/internal/logger"
@@ -42,7 +43,36 @@ func main() {
 		logger.Error.Fatalf("Failed to seed test users: %v", err)
 	}
 
-	webhookManager := webhook.NewManager(cfg.WebhookURL, cfg.WebhookSecret)
+	// Initialize webhook queue and worker
+	var webhookQueue *webhook.Queue
+	var webhookWorker *webhook.Worker
+
+	if cfg.UseRedis {
+		// Use Redis-backed queue for webhook delivery
+		redisStore, ok := store.(*storage.RedisStorage)
+		if !ok {
+			logger.Error.Fatalf("Redis storage type assertion failed")
+		}
+		webhookQueue = webhook.NewQueue(redisStore.GetClient())
+		logger.Info.Println("Using Redis-backed webhook queue")
+	} else {
+		// For in-memory mode, we still need Redis for webhook queue
+		// Create a dedicated Redis connection just for webhooks
+		logger.Warn.Println("WARNING: In-memory storage mode requires Redis for webhook queue")
+		logger.Warn.Printf("Connecting to Redis for webhook queue: %s (DB: %d)", cfg.RedisURL, cfg.RedisDB)
+		redisClient, err := storage.NewRedisClient(cfg.RedisURL, cfg.RedisDB)
+		if err != nil {
+			logger.Error.Fatalf("Failed to connect to Redis for webhook queue: %v", err)
+		}
+		webhookQueue = webhook.NewQueue(redisClient)
+	}
+
+	webhookManager := webhook.NewManager(cfg.WebhookURL, cfg.WebhookSecret, webhookQueue)
+	webhookWorker = webhook.NewWorker(webhookQueue, webhookManager)
+
+	// Start webhook worker in background
+	webhookWorker.StartAsync()
+	logger.Info.Println("Webhook worker started")
 	h := handler.NewHandler(store, webhookManager)
 	r := chi.NewRouter()
 
@@ -57,7 +87,28 @@ func main() {
 		return h.RequestLogger(next)
 	})
 
+	// Authentication middleware (applied to protected routes)
+	if cfg.EnforceAuthentication {
+		logger.Info.Printf("Authentication enforcement ENABLED. Valid app IDs: %v", cfg.ValidCredentials)
+		authMiddleware := auth.Middleware(cfg.ValidCredentials)
+		r.Use(authMiddleware)
+	} else {
+		logger.Info.Println("WARNING: Authentication enforcement DISABLED")
+	}
+
 	setupRoutes(r, h)
+
+	// Log unmatched routes to surface any misrouted traffic
+	r.NotFound(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logger.Info.Printf("[NOTFOUND] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+		http.NotFound(w, r)
+	}))
+
+	// Log method-not-allowed for visibility
+	r.MethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		logger.Info.Printf("[METHODNOTALLOWED] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+	}))
 
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
@@ -79,6 +130,13 @@ func main() {
 	<-quit
 
 	logger.Info.Println("Shutting down server...")
+
+	// Stop webhook worker
+	if webhookWorker != nil {
+		logger.Info.Println("Stopping webhook worker...")
+		webhookWorker.Stop()
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
@@ -125,5 +183,6 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		r.Post("/cards", h.CreateCard)
 		r.Get("/cards/{cardID}", h.GetCard)
 		r.Delete("/cards/{cardID}", h.DeleteCard)
+		r.Get("/transaction/pending-confirmations", h.GetPendingConfirmations)
 	})
 }

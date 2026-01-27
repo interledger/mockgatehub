@@ -21,6 +21,27 @@ type RedisStorage struct {
 	ctx    context.Context
 }
 
+// NewRedisClient creates a standalone Redis client (for webhook queue in memory mode)
+func NewRedisClient(redisURL string, db int) (*redis.Client, error) {
+	opt, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil, fmt.Errorf("invalid Redis URL: %w", err)
+	}
+
+	opt.DB = db
+
+	client := redis.NewClient(opt)
+	ctx := context.Background()
+
+	// Ping to verify connection
+	if err := client.Ping(ctx).Err(); err != nil {
+		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
+	}
+
+	logger.Info.Printf("Created standalone Redis client: %s (DB: %d)", redisURL, db)
+	return client, nil
+}
+
 // NewRedisStorage creates a new Redis storage instance
 func NewRedisStorage(redisURL string, db int) (*RedisStorage, error) {
 	opt, err := redis.ParseURL(redisURL)
@@ -49,6 +70,11 @@ func NewRedisStorage(redisURL string, db int) (*RedisStorage, error) {
 // Close closes the Redis connection
 func (s *RedisStorage) Close() error {
 	return s.client.Close()
+}
+
+// GetClient returns the underlying Redis client (for webhook queue)
+func (s *RedisStorage) GetClient() *redis.Client {
+	return s.client
 }
 
 // User operations
@@ -245,6 +271,26 @@ func (s *RedisStorage) GetTransaction(id string) (*models.Transaction, error) {
 	}
 
 	return &tx, nil
+}
+
+func (s *RedisStorage) UpdateTransactionStatus(id string, status int) error {
+	tx, err := s.GetTransaction(id)
+	if err != nil {
+		return err
+	}
+
+	tx.Status = status
+
+	data, err := json.Marshal(tx)
+	if err != nil {
+		return fmt.Errorf("failed to marshal transaction: %w", err)
+	}
+
+	if err := s.client.Set(s.ctx, s.txKey(id), data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to update transaction: %w", err)
+	}
+
+	return nil
 }
 
 // Balance operations

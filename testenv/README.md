@@ -25,7 +25,7 @@ go run testscript.go
 ```
 
 The test script will:
-1. Start MockGatehub and Redis in isolated containers (ports 28080, 26380)
+1. Start MockGatehub and Redis in isolated containers (ports 25151, 26380)
 2. Wait for services to be ready
 3. Run all integration tests
 4. Print detailed results with color-coded output
@@ -51,7 +51,7 @@ The integration test suite validates:
 ## Configuration
 
 The test environment uses:
-- **Port 28080** for MockGatehub (avoiding conflicts with port 8080)
+- **Port 25151** for MockGatehub (avoiding conflicts with port 8080)
 - **Port 26380** for Redis (avoiding conflicts with port 6379)
 - **No Redis persistence** - data is cleared after each test run
 - **Isolated network** - `mockgatehub-test` network
@@ -93,14 +93,14 @@ docker build -f packages/mockgatehub/Dockerfile -t local-mockgatehub .
 ## Troubleshooting
 
 **Services fail to start:**
-- Check if ports 28080 and 26380 are available: `lsof -i :28080 -i :26380`
+- Check if ports 25151 and 26380 are available: `lsof -i :25151 -i :26380`
 - Ensure Docker daemon is running: `docker ps`
 - Verify the `local-mockgatehub` image exists: `docker images | grep mockgatehub`
 - Rebuild if needed: `cd ../../.. && docker build -f packages/mockgatehub/Dockerfile -t local-mockgatehub .`
 
 **Tests fail:**
 - Check service logs: `docker compose logs mockgatehub`
-- Manually test endpoints: `curl http://localhost:28080/health`
+- Manually test endpoints: `curl http://localhost:25151/health`
 - Ensure previous cleanup ran: `docker compose down -v`
 - Check for port conflicts with main `docker/local` environment
 
@@ -118,7 +118,7 @@ docker build -f packages/mockgatehub/Dockerfile -t local-mockgatehub .
 docker compose up -d
 
 # Check service health
-curl http://localhost:28080/health
+curl http://localhost:25151/health
 
 # View logs
 docker compose logs -f mockgatehub

@@ -5,6 +5,8 @@ import (
 	"html/template"
 	"net/http"
 	"os"
+	"strconv"
+	"strings"
 
 	"mockgatehub/internal/consts"
 	"mockgatehub/internal/logger"
@@ -36,30 +38,43 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 		verificationStatus = 1
 	}
 
-	response := map[string]interface{}{
-		"id":         user.ID,
-		"email":      user.Email,
-		"activated":  user.Activated,
-		"managed":    user.Managed,
-		"role":       user.Role,
-		"features":   user.Features,
-		"kyc_state":  user.KYCState,
-		"risk_level": user.RiskLevel,
-		"created_at": user.CreatedAt,
-		"profile": map[string]string{
-			"first_name":           "",
-			"last_name":            "",
-			"address_country_code": "",
-			"address_city":         "",
-			"address_street1":      "",
-			"address_street2":      "",
+	response := models.GetUserResponse{
+		ID:        user.ID,
+		Email:     user.Email,
+		Activated: user.Activated,
+		Managed:   user.Managed,
+		Role:      user.Role,
+		Features:  user.Features,
+		KYCState:  user.KYCState,
+		RiskLevel: user.RiskLevel,
+		CreatedAt: user.CreatedAt,
+		Profile: models.UserProfile{
+			UUID:               user.ID,
+			BirthDay:           user.BirthDay,
+			BirthMonth:         user.BirthMonth,
+			BirthYear:          user.BirthYear,
+			Gender:             user.Gender,
+			FirstName:          user.FirstName,
+			MiddleName:         user.MiddleName,
+			LastName:           user.LastName,
+			Citizenship:        user.Citizenship,
+			AddressPostalCode:  user.AddressPostalCode,
+			AddressSubdivision: user.AddressSubdivision,
+			AddressCountryCode: user.AddressCountryCode,
+			AddressCity:        user.AddressCity,
+			AddressStreet1:     user.AddressStreet1,
+			AddressStreet2:     user.AddressStreet2,
+			BirthCity:          user.BirthCity,
+			BirthCountryCode:   user.BirthCountryCode,
+			TaxResidency:       user.TaxResidency,
+			ExpectedVolume:     user.ExpectedVolume,
 		},
-		"verifications": []map[string]interface{}{
+		Verifications: []models.UserVerification{
 			{
-				"uuid":          "mock-verification-uuid",
-				"status":        verificationStatus, // 0 = pending/action_required, 1 = verified/accepted
-				"state":         1,
-				"provider_type": "sumsub",
+				UUID:         "mock-verification-uuid",
+				Status:       verificationStatus,
+				State:        1,
+				ProviderType: "sumsub",
 			},
 		},
 	}
@@ -296,6 +311,30 @@ func (h *Handler) KYCIframeSubmit(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		h.sendError(w, http.StatusNotFound, "User not found")
 		return
+	}
+
+	// Parse KYC form data
+	user.FirstName = r.FormValue("first_name")
+	user.LastName = r.FormValue("last_name")
+	user.AddressStreet1 = r.FormValue("address")
+	user.AddressCity = r.FormValue("city")
+	user.AddressCountryCode = r.FormValue("country")
+
+	// Parse date of birth (format: YYYY-MM-DD)
+	dob := r.FormValue("dob")
+	if dob != "" {
+		parts := strings.Split(dob, "-")
+		if len(parts) == 3 {
+			if year, err := strconv.Atoi(parts[0]); err == nil {
+				user.BirthYear = year
+			}
+			if month, err := strconv.Atoi(parts[1]); err == nil {
+				user.BirthMonth = month
+			}
+			if day, err := strconv.Atoi(parts[2]); err == nil {
+				user.BirthDay = day
+			}
+		}
 	}
 
 	user.KYCState = consts.KYCStateAccepted

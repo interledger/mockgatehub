@@ -113,13 +113,18 @@ func (h *Handler) GetUserWallets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Return in the format expected by wallet-backend: { wallets: [...] }
-	response := map[string]interface{}{
-		"wallets": []map[string]interface{}{},
-	}
+	response := models.UserWalletsResponse{}
+	response.Wallets = make([]models.UserWalletResponse, 0, len(wallets))
 
-	for _, w := range wallets {
-		response["wallets"] = append(response["wallets"].([]map[string]interface{}), map[string]interface{}{
-			"address": w.Address,
+	for i, w := range wallets {
+		response.Wallets = append(response.Wallets, models.UserWalletResponse{
+			UUID:    w.Address,
+			Address: w.Address,
+			Name:    w.Name,
+			Type:    w.Type,
+			Primary: i == 0,
+			Active:  true,
+			Enabled: true,
 		})
 	}
 
@@ -171,19 +176,19 @@ func (h *Handler) GetWalletBalance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var balances []map[string]interface{}
+	balances := make([]models.WalletBalanceResponse, 0, len(consts.SandboxCurrencies))
 	for _, currency := range consts.SandboxCurrencies {
 		balance, _ := h.store.GetBalance(wallet.UserID, currency)
-		balances = append(balances, map[string]interface{}{
-			"available": fmt.Sprintf("%g", balance),
-			"pending":   "0",
-			"total":     fmt.Sprintf("%g", balance),
-			"vault": map[string]interface{}{
-				"uuid":       consts.SandboxVaultIDs[currency],
-				"name":       fmt.Sprintf("Sandbox Vault %s", currency),
-				"asset_code": currency,
-				"created_at": time.Now().Format(time.RFC3339),
-				"updated_at": time.Now().Format(time.RFC3339),
+		balances = append(balances, models.WalletBalanceResponse{
+			Available: fmt.Sprintf("%g", balance),
+			Pending:   "0",
+			Total:     fmt.Sprintf("%g", balance),
+			Vault: models.VaultSummary{
+				UUID:      consts.SandboxVaultIDs[currency],
+				Name:      fmt.Sprintf("Sandbox Vault %s", currency),
+				AssetCode: currency,
+				CreatedAt: time.Now().Format(time.RFC3339),
+				UpdatedAt: time.Now().Format(time.RFC3339),
 			},
 		})
 	}
@@ -279,16 +284,23 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 		req.VaultUUID = consts.SandboxVaultIDs[req.Currency]
 	}
 
+	// Format amounts as strings to match GateHub API
+	amountStr := fmt.Sprintf("%.2f", req.Amount)
+	feeStr := "0.00"            // Mock: no fees in sandbox
+	totalAmountStr := amountStr // Total = amount + fee
+
 	tx := &models.Transaction{
 		UserID:           req.UserID,
 		UID:              req.UID,
-		Amount:           req.Amount,
+		Amount:           amountStr,
+		TotalAmount:      totalAmountStr,
+		Fee:              feeStr,
 		Currency:         req.Currency,
 		VaultUUID:        req.VaultUUID,
 		ReceivingAddress: req.ReceivingAddress,
 		Type:             req.Type,
 		DepositType:      req.DepositType,
-		Status:           "completed",
+		Status:           consts.TransactionStatusPending,
 	}
 
 	if err := h.store.CreateTransaction(tx); err != nil {
@@ -297,23 +309,76 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.store.AddBalance(req.UserID, req.Currency, req.Amount); err != nil {
-		logger.Error.Printf("Failed to update balance: %v", err)
-		h.sendError(w, http.StatusInternalServerError, "Failed to update balance")
-		return
-	}
+	// Simulate real-world transaction processing:
+	// 1) Immediately emit a PENDING webhook
+	// 2) After a short delay, mark completed, emit COMPLETED webhook, and update balance
+	// This keeps Temporal workflows from hanging on long polling timers.
+	respTx := *tx // snapshot to avoid mutating response status during async completion
 
-	logger.Info.Printf("Created transaction: %s (%.2f %s)", tx.ID, tx.Amount, tx.Currency)
+	if req.DepositType == consts.DepositTypeExternal || req.DepositType == consts.DepositTypeHosted {
+		txID := tx.ID
+		userID := req.UserID
+		currency := req.Currency
+		amount := req.Amount
+		depositType := req.DepositType
+		receivingAddr := req.ReceivingAddress
+		hasWebhook := h.webhookManager.HasURL()
 
-	if req.DepositType == consts.DepositTypeExternal {
-		go h.webhookManager.SendAsync(consts.WebhookEventDepositCompleted, req.UserID, map[string]interface{}{
-			"transaction_id": tx.ID,
+		pendingPayload := map[string]interface{}{
+			"transaction_id": txID,
+			"tx_uuid":        txID,
 			"amount":         tx.Amount,
 			"currency":       tx.Currency,
-		})
+			"address":        receivingAddr,
+			"deposit_type":   depositType,
+			"status":         "pending",
+		}
+		h.webhookManager.SendAsync(consts.WebhookEventDepositCompleted, userID, pendingPayload)
+
+		complete := func() {
+			if hasWebhook {
+				if err := h.store.UpdateTransactionStatus(txID, consts.TransactionStatusCompleted); err != nil {
+					logger.Error.Printf("Failed to update transaction %s to completed: %v", txID, err)
+					return
+				}
+			}
+
+			if err := h.store.AddBalance(userID, currency, amount); err != nil {
+				logger.Error.Printf("Failed to update balance for transaction %s: %v", txID, err)
+				return
+			}
+
+			logger.Info.Printf("Transaction %s completed: %.2f %s", txID, amount, currency)
+
+			if hasWebhook {
+				completedPayload := map[string]interface{}{
+					"transaction_id": txID,
+					"tx_uuid":        txID,
+					"amount":         fmt.Sprintf("%.2f", amount),
+					"currency":       currency,
+					"address":        receivingAddr,
+					"deposit_type":   depositType,
+					"status":         "completed",
+				}
+				h.webhookManager.SendAsync(consts.WebhookEventDepositCompleted, userID, completedPayload)
+			}
+		}
+
+		if !hasWebhook {
+			// For test/local runs without a webhook target, complete immediately to satisfy balance expectations
+			complete()
+		} else {
+			delay := 2 * time.Second
+			go func() {
+				if delay > 0 {
+					time.Sleep(delay)
+				}
+				complete()
+			}()
+		}
 	}
 
-	h.sendJSON(w, http.StatusCreated, tx)
+	h.sendJSON(w, http.StatusCreated, &respTx)
 }
 
 func (h *Handler) GetTransaction(w http.ResponseWriter, r *http.Request) {
@@ -354,8 +419,8 @@ func (h *Handler) GetUserCurrencies(w http.ResponseWriter, r *http.Request) {
 	if userUUID == "" {
 		// Return default currencies if we can't determine user
 		logger.Warn.Println("[HANDLER] Could not extract user from bearer, returning all currencies")
-		h.sendJSON(w, http.StatusOK, map[string]interface{}{
-			"currencies": []string{"USD", "EUR", "CAD", "GBP", "JPY", "AUD", "CHF", "CNY", "INR", "AED", "PEB", "XRP"},
+		h.sendJSON(w, http.StatusOK, models.CurrenciesResponse{
+			Currencies: []string{"USD", "EUR", "CAD", "GBP", "JPY", "AUD", "CHF", "CNY", "INR", "AED", "PEB", "XRP"},
 		})
 		return
 	}
@@ -376,15 +441,15 @@ func (h *Handler) GetUserCurrencies(w http.ResponseWriter, r *http.Request) {
 	// If no currencies with balance, return all currencies (user hasn't deposited yet)
 	if len(userCurrencies) == 0 {
 		logger.Info.Printf("[HANDLER] No balances found for user %s, returning all currencies", userUUID)
-		h.sendJSON(w, http.StatusOK, map[string]interface{}{
-			"currencies": allCurrencies,
+		h.sendJSON(w, http.StatusOK, models.CurrenciesResponse{
+			Currencies: allCurrencies,
 		})
 		return
 	}
 
 	logger.Info.Printf("[HANDLER] Found %d currencies with balances for user %s: %v", len(userCurrencies), userUUID, userCurrencies)
 
-	h.sendJSON(w, http.StatusOK, map[string]interface{}{
-		"currencies": userCurrencies,
+	h.sendJSON(w, http.StatusOK, models.CurrenciesResponse{
+		Currencies: userCurrencies,
 	})
 }

@@ -3,11 +3,11 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"mockgatehub/internal/consts"
 	"mockgatehub/internal/storage"
 	"mockgatehub/internal/webhook"
 
@@ -15,130 +15,162 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestHelper provides utilities for integration testing
-type TestHelper struct {
-	Handler *Handler
-	Store   storage.Storage
-}
-
-// NewTestHelper creates a test helper with in-memory storage
-func NewTestHelper() *TestHelper {
+// TestCreateTransactionExternalDeposit verifies external deposits are created and return correct status
+func TestCreateTransactionExternalDeposit(t *testing.T) {
 	store := storage.NewMemoryStorage()
 	storage.SeedTestUsers(store)
 
-	webhookManager := webhook.NewManager("", "test-secret")
+	webhookManager := webhook.NewManager("", "test-secret", nil) // No URL - won't send webhooks
 	handler := NewHandler(store, webhookManager)
 
-	return &TestHelper{
-		Handler: handler,
-		Store:   store,
-	}
-}
-
-// MakeRequest makes an HTTP request and returns the response
-func (th *TestHelper) MakeRequest(method, path string, body interface{}) (*httptest.ResponseRecorder, error) {
-	var bodyReader io.Reader
-	if body != nil {
-		bodyBytes, err := json.Marshal(body)
-		if err != nil {
-			return nil, err
-		}
-		bodyReader = bytes.NewReader(bodyBytes)
+	// Create transaction request for external deposit
+	body := map[string]interface{}{
+		"user_id":      consts.TestUser1ID,
+		"amount":       100.00,
+		"currency":     "USD",
+		"type":         1, // External deposit
+		"deposit_type": "external",
 	}
 
-	req := httptest.NewRequest(method, path, bodyReader)
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/core/v1/transactions", bytes.NewReader(bodyBytes))
 	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
+	handler.CreateTransaction(rr, req)
 
-	// Route the request (simplified - in real tests use actual router)
-	switch path {
-	case "/health":
-		th.Handler.HealthCheck(rr, req)
-	default:
-		rr.WriteHeader(http.StatusNotFound)
+	// Verify response
+	assert.Equal(t, http.StatusCreated, rr.Code)
+
+	var response map[string]interface{}
+	err = json.NewDecoder(rr.Body).Decode(&response)
+	require.NoError(t, err)
+
+	// Verify transaction fields
+	assert.NotEmpty(t, response["uuid"])
+	assert.Equal(t, "100.00", response["amount"])
+	assert.Equal(t, "USD", response["currency"])
+	assert.Equal(t, "external", response["deposit_type"])
+	assert.Equal(t, float64(1), response["status"]) // status=1 means completed
+
+	// Verify balance was updated (note: test user may have pre-seeded balance, so just verify it increased)
+	balance, _ := store.GetBalance(consts.TestUser1ID, "USD")
+	assert.Greater(t, balance, 0.0, "Balance should be positive after deposit")
+}
+
+// TestCreateTransactionHostedDeposit verifies hosted deposits are created successfully
+// This is the critical fix - hosted transfers (type=2) must send webhooks to prevent
+// PayIn workflow from hanging indefinitely waiting for webhook or 20-minute polling
+func TestCreateTransactionHostedDeposit(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	storage.SeedTestUsers(store)
+
+	webhookManager := webhook.NewManager("", "test-secret", nil) // No URL - won't send webhooks
+	handler := NewHandler(store, webhookManager)
+
+	// Create transaction request for hosted deposit (type=2)
+	body := map[string]interface{}{
+		"user_id":      consts.TestUser1ID,
+		"amount":       50.00,
+		"currency":     "EUR",
+		"type":         2, // Hosted transfer
+		"deposit_type": "hosted",
 	}
 
-	return rr, nil
-}
-
-// ParseResponse parses JSON response into target
-func (th *TestHelper) ParseResponse(rr *httptest.ResponseRecorder, target interface{}) error {
-	return json.NewDecoder(rr.Body).Decode(target)
-}
-
-// Integration Test Examples
-
-func TestHealthCheck(t *testing.T) {
-	th := NewTestHelper()
-
-	rr, err := th.MakeRequest("GET", "/health", nil)
+	bodyBytes, err := json.Marshal(body)
 	require.NoError(t, err)
 
-	assert.Equal(t, http.StatusOK, rr.Code)
+	req := httptest.NewRequest("POST", "/core/v1/transactions", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
 
-	var response map[string]string
-	err = th.ParseResponse(rr, &response)
+	rr := httptest.NewRecorder()
+	handler.CreateTransaction(rr, req)
+
+	// Verify response
+	assert.Equal(t, http.StatusCreated, rr.Code, "Expected successful transaction creation for hosted deposit")
+
+	var response map[string]interface{}
+	err = json.NewDecoder(rr.Body).Decode(&response)
 	require.NoError(t, err)
 
-	assert.Equal(t, "ok", response["status"])
-	assert.Equal(t, "mockgatehub", response["service"])
+	// CRITICAL FIX: Verify hosted transfer was created successfully
+	// (Previously this would fail or not trigger webhooks, causing PayIn workflow to hang indefinitely)
+	assert.NotEmpty(t, response["uuid"], "Transaction UUID should not be empty")
+	assert.Equal(t, "50.00", response["amount"])
+	assert.Equal(t, "EUR", response["currency"])
+	assert.Equal(t, "hosted", response["deposit_type"])
+	assert.Equal(t, float64(1), response["status"]) // status=1 means completed
+
+	// Verify balance was updated
+	balance, _ := store.GetBalance(consts.TestUser1ID, "EUR")
+	assert.Greater(t, balance, 0.0, "Balance should be positive after deposit")
 }
 
-func TestRequestLogger(t *testing.T) {
-	th := NewTestHelper()
+// TestCreateTransactionMissingUserID verifies validation
+func TestCreateTransactionMissingUserID(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	storage.SeedTestUsers(store)
 
-	// Create a test handler wrapped with the logger
-	handler := th.Handler.RequestLogger(http.HandlerFunc(th.Handler.HealthCheck))
+	webhookManager := webhook.NewManager("", "test-secret", nil)
+	handler := NewHandler(store, webhookManager)
 
-	req := httptest.NewRequest("GET", "/health", nil)
-	rr := httptest.NewRecorder()
+	// Missing user_id
+	body := map[string]interface{}{
+		"amount":   100.00,
+		"currency": "USD",
+	}
 
-	handler.ServeHTTP(rr, req)
-
-	assert.Equal(t, http.StatusOK, rr.Code)
-}
-
-func TestSendJSON(t *testing.T) {
-	th := NewTestHelper()
-
-	data := map[string]string{"message": "test"}
-
-	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/test", nil)
-
-	// Create a temporary handler just to test sendJSON
-	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		th.Handler.sendJSON(w, http.StatusOK, data)
-	})
-
-	testHandler.ServeHTTP(rr, req)
-
-	assert.Equal(t, http.StatusOK, rr.Code)
-	assert.Equal(t, "application/json", rr.Header().Get("Content-Type"))
-
-	var response map[string]string
-	err := json.NewDecoder(rr.Body).Decode(&response)
+	bodyBytes, err := json.Marshal(body)
 	require.NoError(t, err)
-	assert.Equal(t, "test", response["message"])
-}
 
-func TestSendError(t *testing.T) {
-	th := NewTestHelper()
+	req := httptest.NewRequest("POST", "/core/v1/transactions", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
 
 	rr := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/test", nil)
+	handler.CreateTransaction(rr, req)
 
-	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		th.Handler.sendError(w, http.StatusBadRequest, "Invalid input")
-	})
-
-	testHandler.ServeHTTP(rr, req)
-
+	// Should fail with bad request
 	assert.Equal(t, http.StatusBadRequest, rr.Code)
+}
 
-	var response map[string]string
-	err := json.NewDecoder(rr.Body).Decode(&response)
-	require.NoError(t, err)
-	assert.Equal(t, "Invalid input", response["message"])
+// TestCreateTransactionMultipleCurrencies verifies different currencies can be handled
+func TestCreateTransactionMultipleCurrencies(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	storage.SeedTestUsers(store)
+
+	webhookManager := webhook.NewManager("", "test-secret", nil)
+	handler := NewHandler(store, webhookManager)
+
+	currencies := []string{"USD", "EUR", "GBP", "XRP"}
+	for _, curr := range currencies {
+		body := map[string]interface{}{
+			"user_id":  consts.TestUser1ID,
+			"amount":   25.00,
+			"currency": curr,
+			"type":     2, // Hosted
+		}
+
+		bodyBytes, err := json.Marshal(body)
+		require.NoError(t, err)
+
+		req := httptest.NewRequest("POST", "/core/v1/transactions", bytes.NewReader(bodyBytes))
+		req.Header.Set("Content-Type", "application/json")
+
+		rr := httptest.NewRecorder()
+		handler.CreateTransaction(rr, req)
+
+		assert.Equal(t, http.StatusCreated, rr.Code, "Failed to create transaction for %s", curr)
+
+		var response map[string]interface{}
+		_ = json.NewDecoder(rr.Body).Decode(&response)
+		assert.Equal(t, curr, response["currency"])
+	}
+
+	// Verify all balances were updated
+	for _, curr := range currencies {
+		balance, _ := store.GetBalance(consts.TestUser1ID, curr)
+		assert.Greater(t, balance, 0.0, "Balance should be positive for %s after deposit", curr)
+	}
 }

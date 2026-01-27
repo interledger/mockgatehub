@@ -2,6 +2,7 @@ package webhook
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ type Manager struct {
 	webhookURL    string
 	webhookSecret string
 	httpClient    *http.Client
+	queue         *Queue // Redis-backed job queue
 }
 
 // WebhookPayload represents the webhook request body (matches wallet-backend IWebhookData)
@@ -31,7 +33,7 @@ type WebhookPayload struct {
 }
 
 // NewManager creates a new webhook manager
-func NewManager(webhookURL, webhookSecret string) *Manager {
+func NewManager(webhookURL, webhookSecret string, queue *Queue) *Manager {
 	logger.Info.Printf("[WEBHOOK] Initializing webhook manager")
 	logger.Info.Printf("[WEBHOOK]   URL: %s", webhookURL)
 	logger.Info.Printf("[WEBHOOK]   Secret: %s (length: %d)", webhookSecret, len(webhookSecret))
@@ -42,55 +44,42 @@ func NewManager(webhookURL, webhookSecret string) *Manager {
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		queue: queue,
 	}
 }
 
-// SendAsync sends a webhook asynchronously with retry logic
-func (m *Manager) SendAsync(eventType, userID string, data map[string]interface{}) {
+// SendAsync enqueues a webhook job for asynchronous delivery
+func (m *Manager) SendAsync(eventType, userID string, data any) {
 	if m.webhookURL == "" {
 		logger.Info.Printf("[WEBHOOK] Skipping webhook send - no URL configured (event: %s, user: %s)", eventType, userID)
 		return
 	}
 
-	logger.Info.Printf("[WEBHOOK] Queuing async webhook: event=%s, user=%s", eventType, userID)
+	logger.Info.Printf("[WEBHOOK] Enqueueing webhook: event=%s, user=%s", eventType, userID)
 	logger.Info.Printf("[WEBHOOK]   Data: %+v", data)
 
-	go func() {
-		if err := m.sendWithRetry(eventType, userID, data, 3); err != nil {
-			logger.Error.Printf("[WEBHOOK] Failed to deliver webhook after retries: %v", err)
-		} else {
-			logger.Info.Printf("[WEBHOOK] ✅ Webhook delivered successfully: event=%s, user=%s", eventType, userID)
-		}
-	}()
-}
-
-// sendWithRetry attempts to send webhook with exponential backoff
-func (m *Manager) sendWithRetry(eventType, userID string, data map[string]interface{}, maxRetries int) error {
-	var lastErr error
-
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		logger.Info.Printf("[WEBHOOK] Attempt %d/%d: Sending webhook to %s", attempt, maxRetries, m.webhookURL)
-
-		err := m.send(eventType, userID, data)
-		if err == nil {
-			return nil
-		}
-
-		lastErr = err
-		logger.Error.Printf("[WEBHOOK] Attempt %d failed: %v", attempt, err)
-
-		if attempt < maxRetries {
-			backoff := time.Duration(attempt*attempt) * time.Second
-			logger.Info.Printf("[WEBHOOK] Retrying in %v...", backoff)
-			time.Sleep(backoff)
-		}
+	ctx := context.Background()
+	jobID, err := m.queue.Enqueue(ctx, eventType, userID, data)
+	if err != nil {
+		logger.Error.Printf("[WEBHOOK] Failed to enqueue webhook: %v", err)
+		return
 	}
 
-	return fmt.Errorf("all %d attempts failed, last error: %w", maxRetries, lastErr)
+	logger.Info.Printf("[WEBHOOK] Webhook enqueued successfully: job_id=%s", jobID)
 }
 
-// send performs the actual HTTP webhook request
-func (m *Manager) send(eventType, userID string, data map[string]interface{}) error {
+// HasURL reports whether a webhook URL is configured.
+func (m *Manager) HasURL() bool {
+	return m != nil && m.webhookURL != ""
+}
+
+// send is now public (called by worker) and performs a single send attempt
+// Worker handles retry logic via queue rescheduling
+
+// Send performs the actual HTTP webhook request (called by worker)
+func (m *Manager) send(eventType, userID string, data any) error {
+	normalized := normalizeVerificationPayload(eventType, data)
+
 	// Build payload - testnet wallet-backend expects timestamp as milliseconds string
 	now := time.Now()
 	payload := WebhookPayload{
@@ -99,7 +88,7 @@ func (m *Manager) send(eventType, userID string, data map[string]interface{}) er
 		EventType:   eventType,                          // e.g., "core.deposit.completed"
 		UserUUID:    userID,                             // GateHub user UUID
 		Environment: "sandbox",                          // Always sandbox for mockgatehub
-		Data:        data,
+		Data:        normalized,
 	}
 
 	body, err := json.Marshal(payload)
@@ -154,4 +143,55 @@ func (m *Manager) send(eventType, userID string, data map[string]interface{}) er
 	}
 
 	return nil
+}
+
+func normalizeVerificationPayload(eventType string, data any) map[string]interface{} {
+	converted := coerceToMap(data)
+
+	switch eventType {
+	case "id.verification.accepted", "id.verification.rejected", "id.verification.action_required":
+		if _, ok := converted["gateway"]; !ok {
+			converted["gateway"] = "paywiser"
+		}
+		if _, ok := converted["verified"]; !ok {
+			short := "action_required"
+			status := 0
+			switch eventType {
+			case "id.verification.accepted":
+				short = "accepted"
+				status = 1
+			case "id.verification.rejected":
+				short = "rejected"
+				status = 2
+			}
+			converted["verified"] = map[string]interface{}{
+				"short":  short,
+				"status": status,
+			}
+		}
+	}
+
+	return converted
+}
+
+func coerceToMap(data any) map[string]interface{} {
+	if data == nil {
+		return map[string]interface{}{}
+	}
+
+	if typed, ok := data.(map[string]interface{}); ok {
+		return typed
+	}
+
+	bytes, err := json.Marshal(data)
+	if err != nil {
+		return map[string]interface{}{}
+	}
+
+	var converted map[string]interface{}
+	if err := json.Unmarshal(bytes, &converted); err != nil {
+		return map[string]interface{}{}
+	}
+
+	return converted
 }
