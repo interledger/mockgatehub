@@ -72,6 +72,13 @@ const (
 	TransactionTypeHosted  = 2
 )
 
+// Transaction status values (matches GateHub API)
+const (
+	TransactionStatusPending   = 1
+	TransactionStatusCompleted = 100 // GateHub uses 100 for completed
+	TransactionStatusFailed    = 3
+)
+
 // Deposit types
 const (
 	DepositTypeExternal = "external"

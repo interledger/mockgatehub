@@ -68,6 +68,11 @@ func (m *Manager) SendAsync(eventType, userID string, data any) {
 	logger.Info.Printf("[WEBHOOK] Webhook enqueued successfully: job_id=%s", jobID)
 }
 
+// HasURL reports whether a webhook URL is configured.
+func (m *Manager) HasURL() bool {
+	return m != nil && m.webhookURL != ""
+}
+
 // send is now public (called by worker) and performs a single send attempt
 // Worker handles retry logic via queue rescheduling
 

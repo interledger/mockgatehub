@@ -300,7 +300,7 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 		ReceivingAddress: req.ReceivingAddress,
 		Type:             req.Type,
 		DepositType:      req.DepositType,
-		Status:           1, // 1 = completed
+		Status:           consts.TransactionStatusPending,
 	}
 
 	if err := h.store.CreateTransaction(tx); err != nil {
@@ -309,32 +309,76 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.store.AddBalance(req.UserID, req.Currency, req.Amount); err != nil {
-		logger.Error.Printf("Failed to update balance: %v", err)
-		h.sendError(w, http.StatusInternalServerError, "Failed to update balance")
-		return
-	}
+	// Simulate real-world transaction processing:
+	// 1) Immediately emit a PENDING webhook
+	// 2) After a short delay, mark completed, emit COMPLETED webhook, and update balance
+	// This keeps Temporal workflows from hanging on long polling timers.
+	respTx := *tx // snapshot to avoid mutating response status during async completion
 
-	logger.Info.Printf("Created transaction: %s (%s %s)", tx.ID, tx.Amount, tx.Currency)
-
-	// Send webhook for both external and hosted deposits
-	// Hosted transfers need webhook notification so PayIn workflow doesn't hang indefinitely
-	// waiting for a 20-minute polling cycle. PayIn workflow waits for either:
-	// 1. core.deposit.completed webhook signal, OR
-	// 2. 20-minute polling timer to check transaction status
-	// By sending webhook immediately, we allow the workflow to complete promptly.
 	if req.DepositType == consts.DepositTypeExternal || req.DepositType == consts.DepositTypeHosted {
-		go h.webhookManager.SendAsync(consts.WebhookEventDepositCompleted, req.UserID, models.DepositWebhookData{
-			TransactionID: tx.ID,     // legacy key some consumers still read
-			TxUUID:        tx.ID,     // wallet backend expects tx_uuid
-			Amount:        tx.Amount, // Already a string
-			Currency:      tx.Currency,
-			Address:       tx.ReceivingAddress, // optional for hosted transfers
-			DepositType:   tx.DepositType,
-		})
+		txID := tx.ID
+		userID := req.UserID
+		currency := req.Currency
+		amount := req.Amount
+		depositType := req.DepositType
+		receivingAddr := req.ReceivingAddress
+		hasWebhook := h.webhookManager.HasURL()
+
+		pendingPayload := map[string]interface{}{
+			"transaction_id": txID,
+			"tx_uuid":        txID,
+			"amount":         tx.Amount,
+			"currency":       tx.Currency,
+			"address":        receivingAddr,
+			"deposit_type":   depositType,
+			"status":         "pending",
+		}
+		h.webhookManager.SendAsync(consts.WebhookEventDepositCompleted, userID, pendingPayload)
+
+		complete := func() {
+			if hasWebhook {
+				if err := h.store.UpdateTransactionStatus(txID, consts.TransactionStatusCompleted); err != nil {
+					logger.Error.Printf("Failed to update transaction %s to completed: %v", txID, err)
+					return
+				}
+			}
+
+			if err := h.store.AddBalance(userID, currency, amount); err != nil {
+				logger.Error.Printf("Failed to update balance for transaction %s: %v", txID, err)
+				return
+			}
+
+			logger.Info.Printf("Transaction %s completed: %.2f %s", txID, amount, currency)
+
+			if hasWebhook {
+				completedPayload := map[string]interface{}{
+					"transaction_id": txID,
+					"tx_uuid":        txID,
+					"amount":         fmt.Sprintf("%.2f", amount),
+					"currency":       currency,
+					"address":        receivingAddr,
+					"deposit_type":   depositType,
+					"status":         "completed",
+				}
+				h.webhookManager.SendAsync(consts.WebhookEventDepositCompleted, userID, completedPayload)
+			}
+		}
+
+		if !hasWebhook {
+			// For test/local runs without a webhook target, complete immediately to satisfy balance expectations
+			complete()
+		} else {
+			delay := 2 * time.Second
+			go func() {
+				if delay > 0 {
+					time.Sleep(delay)
+				}
+				complete()
+			}()
+		}
 	}
 
-	h.sendJSON(w, http.StatusCreated, tx)
+	h.sendJSON(w, http.StatusCreated, &respTx)
 }
 
 func (h *Handler) GetTransaction(w http.ResponseWriter, r *http.Request) {

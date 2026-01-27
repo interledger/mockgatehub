@@ -273,6 +273,26 @@ func (s *RedisStorage) GetTransaction(id string) (*models.Transaction, error) {
 	return &tx, nil
 }
 
+func (s *RedisStorage) UpdateTransactionStatus(id string, status int) error {
+	tx, err := s.GetTransaction(id)
+	if err != nil {
+		return err
+	}
+
+	tx.Status = status
+
+	data, err := json.Marshal(tx)
+	if err != nil {
+		return fmt.Errorf("failed to marshal transaction: %w", err)
+	}
+
+	if err := s.client.Set(s.ctx, s.txKey(id), data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to update transaction: %w", err)
+	}
+
+	return nil
+}
+
 // Balance operations
 
 func (s *RedisStorage) GetBalance(userID, currency string) (float64, error) {
