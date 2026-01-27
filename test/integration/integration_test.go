@@ -72,10 +72,12 @@ func NewTestServer() *TestServer {
 		r.Get("/liquidity_provider/vaults", h.GetVaults)
 	})
 	r.Route("/cards/v1", func(r chi.Router) {
-		r.Post("/customers/managed", h.CreateManagedCustomer)
-		r.Post("/cards", h.CreateCard)
-		r.Get("/cards/{cardID}", h.GetCard)
-		r.Delete("/cards/{cardID}", h.DeleteCard)
+		r.Post("/customers", h.CreateManagedCustomer)
+		r.Get("/cards/{customerID}", h.ListCards)
+		r.Get("/cards/{cardID}/card", h.GetCard)
+		r.Put("/cards/{cardID}/lock", h.LockCard)
+		r.Put("/cards/{cardID}/unlock", h.UnlockCard)
+		r.Delete("/cards/{cardID}/card", h.DeleteCard)
 	})
 
 	return &TestServer{

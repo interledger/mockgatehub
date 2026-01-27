@@ -104,7 +104,7 @@ func waitForServices() error {
 }
 
 func runTests() {
-	var userID, token, walletAddress string
+	var userID, token, walletAddress, customerID, cardID string
 
 	// Test 1: Health check
 	runTest("Health Check", func() (bool, string) {
@@ -272,6 +272,173 @@ func runTests() {
 
 		kycState, _ := result["kyc_state"].(string)
 		return kycState == "action_required", fmt.Sprintf("KYC State = %s", kycState)
+	})
+
+	// Test 7.5: Update KYC state to accepted (required for card issuance)
+	runTest("Update KYC State to Accepted", func() (bool, string) {
+		body := map[string]string{
+			"state":      "accepted",
+			"risk_level": "low",
+		}
+		var result map[string]interface{}
+		if err := putJSONWithHeaders(
+			fmt.Sprintf("/id/v1/hubs/gw/users/%s", userID),
+			body,
+			nil,
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+
+		if state, ok := result["kyc_state"].(string); ok && state == "accepted" {
+			return true, "KYC accepted"
+		}
+		return false, "KYC state not updated"
+	})
+
+	// Test 7.6: Create card customer with initial card
+	runTest("Create Card Customer", func() (bool, string) {
+		body := map[string]interface{}{
+			"walletAddress": walletAddress,
+			"nameOnCard":    "Test User",
+			"account": map[string]interface{}{
+				"productCode": "PWSR_DEBP_2404",
+				"currency":    "EUR",
+				"card": map[string]interface{}{
+					"productCode": "PWSR_DEBP_2404",
+				},
+			},
+		}
+		var result map[string]interface{}
+		if err := postJSONWithHeaders(
+			"/cards/v1/customers",
+			body,
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+
+		customers, ok := result["customers"].(map[string]interface{})
+		if !ok {
+			return false, "Missing customers payload"
+		}
+		id, ok := customers["id"].(string)
+		if !ok || id == "" {
+			return false, "Missing customer ID"
+		}
+		customerID = id
+
+		accounts, ok := customers["accounts"].([]interface{})
+		if !ok || len(accounts) == 0 {
+			return false, "Missing accounts"
+		}
+		account, ok := accounts[0].(map[string]interface{})
+		if !ok {
+			return false, "Invalid account payload"
+		}
+		cards, ok := account["cards"].([]interface{})
+		if !ok || len(cards) == 0 {
+			return false, "Missing cards"
+		}
+		card, ok := cards[0].(map[string]interface{})
+		if !ok {
+			return false, "Invalid card payload"
+		}
+		id, ok = card["id"].(string)
+		if !ok || id == "" {
+			return false, "Missing card ID"
+		}
+		cardID = id
+		return true, fmt.Sprintf("Customer=%s Card=%s", customerID, cardID)
+	})
+
+	// Test 7.7: List cards
+	runTest("List Cards", func() (bool, string) {
+		var result map[string]interface{}
+		if err := getJSONWithHeaders(
+			fmt.Sprintf("/cards/v1/cards/%s?pageSize=100", customerID),
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+
+		data, ok := result["data"].([]interface{})
+		if !ok || len(data) == 0 {
+			return false, "No cards returned"
+		}
+		return true, fmt.Sprintf("Returned %d cards", len(data))
+	})
+
+	// Test 7.8: Get card details
+	runTest("Get Card Details", func() (bool, string) {
+		var result map[string]interface{}
+		if err := getJSONWithHeaders(
+			fmt.Sprintf("/cards/v1/cards/%s/card", cardID),
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+
+		status, _ := result["status"].(string)
+		return status == "Active", fmt.Sprintf("Status=%s", status)
+	})
+
+	// Test 7.9: Lock and unlock card
+	runTest("Lock Card", func() (bool, string) {
+		var result map[string]interface{}
+		if err := putJSONWithHeaders(
+			fmt.Sprintf("/cards/v1/cards/%s/lock?reasonCode=ClientRequestedLock", cardID),
+			map[string]interface{}{},
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+		status, _ := result["status"].(string)
+		return status == "TemporaryBlocked", fmt.Sprintf("Status=%s", status)
+	})
+
+	runTest("Unlock Card", func() (bool, string) {
+		var result map[string]interface{}
+		if err := putJSONWithHeaders(
+			fmt.Sprintf("/cards/v1/cards/%s/unlock", cardID),
+			map[string]interface{}{},
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+		status, _ := result["status"].(string)
+		return status == "Active", fmt.Sprintf("Status=%s", status)
+	})
+
+	// Test 7.10: Close card
+	runTest("Close Card", func() (bool, string) {
+		var result map[string]interface{}
+		if err := deleteJSONWithHeaders(
+			fmt.Sprintf("/cards/v1/cards/%s/card?reasonCode=UserRequest", cardID),
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+		success, _ := result["success"].(bool)
+		return success, "Card closed"
 	})
 
 	// Test 8: Create additional wallet
@@ -570,6 +737,82 @@ func postJSONWithHeaders(path string, body interface{}, headers map[string]strin
 	// Add authentication headers (unless custom headers already set them)
 	if _, hasAuth := headers["x-gatehub-app-id"]; !hasAuth {
 		addAuthHeaders(req, jsonBody)
+	}
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return json.Unmarshal(respBody, result)
+}
+
+func putJSONWithHeaders(path string, body interface{}, headers map[string]string, result interface{}) error {
+	jsonBody, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+
+	req, err := http.NewRequest("PUT", mockGatehubURL+path, bytes.NewBuffer(jsonBody))
+	if err != nil {
+		return err
+	}
+
+	if headers == nil {
+		headers = map[string]string{}
+	}
+	if _, hasAuth := headers["x-gatehub-app-id"]; !hasAuth {
+		addAuthHeaders(req, jsonBody)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	return json.Unmarshal(respBody, result)
+}
+
+func deleteJSONWithHeaders(path string, headers map[string]string, result interface{}) error {
+	req, err := http.NewRequest("DELETE", mockGatehubURL+path, nil)
+	if err != nil {
+		return err
+	}
+
+	if headers == nil {
+		headers = map[string]string{}
+	}
+	if _, hasAuth := headers["x-gatehub-app-id"]; !hasAuth {
+		addAuthHeaders(req, nil)
 	}
 
 	for k, v := range headers {

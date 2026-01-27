@@ -11,22 +11,30 @@ import (
 
 // MemoryStorage implements Storage using in-memory maps
 type MemoryStorage struct {
-	mu           sync.RWMutex
-	users        map[string]*models.User        // userID -> User
-	usersByEmail map[string]*models.User        // email -> User
-	wallets      map[string]*models.Wallet      // address -> Wallet
-	transactions map[string]*models.Transaction // txID -> Transaction
-	balances     map[string]map[string]float64  // userID -> currency -> amount
+	mu                sync.RWMutex
+	users             map[string]*models.User        // userID -> User
+	usersByEmail      map[string]*models.User        // email -> User
+	customers         map[string]*models.Customer    // customerID -> Customer
+	customersBySource map[string]*models.Customer    // sourceID -> Customer
+	accounts          map[string]*models.Account     // accountID -> Account
+	cards             map[string]*models.Card        // cardID -> Card
+	wallets           map[string]*models.Wallet      // address -> Wallet
+	transactions      map[string]*models.Transaction // txID -> Transaction
+	balances          map[string]map[string]float64  // userID -> currency -> amount
 }
 
 // NewMemoryStorage creates a new in-memory storage
 func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{
-		users:        make(map[string]*models.User),
-		usersByEmail: make(map[string]*models.User),
-		wallets:      make(map[string]*models.Wallet),
-		transactions: make(map[string]*models.Transaction),
-		balances:     make(map[string]map[string]float64),
+		users:             make(map[string]*models.User),
+		usersByEmail:      make(map[string]*models.User),
+		customers:         make(map[string]*models.Customer),
+		customersBySource: make(map[string]*models.Customer),
+		accounts:          make(map[string]*models.Account),
+		cards:             make(map[string]*models.Card),
+		wallets:           make(map[string]*models.Wallet),
+		transactions:      make(map[string]*models.Transaction),
+		balances:          make(map[string]map[string]float64),
 	}
 }
 
@@ -104,6 +112,204 @@ func (s *MemoryStorage) UpdateUser(user *models.User) error {
 
 	s.users[user.ID] = user
 	return nil
+}
+
+// Card customer operations
+
+func (s *MemoryStorage) CreateCustomer(customer *models.Customer) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if customer.ID == nil || *customer.ID == "" {
+		id := utils.GenerateUUID()
+		customer.ID = &id
+	}
+
+	if customer.SourceID == "" {
+		return fmt.Errorf("sourceId is required")
+	}
+
+	if customer.CreatedAt.IsZero() {
+		customer.CreatedAt = time.Now()
+	}
+
+	if _, exists := s.customers[*customer.ID]; exists {
+		return fmt.Errorf("customer already exists")
+	}
+
+	s.customers[*customer.ID] = customer
+	s.customersBySource[customer.SourceID] = customer
+	return nil
+}
+
+func (s *MemoryStorage) GetCustomer(id string) (*models.Customer, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	customer, exists := s.customers[id]
+	if !exists {
+		return nil, fmt.Errorf("customer not found")
+	}
+
+	return customer, nil
+}
+
+func (s *MemoryStorage) GetCustomerBySourceID(sourceID string) (*models.Customer, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	customer, exists := s.customersBySource[sourceID]
+	if !exists {
+		return nil, fmt.Errorf("customer not found")
+	}
+
+	return customer, nil
+}
+
+func (s *MemoryStorage) UpdateCustomer(customer *models.Customer) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if customer.ID == nil || *customer.ID == "" {
+		return fmt.Errorf("customer ID is required")
+	}
+
+	if _, exists := s.customers[*customer.ID]; !exists {
+		return fmt.Errorf("customer not found")
+	}
+
+	s.customers[*customer.ID] = customer
+	s.customersBySource[customer.SourceID] = customer
+	return nil
+}
+
+// Card account operations
+
+func (s *MemoryStorage) CreateAccount(account *models.Account) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if account.ID == nil || *account.ID == "" {
+		id := utils.GenerateUUID()
+		account.ID = &id
+	}
+
+	if _, exists := s.accounts[*account.ID]; exists {
+		return fmt.Errorf("account already exists")
+	}
+
+	if account.CreatedAt.IsZero() {
+		account.CreatedAt = time.Now()
+	}
+
+	s.accounts[*account.ID] = account
+	return nil
+}
+
+func (s *MemoryStorage) GetAccount(id string) (*models.Account, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	account, exists := s.accounts[id]
+	if !exists {
+		return nil, fmt.Errorf("account not found")
+	}
+
+	return account, nil
+}
+
+func (s *MemoryStorage) UpdateAccount(account *models.Account) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if account.ID == nil || *account.ID == "" {
+		return fmt.Errorf("account ID is required")
+	}
+
+	if _, exists := s.accounts[*account.ID]; !exists {
+		return fmt.Errorf("account not found")
+	}
+
+	s.accounts[*account.ID] = account
+	return nil
+}
+
+// Card operations
+
+func (s *MemoryStorage) CreateCard(card *models.Card) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if card.ID == "" {
+		card.ID = utils.GenerateUUID()
+	}
+
+	if card.CreatedAt.IsZero() {
+		card.CreatedAt = time.Now()
+	}
+
+	if _, exists := s.cards[card.ID]; exists {
+		return fmt.Errorf("card already exists")
+	}
+
+	s.cards[card.ID] = card
+	return nil
+}
+
+func (s *MemoryStorage) GetCard(id string) (*models.Card, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	card, exists := s.cards[id]
+	if !exists {
+		return nil, fmt.Errorf("card not found")
+	}
+
+	return card, nil
+}
+
+func (s *MemoryStorage) UpdateCard(card *models.Card) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if card.ID == "" {
+		return fmt.Errorf("card ID is required")
+	}
+
+	if _, exists := s.cards[card.ID]; !exists {
+		return fmt.Errorf("card not found")
+	}
+
+	s.cards[card.ID] = card
+	return nil
+}
+
+func (s *MemoryStorage) GetCardsByCustomer(customerID string) ([]*models.Card, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var cards []*models.Card
+	for _, card := range s.cards {
+		if card.CustomerID == customerID {
+			cards = append(cards, card)
+		}
+	}
+
+	return cards, nil
+}
+
+func (s *MemoryStorage) GetCardsByAccount(accountID string) ([]*models.Card, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	var cards []*models.Card
+	for _, card := range s.cards {
+		if card.AccountID == accountID {
+			cards = append(cards, card)
+		}
+	}
+
+	return cards, nil
 }
 
 // CreateWallet creates a new wallet

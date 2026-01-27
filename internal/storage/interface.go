@@ -12,6 +12,24 @@ type Storage interface {
 	GetUserByEmail(email string) (*models.User, error)
 	UpdateUser(user *models.User) error
 
+	// Card Customers
+	CreateCustomer(customer *models.Customer) error
+	GetCustomer(id string) (*models.Customer, error)
+	GetCustomerBySourceID(sourceID string) (*models.Customer, error)
+	UpdateCustomer(customer *models.Customer) error
+
+	// Card Accounts
+	CreateAccount(account *models.Account) error
+	GetAccount(id string) (*models.Account, error)
+	UpdateAccount(account *models.Account) error
+
+	// Cards
+	CreateCard(card *models.Card) error
+	GetCard(id string) (*models.Card, error)
+	UpdateCard(card *models.Card) error
+	GetCardsByCustomer(customerID string) ([]*models.Card, error)
+	GetCardsByAccount(accountID string) ([]*models.Card, error)
+
 	// Wallets
 	CreateWallet(wallet *models.Wallet) error
 	GetWallet(address string) (*models.Wallet, error)

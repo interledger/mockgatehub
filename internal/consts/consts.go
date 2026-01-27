@@ -101,6 +101,19 @@ const (
 	WebhookEventKYCRejected       = "id.verification.rejected"
 	WebhookEventKYCActionRequired = "id.verification.action_required"
 	WebhookEventDepositCompleted  = "core.deposit.completed"
+	WebhookEventCardCreated       = "cards.card.created"
+	WebhookEventCardTransaction   = "cards.transaction.event"
+)
+
+// Card status values (GateHub Cards)
+const (
+	CardStatusActive           = "Active"
+	CardStatusBlocked          = "Blocked"
+	CardStatusTemporaryBlocked = "TemporaryBlocked"
+	CardStatusReplaced         = "Replaced"
+	CardStatusSoftDelete       = "SoftDelete"
+	CardStatusAccountBlocked   = "AccountBlocked"
+	CardStatusInCreation       = "InCreation"
 )
 
 // Pre-seeded test user IDs

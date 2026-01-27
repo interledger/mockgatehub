@@ -175,6 +175,252 @@ func (s *RedisStorage) UpdateUser(user *models.User) error {
 	return nil
 }
 
+// Card customer operations
+
+func (s *RedisStorage) CreateCustomer(customer *models.Customer) error {
+	if customer.ID == nil || *customer.ID == "" {
+		id := utils.GenerateUUID()
+		customer.ID = &id
+	}
+	if customer.SourceID == "" {
+		return errors.New("sourceId is required")
+	}
+	if customer.CreatedAt.IsZero() {
+		customer.CreatedAt = time.Now()
+	}
+
+	data, err := json.Marshal(customer)
+	if err != nil {
+		return fmt.Errorf("failed to marshal customer: %w", err)
+	}
+
+	if err := s.client.Set(s.ctx, s.customerKey(*customer.ID), data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to store customer: %w", err)
+	}
+
+	if err := s.client.Set(s.ctx, s.customerSourceKey(customer.SourceID), *customer.ID, 0).Err(); err != nil {
+		return fmt.Errorf("failed to store customer source mapping: %w", err)
+	}
+
+	return nil
+}
+
+func (s *RedisStorage) GetCustomer(id string) (*models.Customer, error) {
+	data, err := s.client.Get(s.ctx, s.customerKey(id)).Result()
+	if err == redis.Nil {
+		return nil, errors.New("customer not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get customer: %w", err)
+	}
+
+	var customer models.Customer
+	if err := json.Unmarshal([]byte(data), &customer); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal customer: %w", err)
+	}
+
+	return &customer, nil
+}
+
+func (s *RedisStorage) GetCustomerBySourceID(sourceID string) (*models.Customer, error) {
+	customerID, err := s.client.Get(s.ctx, s.customerSourceKey(sourceID)).Result()
+	if err == redis.Nil {
+		return nil, errors.New("customer not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get customer by sourceId: %w", err)
+	}
+
+	return s.GetCustomer(customerID)
+}
+
+func (s *RedisStorage) UpdateCustomer(customer *models.Customer) error {
+	if customer.ID == nil || *customer.ID == "" {
+		return errors.New("customer ID is required")
+	}
+
+	data, err := json.Marshal(customer)
+	if err != nil {
+		return fmt.Errorf("failed to marshal customer: %w", err)
+	}
+
+	if err := s.client.Set(s.ctx, s.customerKey(*customer.ID), data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to update customer: %w", err)
+	}
+
+	if customer.SourceID != "" {
+		if err := s.client.Set(s.ctx, s.customerSourceKey(customer.SourceID), *customer.ID, 0).Err(); err != nil {
+			return fmt.Errorf("failed to update customer source mapping: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// Card account operations
+
+func (s *RedisStorage) CreateAccount(account *models.Account) error {
+	if account.ID == nil || *account.ID == "" {
+		id := utils.GenerateUUID()
+		account.ID = &id
+	}
+	if account.CreatedAt.IsZero() {
+		account.CreatedAt = time.Now()
+	}
+
+	data, err := json.Marshal(account)
+	if err != nil {
+		return fmt.Errorf("failed to marshal account: %w", err)
+	}
+
+	if err := s.client.Set(s.ctx, s.accountKey(*account.ID), data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to store account: %w", err)
+	}
+
+	if account.CustomerID != nil {
+		if err := s.client.SAdd(s.ctx, s.customerAccountsKey(*account.CustomerID), *account.ID).Err(); err != nil {
+			return fmt.Errorf("failed to add account to customer set: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (s *RedisStorage) GetAccount(id string) (*models.Account, error) {
+	data, err := s.client.Get(s.ctx, s.accountKey(id)).Result()
+	if err == redis.Nil {
+		return nil, errors.New("account not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get account: %w", err)
+	}
+
+	var account models.Account
+	if err := json.Unmarshal([]byte(data), &account); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal account: %w", err)
+	}
+
+	return &account, nil
+}
+
+func (s *RedisStorage) UpdateAccount(account *models.Account) error {
+	if account.ID == nil || *account.ID == "" {
+		return errors.New("account ID is required")
+	}
+
+	data, err := json.Marshal(account)
+	if err != nil {
+		return fmt.Errorf("failed to marshal account: %w", err)
+	}
+
+	if err := s.client.Set(s.ctx, s.accountKey(*account.ID), data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to update account: %w", err)
+	}
+
+	return nil
+}
+
+// Card operations
+
+func (s *RedisStorage) CreateCard(card *models.Card) error {
+	if card.ID == "" {
+		card.ID = utils.GenerateUUID()
+	}
+	if card.CreatedAt.IsZero() {
+		card.CreatedAt = time.Now()
+	}
+
+	data, err := json.Marshal(card)
+	if err != nil {
+		return fmt.Errorf("failed to marshal card: %w", err)
+	}
+
+	if err := s.client.Set(s.ctx, s.cardKey(card.ID), data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to store card: %w", err)
+	}
+
+	if card.CustomerID != "" {
+		if err := s.client.SAdd(s.ctx, s.customerCardsKey(card.CustomerID), card.ID).Err(); err != nil {
+			return fmt.Errorf("failed to add card to customer set: %w", err)
+		}
+	}
+	if card.AccountID != "" {
+		if err := s.client.SAdd(s.ctx, s.accountCardsKey(card.AccountID), card.ID).Err(); err != nil {
+			return fmt.Errorf("failed to add card to account set: %w", err)
+		}
+	}
+
+	return nil
+}
+
+func (s *RedisStorage) GetCard(id string) (*models.Card, error) {
+	data, err := s.client.Get(s.ctx, s.cardKey(id)).Result()
+	if err == redis.Nil {
+		return nil, errors.New("card not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get card: %w", err)
+	}
+
+	var card models.Card
+	if err := json.Unmarshal([]byte(data), &card); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal card: %w", err)
+	}
+
+	return &card, nil
+}
+
+func (s *RedisStorage) UpdateCard(card *models.Card) error {
+	if card.ID == "" {
+		return errors.New("card ID is required")
+	}
+
+	data, err := json.Marshal(card)
+	if err != nil {
+		return fmt.Errorf("failed to marshal card: %w", err)
+	}
+
+	if err := s.client.Set(s.ctx, s.cardKey(card.ID), data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to update card: %w", err)
+	}
+
+	return nil
+}
+
+func (s *RedisStorage) GetCardsByCustomer(customerID string) ([]*models.Card, error) {
+	cardIDs, err := s.client.SMembers(s.ctx, s.customerCardsKey(customerID)).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get customer cards: %w", err)
+	}
+
+	var cards []*models.Card
+	for _, cardID := range cardIDs {
+		card, err := s.GetCard(cardID)
+		if err == nil {
+			cards = append(cards, card)
+		}
+	}
+
+	return cards, nil
+}
+
+func (s *RedisStorage) GetCardsByAccount(accountID string) ([]*models.Card, error) {
+	cardIDs, err := s.client.SMembers(s.ctx, s.accountCardsKey(accountID)).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get account cards: %w", err)
+	}
+
+	var cards []*models.Card
+	for _, cardID := range cardIDs {
+		card, err := s.GetCard(cardID)
+		if err == nil {
+			cards = append(cards, card)
+		}
+	}
+
+	return cards, nil
+}
+
 // Wallet operations
 
 func (s *RedisStorage) CreateWallet(wallet *models.Wallet) error {
@@ -332,6 +578,34 @@ func (s *RedisStorage) userKey(id string) string {
 
 func (s *RedisStorage) emailKey(email string) string {
 	return fmt.Sprintf("email:%s", email)
+}
+
+func (s *RedisStorage) customerKey(id string) string {
+	return fmt.Sprintf("customer:%s", id)
+}
+
+func (s *RedisStorage) customerSourceKey(sourceID string) string {
+	return fmt.Sprintf("customer:source:%s", sourceID)
+}
+
+func (s *RedisStorage) customerAccountsKey(customerID string) string {
+	return fmt.Sprintf("customer:%s:accounts", customerID)
+}
+
+func (s *RedisStorage) accountKey(id string) string {
+	return fmt.Sprintf("account:%s", id)
+}
+
+func (s *RedisStorage) customerCardsKey(customerID string) string {
+	return fmt.Sprintf("customer:%s:cards", customerID)
+}
+
+func (s *RedisStorage) accountCardsKey(accountID string) string {
+	return fmt.Sprintf("account:%s:cards", accountID)
+}
+
+func (s *RedisStorage) cardKey(id string) string {
+	return fmt.Sprintf("card:%s", id)
 }
 
 func (s *RedisStorage) walletKey(address string) string {
