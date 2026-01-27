@@ -1,12 +1,13 @@
 package main
 
 func allScenarios() []scenario {
-    return []scenario{
-        scenarioUserKYCAcceptance(),
-        scenarioWalletsAndBalances(),
-        scenarioExternalDeposit(),
-        scenarioHostedTransfer(),
-        scenarioIframeDeposit(),
-        scenarioRatesAndVaults(),
-    }
+	return []scenario{
+		scenarioUserKYCAcceptance(),
+		scenarioWalletsAndBalances(),
+		scenarioExternalDeposit(),
+		scenarioHostedTransfer(),
+		scenarioIframeDeposit(),
+		scenarioRatesAndVaults(),
+		scenarioCards(),
+	}
 }

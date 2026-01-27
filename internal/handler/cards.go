@@ -1241,3 +1241,5 @@ func derefString(value *string) string {
 	}
 	return *value
 }
+
+// NOTE: real implementation exists above; stub removed
