@@ -456,6 +456,77 @@ func (h *Handler) GetCard(w http.ResponseWriter, r *http.Request) {
 	h.sendJSON(w, http.StatusOK, card)
 }
 
+// GetCardLimits returns card limits
+func (h *Handler) GetCardLimits(w http.ResponseWriter, r *http.Request) {
+	cardID := chi.URLParam(r, "cardID")
+	if cardID == "" {
+		h.sendError(w, http.StatusBadRequest, "card ID is required")
+		return
+	}
+
+	if _, err := h.store.GetCard(cardID); err != nil {
+		h.sendError(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	limits, err := h.store.GetCardLimits(cardID)
+	if err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to get card limits")
+		return
+	}
+
+	if len(limits) == 0 {
+		limits = defaultCardLimits()
+	}
+
+	h.sendJSON(w, http.StatusOK, limits)
+}
+
+// SetCardLimits sets card limits
+func (h *Handler) SetCardLimits(w http.ResponseWriter, r *http.Request) {
+	cardID := chi.URLParam(r, "cardID")
+	if cardID == "" {
+		h.sendError(w, http.StatusBadRequest, "card ID is required")
+		return
+	}
+
+	if _, err := h.store.GetCard(cardID); err != nil {
+		h.sendError(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	var req []models.CardLimit
+	if err := h.decodeJSON(r, &req); err != nil {
+		h.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	for i := range req {
+		if req[i].Type == "" {
+			h.sendError(w, http.StatusBadRequest, "limit type is required")
+			return
+		}
+		if req[i].Currency == "" {
+			req[i].Currency = "EUR"
+		}
+		if req[i].Currency != "EUR" {
+			h.sendError(w, http.StatusBadRequest, "only EUR currency is supported")
+			return
+		}
+		if req[i].Limit < 0 {
+			h.sendError(w, http.StatusBadRequest, "limit must be non-negative")
+			return
+		}
+	}
+
+	if err := h.store.SetCardLimits(cardID, req); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to set card limits")
+		return
+	}
+
+	h.sendJSON(w, http.StatusCreated, req)
+}
+
 // LockCard locks a card temporarily
 func (h *Handler) LockCard(w http.ResponseWriter, r *http.Request) {
 	cardID := chi.URLParam(r, "cardID")
@@ -785,6 +856,10 @@ func (h *Handler) CreateCardTransaction(w http.ResponseWriter, r *http.Request) 
 		h.sendError(w, http.StatusInternalServerError, "failed to store card transaction")
 		return
 	}
+	if err := h.store.AddCardTransactionIndex(card.ID, txID); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to index card transaction")
+		return
+	}
 
 	h.sendJSON(w, http.StatusCreated, transaction)
 
@@ -811,6 +886,84 @@ func (h *Handler) GetCardTransaction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.sendJSON(w, http.StatusOK, tx)
+}
+
+// GetCardTransactions lists card transactions with pagination
+func (h *Handler) GetCardTransactions(w http.ResponseWriter, r *http.Request) {
+	cardID := chi.URLParam(r, "cardID")
+	if cardID == "" {
+		h.sendError(w, http.StatusBadRequest, "card ID is required")
+		return
+	}
+
+	if _, err := h.store.GetCard(cardID); err != nil {
+		h.sendError(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	pageSize := uint(20)
+	if sizeStr := r.URL.Query().Get("pageSize"); sizeStr != "" {
+		if size, err := strconv.Atoi(sizeStr); err == nil && size > 0 {
+			pageSize = uint(size)
+		}
+	}
+	pageNumber := uint(1)
+	if pageStr := r.URL.Query().Get("pageNumber"); pageStr != "" {
+		if page, err := strconv.Atoi(pageStr); err == nil && page > 0 {
+			pageNumber = uint(page)
+		}
+	}
+
+	ids, err := h.store.GetCardTransactionIDs(cardID)
+	if err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to get card transactions")
+		return
+	}
+
+	totalRecords := uint(len(ids))
+	if totalRecords == 0 {
+		response := models.CardTransactionsResponse{
+			Data: []models.CardTransaction{},
+			Pagination: models.CardTransactionsPagination{
+				PageNumber:   pageNumber,
+				PageSize:     pageSize,
+				TotalPages:   0,
+				TotalRecords: 0,
+			},
+		}
+		h.sendJSON(w, http.StatusOK, response)
+		return
+	}
+
+	start := (pageNumber - 1) * pageSize
+	if start >= totalRecords {
+		start = totalRecords
+	}
+	end := start + pageSize
+	if end > totalRecords {
+		end = totalRecords
+	}
+
+	pageIDs := ids[start:end]
+	transactions := make([]models.CardTransaction, 0, len(pageIDs))
+	for _, id := range pageIDs {
+		if tx, err := h.store.GetCardTransaction(id); err == nil {
+			transactions = append(transactions, *tx)
+		}
+	}
+
+	totalPages := (totalRecords + pageSize - 1) / pageSize
+	response := models.CardTransactionsResponse{
+		Data: transactions,
+		Pagination: models.CardTransactionsPagination{
+			PageNumber:   pageNumber,
+			PageSize:     pageSize,
+			TotalPages:   totalPages,
+			TotalRecords: totalRecords,
+		},
+	}
+
+	h.sendJSON(w, http.StatusOK, response)
 }
 
 // GetPendingConfirmations returns an empty 3DS confirmation list (stub for now).
@@ -868,6 +1021,16 @@ func validateDeliveryAddress(req models.CreateCustomerDeliveryAddressArgs) error
 	}
 
 	return nil
+}
+
+func defaultCardLimits() []models.CardLimit {
+	return []models.CardLimit{
+		{Type: "dailyOverall", Limit: 1000.00, Currency: "EUR", IsDisabled: false},
+		{Type: "perTransaction", Limit: 500.00, Currency: "EUR", IsDisabled: false},
+		{Type: "monthlyOverall", Limit: 5000.00, Currency: "EUR", IsDisabled: false},
+		{Type: "dailyAtm", Limit: 300.00, Currency: "EUR", IsDisabled: false},
+		{Type: "dailyEcomm", Limit: 800.00, Currency: "EUR", IsDisabled: false},
+	}
 }
 
 func parseCardToken(token string, tokenType string) (string, error) {

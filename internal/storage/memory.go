@@ -11,34 +11,38 @@ import (
 
 // MemoryStorage implements Storage using in-memory maps
 type MemoryStorage struct {
-	mu                sync.RWMutex
-	users             map[string]*models.User                      // userID -> User
-	usersByEmail      map[string]*models.User                      // email -> User
-	customers         map[string]*models.Customer                  // customerID -> Customer
-	customersBySource map[string]*models.Customer                  // sourceID -> Customer
-	accounts          map[string]*models.Account                   // accountID -> Account
-	cards             map[string]*models.Card                      // cardID -> Card
-	cardTransactions  map[string]*models.CardTransaction           // transactionID -> CardTransaction
-	customerAddresses map[string][]*models.CustomerDeliveryAddress // customerID -> addresses
-	wallets           map[string]*models.Wallet                    // address -> Wallet
-	transactions      map[string]*models.Transaction               // txID -> Transaction
-	balances          map[string]map[string]float64                // userID -> currency -> amount
+	mu                     sync.RWMutex
+	users                  map[string]*models.User                      // userID -> User
+	usersByEmail           map[string]*models.User                      // email -> User
+	customers              map[string]*models.Customer                  // customerID -> Customer
+	customersBySource      map[string]*models.Customer                  // sourceID -> Customer
+	accounts               map[string]*models.Account                   // accountID -> Account
+	cards                  map[string]*models.Card                      // cardID -> Card
+	cardTransactions       map[string]*models.CardTransaction           // transactionID -> CardTransaction
+	cardTransactionsByCard map[string][]string                          // cardID -> transactionIDs
+	cardLimits             map[string][]models.CardLimit                // cardID -> limits
+	customerAddresses      map[string][]*models.CustomerDeliveryAddress // customerID -> addresses
+	wallets                map[string]*models.Wallet                    // address -> Wallet
+	transactions           map[string]*models.Transaction               // txID -> Transaction
+	balances               map[string]map[string]float64                // userID -> currency -> amount
 }
 
 // NewMemoryStorage creates a new in-memory storage
 func NewMemoryStorage() *MemoryStorage {
 	return &MemoryStorage{
-		users:             make(map[string]*models.User),
-		usersByEmail:      make(map[string]*models.User),
-		customers:         make(map[string]*models.Customer),
-		customersBySource: make(map[string]*models.Customer),
-		accounts:          make(map[string]*models.Account),
-		cards:             make(map[string]*models.Card),
-		cardTransactions:  make(map[string]*models.CardTransaction),
-		customerAddresses: make(map[string][]*models.CustomerDeliveryAddress),
-		wallets:           make(map[string]*models.Wallet),
-		transactions:      make(map[string]*models.Transaction),
-		balances:          make(map[string]map[string]float64),
+		users:                  make(map[string]*models.User),
+		usersByEmail:           make(map[string]*models.User),
+		customers:              make(map[string]*models.Customer),
+		customersBySource:      make(map[string]*models.Customer),
+		accounts:               make(map[string]*models.Account),
+		cards:                  make(map[string]*models.Card),
+		cardTransactions:       make(map[string]*models.CardTransaction),
+		cardTransactionsByCard: make(map[string][]string),
+		cardLimits:             make(map[string][]models.CardLimit),
+		customerAddresses:      make(map[string][]*models.CustomerDeliveryAddress),
+		wallets:                make(map[string]*models.Wallet),
+		transactions:           make(map[string]*models.Transaction),
+		balances:               make(map[string]map[string]float64),
 	}
 }
 
@@ -348,6 +352,30 @@ func (s *MemoryStorage) GetCardsByAccount(accountID string) ([]*models.Card, err
 	return cards, nil
 }
 
+func (s *MemoryStorage) GetCardLimits(cardID string) ([]models.CardLimit, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	limits, ok := s.cardLimits[cardID]
+	if !ok {
+		return []models.CardLimit{}, nil
+	}
+
+	result := make([]models.CardLimit, len(limits))
+	copy(result, limits)
+	return result, nil
+}
+
+func (s *MemoryStorage) SetCardLimits(cardID string, limits []models.CardLimit) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	result := make([]models.CardLimit, len(limits))
+	copy(result, limits)
+	s.cardLimits[cardID] = result
+	return nil
+}
+
 // Card transaction operations
 
 func (s *MemoryStorage) CreateCardTransaction(tx *models.CardTransaction) error {
@@ -376,6 +404,32 @@ func (s *MemoryStorage) GetCardTransaction(id string) (*models.CardTransaction, 
 	}
 
 	return tx, nil
+}
+
+func (s *MemoryStorage) AddCardTransactionIndex(cardID string, transactionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if cardID == "" || transactionID == "" {
+		return fmt.Errorf("cardID and transactionID are required")
+	}
+
+	s.cardTransactionsByCard[cardID] = append(s.cardTransactionsByCard[cardID], transactionID)
+	return nil
+}
+
+func (s *MemoryStorage) GetCardTransactionIDs(cardID string) ([]string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	ids := s.cardTransactionsByCard[cardID]
+	if ids == nil {
+		return []string{}, nil
+	}
+
+	result := make([]string, len(ids))
+	copy(result, ids)
+	return result, nil
 }
 
 // CreateWallet creates a new wallet

@@ -146,6 +146,13 @@ type ChangePinArgs struct {
 	Cypher string `json:"cypher"`
 }
 
+type CardLimit struct {
+	Type       string  `json:"type"`
+	Limit      float64 `json:"limit"`
+	Currency   string  `json:"currency"`
+	IsDisabled bool    `json:"isDisabled"`
+}
+
 type CardTokenLink struct {
 	Href   string `json:"href"`
 	Rel    string `json:"rel"`
@@ -155,6 +162,18 @@ type CardTokenLink struct {
 type CardTokenResponse struct {
 	Token string          `json:"token"`
 	Links []CardTokenLink `json:"links"`
+}
+
+type CardTransactionsPagination struct {
+	PageNumber   uint `json:"pageNumber"`
+	PageSize     uint `json:"pageSize"`
+	TotalPages   uint `json:"totalPages"`
+	TotalRecords uint `json:"totalRecords"`
+}
+
+type CardTransactionsResponse struct {
+	Data       []CardTransaction          `json:"data"`
+	Pagination CardTransactionsPagination `json:"pagination"`
 }
 
 type CreateCardTransactionArgs struct {

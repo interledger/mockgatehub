@@ -33,10 +33,14 @@ type Storage interface {
 	UpdateCard(card *models.Card) error
 	GetCardsByCustomer(customerID string) ([]*models.Card, error)
 	GetCardsByAccount(accountID string) ([]*models.Card, error)
+	GetCardLimits(cardID string) ([]models.CardLimit, error)
+	SetCardLimits(cardID string, limits []models.CardLimit) error
 
 	// Card Transactions
 	CreateCardTransaction(tx *models.CardTransaction) error
 	GetCardTransaction(id string) (*models.CardTransaction, error)
+	AddCardTransactionIndex(cardID string, transactionID string) error
+	GetCardTransactionIDs(cardID string) ([]string, error)
 
 	// Wallets
 	CreateWallet(wallet *models.Wallet) error

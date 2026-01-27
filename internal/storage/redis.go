@@ -472,6 +472,36 @@ func (s *RedisStorage) GetCardsByAccount(accountID string) ([]*models.Card, erro
 	return cards, nil
 }
 
+func (s *RedisStorage) GetCardLimits(cardID string) ([]models.CardLimit, error) {
+	data, err := s.client.Get(s.ctx, s.cardLimitsKey(cardID)).Result()
+	if err == redis.Nil {
+		return []models.CardLimit{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get card limits: %w", err)
+	}
+
+	var limits []models.CardLimit
+	if err := json.Unmarshal([]byte(data), &limits); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal card limits: %w", err)
+	}
+
+	return limits, nil
+}
+
+func (s *RedisStorage) SetCardLimits(cardID string, limits []models.CardLimit) error {
+	data, err := json.Marshal(limits)
+	if err != nil {
+		return fmt.Errorf("failed to marshal card limits: %w", err)
+	}
+
+	if err := s.client.Set(s.ctx, s.cardLimitsKey(cardID), data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to store card limits: %w", err)
+	}
+
+	return nil
+}
+
 // Card transaction operations
 
 func (s *RedisStorage) CreateCardTransaction(tx *models.CardTransaction) error {
@@ -506,6 +536,27 @@ func (s *RedisStorage) GetCardTransaction(id string) (*models.CardTransaction, e
 	}
 
 	return &tx, nil
+}
+
+func (s *RedisStorage) AddCardTransactionIndex(cardID string, transactionID string) error {
+	if cardID == "" || transactionID == "" {
+		return errors.New("cardID and transactionID are required")
+	}
+
+	if err := s.client.LPush(s.ctx, s.cardTransactionsKey(cardID), transactionID).Err(); err != nil {
+		return fmt.Errorf("failed to index card transaction: %w", err)
+	}
+
+	return nil
+}
+
+func (s *RedisStorage) GetCardTransactionIDs(cardID string) ([]string, error) {
+	ids, err := s.client.LRange(s.ctx, s.cardTransactionsKey(cardID), 0, -1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get card transaction IDs: %w", err)
+	}
+
+	return ids, nil
 }
 
 // Wallet operations
@@ -695,6 +746,10 @@ func (s *RedisStorage) cardKey(id string) string {
 	return fmt.Sprintf("card:%s", id)
 }
 
+func (s *RedisStorage) cardLimitsKey(cardID string) string {
+	return fmt.Sprintf("card:%s:limits", cardID)
+}
+
 func (s *RedisStorage) customerAddressesKey(customerID string) string {
 	return fmt.Sprintf("customer:%s:addresses", customerID)
 }
@@ -705,6 +760,10 @@ func (s *RedisStorage) customerAddressKey(addressID string) string {
 
 func (s *RedisStorage) cardTransactionKey(id string) string {
 	return fmt.Sprintf("cardtx:%s", id)
+}
+
+func (s *RedisStorage) cardTransactionsKey(cardID string) string {
+	return fmt.Sprintf("card:%s:transactions", cardID)
 }
 
 func (s *RedisStorage) walletKey(address string) string {

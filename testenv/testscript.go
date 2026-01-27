@@ -509,6 +509,57 @@ func runTests() {
 		return true, fmt.Sprintf("Token=%s...", token[:12])
 	})
 
+	// Test 7.85a: Get card limits
+	runTest("Get Card Limits", func() (bool, string) {
+		var result []map[string]interface{}
+		if err := getJSONWithHeaders(
+			fmt.Sprintf("/cards/v1/cards/%s/limits", cardID),
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+		if len(result) == 0 {
+			return false, "No limits returned"
+		}
+		return true, fmt.Sprintf("Returned %d limits", len(result))
+	})
+
+	// Test 7.85b: Set card limits
+	runTest("Set Card Limits", func() (bool, string) {
+		body := []map[string]interface{}{
+			{
+				"type":       "dailyOverall",
+				"limit":      1500.00,
+				"currency":   "EUR",
+				"isDisabled": false,
+			},
+			{
+				"type":       "perTransaction",
+				"limit":      750.00,
+				"currency":   "EUR",
+				"isDisabled": false,
+			},
+		}
+		var result []map[string]interface{}
+		if err := putJSONWithHeaders(
+			fmt.Sprintf("/cards/v1/cards/%s/limits", cardID),
+			body,
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+		if len(result) != 2 {
+			return false, "Unexpected limits response"
+		}
+		return true, "Limits updated"
+	})
+
 	// Test 7.86: Get card data from token
 	runTest("Get Card Data", func() (bool, string) {
 		var result map[string]interface{}
@@ -718,6 +769,26 @@ func runTests() {
 			return false, "Fetched transactionId mismatch"
 		}
 		return true, fmt.Sprintf("Transaction=%s", txID)
+	})
+
+	// Test 7.12: List card transactions
+	runTest("List Card Transactions", func() (bool, string) {
+		var result map[string]interface{}
+		if err := getJSONWithHeaders(
+			fmt.Sprintf("/cards/v1/cards/%s/transactions?pageSize=10&pageNumber=1", cardID),
+			map[string]string{
+				"x-gatehub-managed-user-uuid": userID,
+			},
+			&result,
+		); err != nil {
+			return false, err.Error()
+		}
+
+		data, ok := result["data"].([]interface{})
+		if !ok || len(data) == 0 {
+			return false, "No transactions returned"
+		}
+		return true, fmt.Sprintf("Returned %d transactions", len(data))
 	})
 
 	// Test 8: Create additional wallet
