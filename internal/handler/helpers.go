@@ -7,7 +7,10 @@ import (
 	"io"
 	"net/http"
 
+	"mockgatehub/internal/logger"
 	"mockgatehub/internal/models"
+
+	"go.uber.org/zap"
 )
 
 // Helper methods for JSON responses
@@ -15,21 +18,21 @@ import (
 func (h *Handler) sendJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	
+
 	// Marshal to log the response
 	body, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
-		// logger.Error ("[HANDLER] Failed to marshal response: %v", err)
+		logger.Error("failed to marshal response", zap.Error(err))
 		w.Write([]byte(`{"error":"internal server error"}`))
 		return
 	}
-	
-	// logger.Info ("[HANDLER] Response [%d]: %s", status, string(body))
+
+	logger.Debug("sending json response", zap.Int("status", status))
 	w.Write(body)
 }
 
 func (h *Handler) sendError(w http.ResponseWriter, status int, message string) {
-	// logger.Error ("[HANDLER] Error response [%d]: %s", status, message)
+	logger.Error("sending error response", zap.Int("status", status), zap.String("message", message))
 	h.sendJSON(w, status, models.ErrorResponse{
 		Error:   http.StatusText(status),
 		Message: message,
@@ -42,21 +45,22 @@ func (h *Handler) decodeJSON(r *http.Request, v interface{}) error {
 	if err != nil {
 		return fmt.Errorf("failed to read body: %w", err)
 	}
-	
+
 	// Log the raw request body
-	// logger.Info ("[HANDLER] Request body: %s", string(body))
-	
+	logger.Debug("received request body", zap.String("body", string(body)))
+
 	// Restore body for decoding
 	r.Body = io.NopCloser(bytes.NewReader(body))
-	
+
 	// Decode
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		// logger.Error ("[HANDLER] Failed to decode JSON: %v", err)
+		logger.Error("failed to decode json", zap.Error(err))
 		return err
 	}
-	
+
 	// Log the decoded structure
-	_, _ = json.MarshalIndent(v, "", "  ")	// logger.Info ("[HANDLER] Decoded request: %s", string(pretty))
-	
+	pretty, _ := json.MarshalIndent(v, "", "  ")
+	logger.Debug("decoded request", zap.String("data", string(pretty)))
+
 	return nil
 }

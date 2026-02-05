@@ -254,6 +254,35 @@ WEBHOOK_URL=http://your-app:3003/gatehub-webhooks
 WEBHOOK_SECRET=your-secret-here
 ```
 
+## Logging Guidelines
+
+**Important**: It's safe to log sensitive values (app IDs, bearer tokens, amounts, etc.) in MockGatehub because:
+- This is a development/testing mock service, not a production system
+- Applications running against it are also in local test environments
+- Verbose logging helps with debugging integrations and identifying issues
+- No real credentials or production data flows through this service
+
+**Logging Standards**:
+- Use zap structured logging via `logger.Info()`, `logger.Warn()`, `logger.Error()`, `logger.Debug()`
+- Include contextual fields: `zap.String("key", value)`, `zap.Error(err)`, `zap.Int("value", num)`, etc.
+- Log all significant operations: user creation, wallet operations, deposits, KYC state changes
+- Include identifiers (user IDs, wallet addresses, transaction IDs) for traceability
+- Use human-readable log levels:
+  - `Info`: Normal operations (user created, deposit received)
+  - `Warn`: Non-fatal issues (invalid input, fallback behavior)
+  - `Error`: Operations that failed (database error, webhook failed)
+  - `Debug`: Detailed diagnostic info (token resolution, balance calculations)
+
+**Example**:
+```go
+logger.Info("deposit created successfully", 
+    zap.String("user_id", userID),
+    zap.String("amount", amountStr),
+    zap.String("currency", currency),
+    zap.String("wallet_address", address),
+)
+```
+
 ## Critical Notes for AI Agents
 
 1. **ALWAYS run testenv tests after changes**: `cd testenv && go run testscript.go`
@@ -263,6 +292,7 @@ WEBHOOK_SECRET=your-secret-here
 5. **Update AGENTS.md if you discover outdated guidance**: Keep instructions fresh
 6. **Push to branch first**: Create PR to test against main branch protection
 7. **Verify release workflow runs**: Check that semantic-release creates tags and Docker pushes
+8. **Use zap structured logging**: Always include context fields for debugging
 
 ## Success Metrics
 

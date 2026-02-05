@@ -244,14 +244,14 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 					vaultUUID := consts.SandboxVaultIDs[txReq.Currency]
 					if vaultUUID == "" {
 						// Fallback to USD vault if currency not found
+						logger.Warn("unknown currency, using usd vault", zap.String("requested_currency", txReq.Currency))
 						txReq.Currency = "USD"
 						vaultUUID = consts.SandboxVaultIDs[txReq.Currency]
-						// logger.Warn ("[HANDLER] Unknown currency %s, using USD vault", txReq.Currency)
 					}
 
 					amountFloat, err := strconv.ParseFloat(txReq.Amount, 64)
 					if err != nil {
-						// logger.Warn ("[HANDLER] Invalid amount %q, defaulting to 100.00", txReq.Amount)
+						logger.Warn("invalid amount, defaulting to 100.00", zap.String("amount", txReq.Amount), zap.Error(err))
 						amountFloat = 100.00
 					}
 					amountStr := fmt.Sprintf("%.2f", amountFloat)
@@ -275,11 +275,11 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 					}
 
 					if err := h.store.CreateTransaction(tx); err != nil {
-						// logger.Error ("[HANDLER] Failed to create transaction %s: %v", txID, err)
+						logger.Error("failed to create transaction", zap.String("transaction_id", txID), zap.Error(err))
 					}
 
 					if err := h.store.AddBalance(userUUID, txReq.Currency, amountFloat); err != nil {
-						// logger.Error ("[HANDLER] Failed to update balance for user %s: %v", userUUID, err)
+						logger.Error("failed to update balance for user", zap.String("user_id", userUUID), zap.Error(err))
 					}
 
 					// Send deposit webhook (matches GateHub webhook spec) with dynamic values
@@ -293,15 +293,15 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 						"total_fees":   "0",            // Fees charged (matches GateHub spec)
 					})
 
-					// logger.Info ("[HANDLER] Sent deposit webhook for user %s: %s %s to wallet %s", userUUID, txReq.Amount, txReq.Currency, walletAddress)
+					logger.Info("sent deposit webhook", zap.String("user_id", userUUID), zap.String("amount", amountStr), zap.String("currency", txReq.Currency), zap.String("wallet_address", walletAddress))
 				} else {
-					// logger.Error ("[HANDLER] No wallets found for user %s", userUUID)
+				logger.Error("no wallets found for user", zap.String("user_id", userUUID))
 				}
 			} else {
-				// logger.Error ("[HANDLER] User not found: %s, error: %v", userUUID, err)
+				logger.Error("user not found", zap.String("user_id", userUUID), zap.Error(err))
 			}
 		} else {
-			// logger.Warn("[HANDLER] Could not extract user UUID from bearer token")
+			logger.Warn("could not extract user uuid from bearer token")
 		}
 	}
 
@@ -321,7 +321,7 @@ func (h *Handler) extractUserFromBearer(bearer string) string {
 		}
 	}
 
-	// logger.Warn ("[HANDLER] Bearer token not found in mapping: %s", bearer[:min(len(bearer), 20)])
+	logger.Debug("bearer token not found in mapping")
 	return ""
 }
 
