@@ -153,17 +153,17 @@ func (h *Handler) DeleteCard(w http.ResponseWriter, r *http.Request) {
 // Returns mock pending confirmation for testing
 func (h *Handler) GetPendingConfirmations(w http.ResponseWriter, r *http.Request) {
 	logger.Info("get pending confirmations called (stub)")
-	
+
 	// Return a mock pending confirmation for testing purposes
 	h.sendJSON(w, http.StatusOK, map[string]interface{}{
 		"pendingConfirmations": []map[string]interface{}{
 			{
-				"transactionId":     "3ds-" + utils.GenerateUUID()[:8],
-				"merchantName":      "Test Merchant",
-				"purchaseAmount":    "15.00",
-				"purchaseCurrency":  "EUR",
-				"status":            "pending",
-				"createdAt":         time.Now().UTC().Format(time.RFC3339),
+				"transactionId":    "3ds-" + utils.GenerateUUID()[:8],
+				"merchantName":     "Test Merchant",
+				"purchaseAmount":   "15.00",
+				"purchaseCurrency": "EUR",
+				"status":           "pending",
+				"createdAt":        time.Now().UTC().Format(time.RFC3339),
 			},
 		},
 	})
