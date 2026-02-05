@@ -498,6 +498,41 @@ docker compose up -d  # Starts your app services with mockgatehub
 - Verify your application backend is running and accessible
 - Check logs: `docker compose logs mockgatehub`
 
+### Check a user balance from the command line (Interledger App)
+
+When MockGatehub is running behind the Interledger App stack, you can verify whether a deposit actually hit the provider by:
+
+1. Resolve the Kratos identity ID from the user email.
+2. Resolve the wallet ID from the backend DB.
+3. Resolve the Gatehub wallet address (`provider_id`) from linked accounts.
+4. Query MockGatehub balances for that wallet address.
+
+```bash
+# 1) Find Kratos identity ID by email
+docker compose -f local/docker-compose.yaml exec -T postgres \
+    psql -U postgres -d kratos -c \
+    "SELECT i.id FROM identities i\
+     JOIN identity_credentials ic ON ic.identity_id = i.id\
+     JOIN identity_credential_identifiers ici ON ici.identity_credential_id = ic.id\
+     WHERE ici.identifier='716461-sender-p2p@example.com';"
+
+# 2) Find wallet_id in backend DB using the identity ID
+docker compose -f local/docker-compose.yaml exec -T postgres \
+    psql -U postgres -d backend -c \
+    "SELECT wallet_id FROM user_wallets WHERE user_id='IDENTITY_ID';"
+
+# 3) Find Gatehub linked account and provider_id (wallet address)
+docker compose -f local/docker-compose.yaml exec -T postgres \
+    psql -U postgres -d backend -c \
+    "SELECT id, provider_id, send_currency, receive_currency\
+     FROM linked_accounts WHERE wallet_id='WALLET_ID' AND provider='gatehub';"
+
+# 4) Query MockGatehub balances for the provider wallet address
+curl -sk https://mockgatehub.interledger.test/core/v1/wallets/PROVIDER_ID/balances | jq
+```
+
+If the provider balance shows the deposit amount but the Interledger UI does not, the backend workflow likely rejected the currency (Gatehub workflows are EUR-only by default).
+
 ## AI Agent Best Practices
 
 ### When Adding New Endpoints

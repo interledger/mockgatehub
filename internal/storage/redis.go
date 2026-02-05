@@ -13,6 +13,7 @@ import (
 	"mockgatehub/internal/utils"
 
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 )
 
 // RedisStorage implements Storage using Redis
@@ -38,7 +39,7 @@ func NewRedisClient(redisURL string, db int) (*redis.Client, error) {
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
 	}
 
-	logger.Info.Printf("Created standalone Redis client: %s (DB: %d)", redisURL, db)
+	logger.Info("created standalone redis client", zap.String("url", redisURL), zap.Int("db", db))
 	return client, nil
 }
 
@@ -59,7 +60,7 @@ func NewRedisStorage(redisURL string, db int) (*RedisStorage, error) {
 		return nil, fmt.Errorf("failed to connect to Redis: %w", err)
 	}
 
-	logger.Info.Printf("Connected to Redis: %s (DB: %d)", redisURL, db)
+	logger.Info("connected to redis", zap.String("url", redisURL), zap.Int("db", db))
 
 	return &RedisStorage{
 		client: client,

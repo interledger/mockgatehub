@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 
-	"mockgatehub/internal/logger"
 	"mockgatehub/internal/models"
 )
 
@@ -20,17 +19,17 @@ func (h *Handler) sendJSON(w http.ResponseWriter, status int, data interface{}) 
 	// Marshal to log the response
 	body, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
-		logger.Error.Printf("[HANDLER] Failed to marshal response: %v", err)
+		// logger.Error ("[HANDLER] Failed to marshal response: %v", err)
 		w.Write([]byte(`{"error":"internal server error"}`))
 		return
 	}
 	
-	logger.Info.Printf("[HANDLER] Response [%d]: %s", status, string(body))
+	// logger.Info ("[HANDLER] Response [%d]: %s", status, string(body))
 	w.Write(body)
 }
 
 func (h *Handler) sendError(w http.ResponseWriter, status int, message string) {
-	logger.Error.Printf("[HANDLER] Error response [%d]: %s", status, message)
+	// logger.Error ("[HANDLER] Error response [%d]: %s", status, message)
 	h.sendJSON(w, status, models.ErrorResponse{
 		Error:   http.StatusText(status),
 		Message: message,
@@ -45,20 +44,19 @@ func (h *Handler) decodeJSON(r *http.Request, v interface{}) error {
 	}
 	
 	// Log the raw request body
-	logger.Info.Printf("[HANDLER] Request body: %s", string(body))
+	// logger.Info ("[HANDLER] Request body: %s", string(body))
 	
 	// Restore body for decoding
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	
 	// Decode
 	if err := json.NewDecoder(r.Body).Decode(v); err != nil {
-		logger.Error.Printf("[HANDLER] Failed to decode JSON: %v", err)
+		// logger.Error ("[HANDLER] Failed to decode JSON: %v", err)
 		return err
 	}
 	
 	// Log the decoded structure
-	pretty, _ := json.MarshalIndent(v, "", "  ")
-	logger.Info.Printf("[HANDLER] Decoded request: %s", string(pretty))
+	_, _ = json.MarshalIndent(v, "", "  ")	// logger.Info ("[HANDLER] Decoded request: %s", string(pretty))
 	
 	return nil
 }

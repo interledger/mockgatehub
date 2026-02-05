@@ -7,11 +7,13 @@ import (
 	"mockgatehub/internal/logger"
 	"mockgatehub/internal/models"
 	"mockgatehub/internal/utils"
+
+	"go.uber.org/zap"
 )
 
 // CreateToken generates an access token (stub - always succeeds)
 func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
-	logger.Info.Println("CreateToken called")
+	logger.Info("creating token")
 
 	// Check for managedUserUuid header (used for iframe tokens)
 	managedUserUuid := r.Header.Get("x-gatehub-managed-user-uuid")
@@ -19,7 +21,7 @@ func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
 		managedUserUuid = r.Header.Get("managedUserUuid")
 	}
 
-	logger.Info.Printf("CreateToken: managedUserUuid = %s, all headers: %v", managedUserUuid, r.Header)
+	logger.Debug("create token: checking managed user uuid", zap.String("managed_user_uuid", managedUserUuid))
 
 	var token string
 	if managedUserUuid != "" {
@@ -29,11 +31,11 @@ func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
 		// Store the mapping of token -> user UUID
 		h.tokenToUser.Store(token, managedUserUuid)
 
-		logger.Info.Printf("Created iframe token for user %s: %s", managedUserUuid, token[:min(len(token), 20)])
+		logger.Info("created iframe token for user", zap.String("user_uuid", managedUserUuid), zap.String("token_prefix", token[:20]))
 	} else {
 		// Regular access token (backward compatibility)
 		token = "mock-access-token-" + consts.TestUser1ID
-		logger.Warn.Println("CreateToken: No managedUserUuid header found, using default token")
+		logger.Warn("no managed user uuid header found, using default token")
 	}
 
 	// In sandbox mode, always return a valid token
@@ -60,12 +62,12 @@ func (h *Handler) CreateManagedUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info.Printf("Creating managed user: %s", req.Email)
+	logger.Info("creating managed user", zap.String("email", req.Email))
 
 	// Check if user already exists
 	existing, _ := h.store.GetUserByEmail(req.Email)
 	if existing != nil {
-		logger.Info.Printf("User already exists: %s", req.Email)
+		logger.Info("user already exists", zap.String("email", req.Email))
 		h.sendJSON(w, http.StatusOK, *existing)
 		return
 	}
@@ -83,12 +85,12 @@ func (h *Handler) CreateManagedUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.CreateUser(user); err != nil {
-		logger.Error.Printf("Failed to create user: %v", err)
+		logger.Error("failed to create user", zap.String("email", req.Email), zap.Error(err))
 		h.sendError(w, http.StatusInternalServerError, "Failed to create user")
 		return
 	}
 
-	logger.Info.Printf("Created user: %s (ID: %s)", user.Email, user.ID)
+	logger.Info("user created", zap.String("email", user.Email), zap.String("user_id", user.ID))
 	h.sendJSON(w, http.StatusCreated, *user)
 }
 
@@ -100,7 +102,7 @@ func (h *Handler) GetManagedUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info.Printf("Getting managed user: %s", email)
+	logger.Info("getting managed user", zap.String("email", email))
 
 	user, err := h.store.GetUserByEmail(email)
 	if err != nil {
@@ -124,7 +126,7 @@ func (h *Handler) UpdateManagedUserEmail(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	logger.Info.Printf("Updating user email: %s -> %s", req.Email, req.NewEmail)
+	logger.Info("updating user email", zap.String("old_email", req.Email), zap.String("new_email", req.NewEmail))
 
 	user, err := h.store.GetUserByEmail(req.Email)
 	if err != nil {
@@ -134,11 +136,11 @@ func (h *Handler) UpdateManagedUserEmail(w http.ResponseWriter, r *http.Request)
 
 	user.Email = req.NewEmail
 	if err := h.store.UpdateUser(user); err != nil {
-		logger.Error.Printf("Failed to update user: %v", err)
+		logger.Error("failed to update user", zap.String("user_id", user.ID), zap.Error(err))
 		h.sendError(w, http.StatusInternalServerError, "Failed to update user")
 		return
 	}
 
-	logger.Info.Printf("Updated user email: %s", user.ID)
+	logger.Info("user email updated", zap.String("user_id", user.ID))
 	h.sendJSON(w, http.StatusOK, models.GetManagedUserResponse{User: *user})
 }
