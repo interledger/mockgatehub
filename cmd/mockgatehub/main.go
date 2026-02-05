@@ -20,6 +20,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var buildTime = "unknown"
+
 func main() {
 	cfg := config.Load()
 
@@ -27,6 +29,8 @@ func main() {
 	if err := logger.Initialize(cfg.LogLevel); err != nil {
 		logger.Fatal("failed to initialize logger", zap.Error(err))
 	}
+
+	logger.Info("mockgatehub build info", zap.String("build_time", buildTime))
 
 	logger.Info("starting MockGatehub")
 
