@@ -17,6 +17,8 @@ import (
 	"mockgatehub/internal/storage"
 	"mockgatehub/internal/utils"
 	"mockgatehub/internal/webhook"
+
+	"go.uber.org/zap"
 )
 
 // Handler holds dependencies for HTTP handlers
@@ -28,7 +30,7 @@ type Handler struct {
 
 // NewHandler creates a new handler with dependencies
 func NewHandler(store storage.Storage, webhookManager *webhook.Manager) *Handler {
-	logger.Info.Println("[HANDLER] Initializing HTTP handlers")
+	logger.Info("initializing http handlers")
 	return &Handler{
 		store:          store,
 		webhookManager: webhookManager,
@@ -40,33 +42,35 @@ func (h *Handler) RequestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
-		logger.Info.Printf("[REQUEST] --> %s %s", r.Method, r.URL.Path)
-		logger.Info.Printf("[REQUEST]     From: %s", r.RemoteAddr)
-		logger.Info.Printf("[REQUEST]     User-Agent: %s", r.UserAgent())
+		logger.Info("incoming request", zap.String("method", r.Method), zap.String("path", r.URL.Path))
+		logger.Debug("request details",
+			zap.String("remote_addr", r.RemoteAddr),
+			zap.String("user_agent", r.UserAgent()),
+		)
 
 		// Log query parameters
 		if len(r.URL.Query()) > 0 {
-			logger.Info.Printf("[REQUEST]     Query params: %v", r.URL.Query())
+			logger.Debug("query parameters", zap.Any("params", r.URL.Query()))
 		}
 
 		// Log important headers
 		if contentType := r.Header.Get("Content-Type"); contentType != "" {
-			logger.Info.Printf("[REQUEST]     Content-Type: %s", contentType)
+			logger.Debug("content type", zap.String("content_type", contentType))
 		}
 		if auth := r.Header.Get("Authorization"); auth != "" {
-			logger.Info.Printf("[REQUEST]     Authorization: %s", auth)
+			logger.Debug("authorization header present")
 		}
 
 		next.ServeHTTP(w, r)
 
 		duration := time.Since(start)
-		logger.Info.Printf("[REQUEST] <-- %s %s completed in %v", r.Method, r.URL.Path, duration)
+		logger.Debug("request completed", zap.String("method", r.Method), zap.String("path", r.URL.Path), zap.Duration("duration", duration))
 	})
 }
 
 // HealthCheck handles the health check endpoint
 func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
-	logger.Info.Println("[HANDLER] Health check requested")
+	logger.Debug("health check requested")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	w.Write([]byte(`{"status":"ok","service":"mockgatehub"}`))
@@ -74,18 +78,18 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
 // RootHandler serves the main iframe page for deposit/onboarding
 func (h *Handler) RootHandler(w http.ResponseWriter, r *http.Request) {
-	logger.Info.Println("[HANDLER] Root handler requested")
+	logger.Info("root handler requested")
 
 	paymentType := r.URL.Query().Get("paymentType")
 	bearer := r.URL.Query().Get("bearer")
 
 	if bearer == "" {
-		logger.Error.Println("[HANDLER] Missing bearer token in root request")
+		logger.Error("missing bearer token in root request")
 		http.Error(w, "Missing bearer token", http.StatusBadRequest)
 		return
 	}
 
-	logger.Info.Printf("[HANDLER] Serving iframe for paymentType=%s with bearer token", paymentType)
+	logger.Info("serving iframe", zap.String("payment_type", paymentType))
 
 	// If no paymentType is provided, treat this as onboarding and serve the KYC iframe
 	if paymentType == "" || paymentType == "onboarding" {
@@ -98,14 +102,14 @@ func (h *Handler) RootHandler(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if userUUID == "" {
-			logger.Warn.Printf("[HANDLER] Could not extract user from bearer token or query params, will rely on form submission")
+			logger.Warn("could not extract user from bearer token or query params, will rely on form submission")
 		}
 
 		// Load KYC iframe template
 		kycTemplatePath := filepath.Join("web", "kyc-iframe.html")
 		kycTmpl, err := template.ParseFiles(kycTemplatePath)
 		if err != nil {
-			logger.Error.Printf("[HANDLER] Failed to parse KYC iframe template: %v", err)
+			logger.Error("failed to parse kyc iframe template", zap.Error(err))
 			http.Error(w, "Template error", http.StatusInternalServerError)
 			return
 		}
@@ -124,7 +128,7 @@ func (h *Handler) RootHandler(w http.ResponseWriter, r *http.Request) {
 
 		// Render KYC iframe
 		if err := kycTmpl.Execute(w, kycData); err != nil {
-			logger.Error.Printf("[HANDLER] Failed to execute KYC iframe template: %v", err)
+			logger.Error("failed to execute kyc iframe template", zap.Error(err))
 			http.Error(w, "Template execution error", http.StatusInternalServerError)
 			return
 		}
@@ -141,7 +145,7 @@ func (h *Handler) RootHandler(w http.ResponseWriter, r *http.Request) {
 	templatePath := filepath.Join("web", "index.html")
 	tmpl, err := template.ParseFiles(templatePath)
 	if err != nil {
-		logger.Error.Printf("[HANDLER] Failed to parse template: %v", err)
+		logger.Error("failed to parse template", zap.Error(err))
 		http.Error(w, "Template error", http.StatusInternalServerError)
 		return
 	}
@@ -161,7 +165,7 @@ func (h *Handler) RootHandler(w http.ResponseWriter, r *http.Request) {
 
 	// Render template
 	if err := tmpl.Execute(w, data); err != nil {
-		logger.Error.Printf("[HANDLER] Failed to execute template: %v", err)
+		logger.Error("failed to execute template", zap.Error(err))
 		http.Error(w, "Template execution error", http.StatusInternalServerError)
 		return
 	}
@@ -177,13 +181,13 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	logger.Info.Println("[HANDLER] Transaction complete handler requested")
+	logger.Info("transaction complete handler requested")
 
 	paymentType := r.URL.Query().Get("paymentType")
 	bearer := r.URL.Query().Get("bearer")
 
 	if bearer == "" {
-		logger.Error.Println("[HANDLER] Missing bearer token in transaction completion")
+		logger.Error("missing bearer token in transaction completion")
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadRequest)
@@ -191,7 +195,7 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	logger.Info.Printf("[HANDLER] Transaction completed for paymentType=%s with bearer token", paymentType)
+	logger.Info("transaction completed", zap.String("payment_type", paymentType))
 
 	// Parse request body for transaction details (amount, currency, etc.)
 	type TransactionRequest struct {
@@ -208,9 +212,9 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err == nil && len(bodyBytes) > 0 {
 			if err := json.Unmarshal(bodyBytes, &txReq); err == nil {
-				logger.Info.Printf("[HANDLER] Parsed transaction details: amount=%s, currency=%s", txReq.Amount, txReq.Currency)
+				logger.Info("parsed transaction details", zap.String("amount", txReq.Amount), zap.String("currency", txReq.Currency))
 			} else {
-				logger.Warn.Printf("[HANDLER] Failed to parse request body, using defaults: %v", err)
+				logger.Warn("failed to parse request body, using defaults", zap.Error(err))
 			}
 		}
 	}
@@ -240,14 +244,14 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 					vaultUUID := consts.SandboxVaultIDs[txReq.Currency]
 					if vaultUUID == "" {
 						// Fallback to USD vault if currency not found
+						logger.Warn("unknown currency, using usd vault", zap.String("requested_currency", txReq.Currency))
 						txReq.Currency = "USD"
 						vaultUUID = consts.SandboxVaultIDs[txReq.Currency]
-						logger.Warn.Printf("[HANDLER] Unknown currency %s, using USD vault", txReq.Currency)
 					}
 
 					amountFloat, err := strconv.ParseFloat(txReq.Amount, 64)
 					if err != nil {
-						logger.Warn.Printf("[HANDLER] Invalid amount %q, defaulting to 100.00", txReq.Amount)
+						logger.Warn("invalid amount, defaulting to 100.00", zap.String("amount", txReq.Amount), zap.Error(err))
 						amountFloat = 100.00
 					}
 					amountStr := fmt.Sprintf("%.2f", amountFloat)
@@ -271,11 +275,11 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 					}
 
 					if err := h.store.CreateTransaction(tx); err != nil {
-						logger.Error.Printf("[HANDLER] Failed to create transaction %s: %v", txID, err)
+						logger.Error("failed to create transaction", zap.String("transaction_id", txID), zap.Error(err))
 					}
 
 					if err := h.store.AddBalance(userUUID, txReq.Currency, amountFloat); err != nil {
-						logger.Error.Printf("[HANDLER] Failed to update balance for user %s: %v", userUUID, err)
+						logger.Error("failed to update balance for user", zap.String("user_id", userUUID), zap.Error(err))
 					}
 
 					// Send deposit webhook (matches GateHub webhook spec) with dynamic values
@@ -289,15 +293,15 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 						"total_fees":   "0",            // Fees charged (matches GateHub spec)
 					})
 
-					logger.Info.Printf("[HANDLER] Sent deposit webhook for user %s: %s %s to wallet %s", userUUID, txReq.Amount, txReq.Currency, walletAddress)
+					logger.Info("sent deposit webhook", zap.String("user_id", userUUID), zap.String("amount", amountStr), zap.String("currency", txReq.Currency), zap.String("wallet_address", walletAddress))
 				} else {
-					logger.Error.Printf("[HANDLER] No wallets found for user %s", userUUID)
+				logger.Error("no wallets found for user", zap.String("user_id", userUUID))
 				}
 			} else {
-				logger.Error.Printf("[HANDLER] User not found: %s, error: %v", userUUID, err)
+				logger.Error("user not found", zap.String("user_id", userUUID), zap.Error(err))
 			}
 		} else {
-			logger.Warn.Println("[HANDLER] Could not extract user UUID from bearer token")
+			logger.Warn("could not extract user uuid from bearer token")
 		}
 	}
 
@@ -317,7 +321,7 @@ func (h *Handler) extractUserFromBearer(bearer string) string {
 		}
 	}
 
-	logger.Warn.Printf("[HANDLER] Bearer token not found in mapping: %s", bearer[:min(len(bearer), 20)])
+	logger.Debug("bearer token not found in mapping")
 	return ""
 }
 

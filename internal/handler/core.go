@@ -11,6 +11,7 @@ import (
 	"mockgatehub/internal/utils"
 
 	"github.com/go-chi/chi/v5"
+	"go.uber.org/zap"
 )
 
 func (h *Handler) CreateWallet(w http.ResponseWriter, r *http.Request) {
@@ -31,7 +32,7 @@ func (h *Handler) CreateWallet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info.Printf("Creating wallet for user: %s", req.UserID)
+	logger.Info("creating wallet", zap.String("user_id", req.UserID))
 
 	_, err := h.store.GetUser(req.UserID)
 	if err != nil {
@@ -57,12 +58,12 @@ func (h *Handler) CreateWallet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.CreateWallet(wallet); err != nil {
-		logger.Error.Printf("Failed to create wallet: %v", err)
+		logger.Error("failed to create wallet", zap.Error(err))
 		h.sendError(w, http.StatusInternalServerError, "Failed to create wallet")
 		return
 	}
 
-	logger.Info.Printf("Created wallet: %s for user %s", address, req.UserID)
+	logger.Info("wallet created", zap.String("address", address), zap.String("user_id", req.UserID))
 	h.sendJSON(w, http.StatusCreated, wallet)
 }
 
@@ -75,7 +76,7 @@ func (h *Handler) GetUserWallets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info.Printf("Getting wallets for user: %s", userID)
+	logger.Info("getting wallets for user", zap.String("user_id", userID))
 
 	_, err := h.store.GetUser(userID)
 	if err != nil {
@@ -85,14 +86,14 @@ func (h *Handler) GetUserWallets(w http.ResponseWriter, r *http.Request) {
 
 	wallets, err := h.store.GetWalletsByUser(userID)
 	if err != nil {
-		logger.Error.Printf("Failed to get user wallets: %v", err)
+		logger.Error("failed to get user wallets", zap.Error(err))
 		h.sendError(w, http.StatusInternalServerError, "Failed to get wallets")
 		return
 	}
 
 	// If no wallets exist, create one automatically
 	if len(wallets) == 0 {
-		logger.Info.Printf("No wallets found for user %s, creating one automatically", userID)
+		logger.Info("no wallets found for user, creating one automatically", zap.String("user_id", userID))
 		address := utils.GenerateMockXRPLAddress()
 		wallet := &models.Wallet{
 			Address: address,
@@ -103,12 +104,12 @@ func (h *Handler) GetUserWallets(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if err := h.store.CreateWallet(wallet); err != nil {
-			logger.Error.Printf("Failed to create wallet: %v", err)
+			logger.Error("failed to create wallet", zap.Error(err))
 			h.sendError(w, http.StatusInternalServerError, "Failed to create wallet")
 			return
 		}
 
-		logger.Info.Printf("Created default wallet %s for user %s", address, userID)
+		logger.Info("created default wallet", zap.String("address", address), zap.String("user_id", userID))
 		wallets = append(wallets, wallet)
 	}
 
@@ -128,7 +129,7 @@ func (h *Handler) GetUserWallets(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	logger.Info.Printf("Returning %d wallets for user %s", len(wallets), userID)
+	logger.Info("returning wallets", zap.Int("count", len(wallets)), zap.String("user_id", userID))
 	h.sendJSON(w, http.StatusOK, response)
 }
 
@@ -143,7 +144,7 @@ func (h *Handler) GetWallet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info.Printf("Getting wallet: %s", walletID)
+	logger.Info("getting wallet", zap.String("wallet_id", walletID))
 
 	wallet, err := h.store.GetWallet(walletID)
 	if err != nil {
@@ -156,19 +157,19 @@ func (h *Handler) GetWallet(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) GetWalletBalance(w http.ResponseWriter, r *http.Request) {
 	walletID := chi.URLParam(r, "walletID")
-	logger.Info.Printf("DEBUG: walletID from path = '%s'", walletID)
+	logger.Debug("wallet id from path", zap.String("wallet_id", walletID))
 
 	if walletID == "" {
 		// Try legacy parameter name
 		walletID = chi.URLParam(r, "address")
-		logger.Info.Printf("DEBUG: walletID from address = '%s'", walletID)
+		logger.Debug("wallet id from address", zap.String("wallet_id", walletID))
 	}
 	if walletID == "" {
 		h.sendError(w, http.StatusBadRequest, "Wallet address is required")
 		return
 	}
 
-	logger.Info.Printf("Getting balance for wallet: %s", walletID)
+	logger.Info("getting balance for wallet", zap.String("wallet_id", walletID))
 
 	wallet, err := h.store.GetWallet(walletID)
 	if err != nil {
@@ -193,7 +194,7 @@ func (h *Handler) GetWalletBalance(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	logger.Info.Printf("Returning %d currency balances for wallet %s", len(balances), walletID)
+	logger.Info("returning currency balances", zap.Int("count", len(balances)), zap.String("wallet_id", walletID))
 
 	h.sendJSON(w, http.StatusOK, balances)
 }
@@ -208,7 +209,7 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 	// If user_id not in body, try to get from x-gatehub-managed-user-uuid header
 	if req.UserID == "" {
 		req.UserID = r.Header.Get("x-gatehub-managed-user-uuid")
-		logger.Info.Printf("CreateTransaction: attempting to extract user_id from header. Got: %s", req.UserID)
+		logger.Info("transaction: attempting to extract user_id from header", zap.String("user_id", req.UserID))
 	}
 
 	// If still no user_id, try to look up from receiving_address (wallet)
@@ -216,7 +217,7 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 		wallet, err := h.store.GetWallet(req.ReceivingAddress)
 		if err == nil && wallet != nil {
 			req.UserID = wallet.UserID
-			logger.Info.Printf("CreateTransaction: resolved user_id '%s' from receiving_address '%s'", req.UserID, req.ReceivingAddress)
+			logger.Info("transaction: resolved user_id from receiving_address", zap.String("user_id", req.UserID), zap.String("receiving_address", req.ReceivingAddress))
 		}
 	}
 
@@ -242,26 +243,23 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		req.Currency = currency
-		logger.Info.Printf("Inferred currency '%s' from vault_uuid '%s'", currency, req.VaultUUID)
+		logger.Info("inferred currency from vault uuid", zap.String("currency", currency), zap.String("vault_uuid", req.VaultUUID))
 	} else {
 		// If currency is provided, ensure vault_uuid matches (if also provided)
 		if req.VaultUUID != "" {
 			expectedVaultUUID := consts.SandboxVaultIDs[req.Currency]
 			if req.VaultUUID != expectedVaultUUID {
-				logger.Warn.Printf("Vault UUID mismatch: got %s, expected %s for currency %s. Using vault_uuid to determine currency.",
-					req.VaultUUID, expectedVaultUUID, req.Currency)
+				// Vault UUID mismatch: got vault, expected vault for currency. Using vault_uuid to determine currency
 				// Trust vault_uuid over currency parameter
 				if inferredCurrency, exists := consts.VaultUUIDToCurrency[req.VaultUUID]; exists {
 					req.Currency = inferredCurrency
-					logger.Info.Printf("Corrected currency to '%s' based on vault_uuid", inferredCurrency)
+					// Corrected currency based on vault_uuid
 				}
 			}
 		}
 	}
 
-	logger.Info.Printf("Creating transaction: user=%s, amount=%.2f %s, type=%d",
-		req.UserID, req.Amount, req.Currency, req.Type)
-
+	// Creating transaction
 	_, err := h.store.GetUser(req.UserID)
 	if err != nil {
 		h.sendError(w, http.StatusNotFound, "User not found")
@@ -304,7 +302,7 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.store.CreateTransaction(tx); err != nil {
-		logger.Error.Printf("Failed to create transaction: %v", err)
+		logger.Error("failed to create transaction", zap.Error(err))
 		h.sendError(w, http.StatusInternalServerError, "Failed to create transaction")
 		return
 	}
@@ -338,17 +336,17 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 		complete := func() {
 			if hasWebhook {
 				if err := h.store.UpdateTransactionStatus(txID, consts.TransactionStatusCompleted); err != nil {
-					logger.Error.Printf("Failed to update transaction %s to completed: %v", txID, err)
+					logger.Error("failed to update transaction to completed", zap.String("transaction_id", txID), zap.Error(err))
 					return
 				}
 			}
 
 			if err := h.store.AddBalance(userID, currency, amount); err != nil {
-				logger.Error.Printf("Failed to update balance for transaction %s: %v", txID, err)
+				logger.Error("failed to update balance for transaction", zap.String("transaction_id", txID), zap.Error(err))
 				return
 			}
 
-			logger.Info.Printf("Transaction %s completed: %.2f %s", txID, amount, currency)
+			logger.Info("transaction completed", zap.String("transaction_id", txID), zap.Float64("amount", amount), zap.String("currency", currency))
 
 			if hasWebhook {
 				completedPayload := map[string]interface{}{
@@ -388,7 +386,7 @@ func (h *Handler) GetTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info.Printf("Getting transaction: %s", txID)
+	logger.Info("getting transaction", zap.String("transaction_id", txID))
 
 	tx, err := h.store.GetTransaction(txID)
 	if err != nil {
@@ -418,14 +416,14 @@ func (h *Handler) GetUserCurrencies(w http.ResponseWriter, r *http.Request) {
 	userUUID := h.extractUserFromBearer(bearer)
 	if userUUID == "" {
 		// Return default currencies if we can't determine user
-		logger.Warn.Println("[HANDLER] Could not extract user from bearer, returning all currencies")
+		logger.Debug("could not extract user from bearer, returning all currencies")
 		h.sendJSON(w, http.StatusOK, models.CurrenciesResponse{
 			Currencies: []string{"USD", "EUR", "CAD", "GBP", "JPY", "AUD", "CHF", "CNY", "INR", "AED", "PEB", "XRP"},
 		})
 		return
 	}
 
-	logger.Info.Printf("[HANDLER] Getting currencies for user: %s", userUUID)
+	logger.Info("getting currencies for user", zap.String("user_id", userUUID))
 
 	// Get currencies that have non-zero balances for this user
 	allCurrencies := []string{"USD", "EUR", "CAD", "GBP", "JPY", "AUD", "CHF", "CNY", "INR", "AED", "PEB", "XRP"}
@@ -440,14 +438,14 @@ func (h *Handler) GetUserCurrencies(w http.ResponseWriter, r *http.Request) {
 
 	// If no currencies with balance, return all currencies (user hasn't deposited yet)
 	if len(userCurrencies) == 0 {
-		logger.Info.Printf("[HANDLER] No balances found for user %s, returning all currencies", userUUID)
+		logger.Info("no balances found for user, returning all currencies", zap.String("user_id", userUUID))
 		h.sendJSON(w, http.StatusOK, models.CurrenciesResponse{
 			Currencies: allCurrencies,
 		})
 		return
 	}
 
-	logger.Info.Printf("[HANDLER] Found %d currencies with balances for user %s: %v", len(userCurrencies), userUUID, userCurrencies)
+	logger.Info("found currencies with balances", zap.String("user_id", userUUID), zap.Int("count", len(userCurrencies)), zap.Strings("currencies", userCurrencies))
 
 	h.sendJSON(w, http.StatusOK, models.CurrenciesResponse{
 		Currencies: userCurrencies,

@@ -10,7 +10,7 @@ import (
 
 // GetCurrentRates returns exchange rates for all supported currencies
 func (h *Handler) GetCurrentRates(w http.ResponseWriter, r *http.Request) {
-	logger.Info.Println("Getting current exchange rates")
+	logger.Info("getting current exchange rates")
 
 	// Get counter currency from query param (default USD)
 	counter := r.URL.Query().Get("counter")
@@ -38,7 +38,7 @@ func (h *Handler) GetCurrentRates(w http.ResponseWriter, r *http.Request) {
 
 // GetVaults returns liquidity vault UUIDs for all currencies
 func (h *Handler) GetVaults(w http.ResponseWriter, r *http.Request) {
-	logger.Info.Println("Getting liquidity vaults")
+	logger.Info("getting liquidity vaults")
 
 	var vaults []models.VaultItem
 	for currency, uuid := range consts.SandboxVaultIDs {

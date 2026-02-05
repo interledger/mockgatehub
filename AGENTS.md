@@ -404,6 +404,35 @@ go func() {
 }()
 ```
 
+## Logging Guidelines
+
+**Important**: It's safe to log sensitive values (app IDs, bearer tokens, amounts, etc.) in MockGatehub because:
+- This is a development/testing mock service, not a production system
+- Applications running against it are also in local test environments
+- Verbose logging helps with debugging integrations and identifying issues
+- No real credentials or production data flows through this service
+
+**Logging Standards**:
+- Use zap structured logging via `logger.Info()`, `logger.Warn()`, `logger.Error()`, `logger.Debug()`
+- Include contextual fields: `zap.String("key", value)`, `zap.Error(err)`, `zap.Int("value", num)`, etc.
+- Log all significant operations: user creation, wallet operations, deposits, KYC state changes
+- Include identifiers (user IDs, wallet addresses, transaction IDs) for traceability
+- Use human-readable log levels:
+  - `Info`: Normal operations (user created, deposit received)
+  - `Warn`: Non-fatal issues (invalid input, fallback behavior)
+  - `Error`: Operations that failed (database error, webhook failed)
+  - `Debug`: Detailed diagnostic info (token resolution, balance calculations)
+
+**Example**:
+```go
+logger.Info("deposit created successfully", 
+    zap.String("user_id", userID),
+    zap.String("amount", amountStr),
+    zap.String("currency", currency),
+    zap.String("wallet_address", address),
+)
+```
+
 ## Configuration
 
 **Environment Variables**:
@@ -497,6 +526,41 @@ docker compose up -d  # Starts your app services with mockgatehub
 - Check `WEBHOOK_URL` environment variable
 - Verify your application backend is running and accessible
 - Check logs: `docker compose logs mockgatehub`
+
+### Check a user balance from the command line (Interledger App)
+
+When MockGatehub is running behind the Interledger App stack, you can verify whether a deposit actually hit the provider by:
+
+1. Resolve the Kratos identity ID from the user email.
+2. Resolve the wallet ID from the backend DB.
+3. Resolve the Gatehub wallet address (`provider_id`) from linked accounts.
+4. Query MockGatehub balances for that wallet address.
+
+```bash
+# 1) Find Kratos identity ID by email
+docker compose -f local/docker-compose.yaml exec -T postgres \
+    psql -U postgres -d kratos -c \
+    "SELECT i.id FROM identities i\
+     JOIN identity_credentials ic ON ic.identity_id = i.id\
+     JOIN identity_credential_identifiers ici ON ici.identity_credential_id = ic.id\
+     WHERE ici.identifier='716461-sender-p2p@example.com';"
+
+# 2) Find wallet_id in backend DB using the identity ID
+docker compose -f local/docker-compose.yaml exec -T postgres \
+    psql -U postgres -d backend -c \
+    "SELECT wallet_id FROM user_wallets WHERE user_id='IDENTITY_ID';"
+
+# 3) Find Gatehub linked account and provider_id (wallet address)
+docker compose -f local/docker-compose.yaml exec -T postgres \
+    psql -U postgres -d backend -c \
+    "SELECT id, provider_id, send_currency, receive_currency\
+     FROM linked_accounts WHERE wallet_id='WALLET_ID' AND provider='gatehub';"
+
+# 4) Query MockGatehub balances for the provider wallet address
+curl -sk https://mockgatehub.interledger.test/core/v1/wallets/PROVIDER_ID/balances | jq
+```
+
+If the provider balance shows the deposit amount but the Interledger UI does not, the backend workflow likely rejected the currency (Gatehub workflows are EUR-only by default).
 
 ## AI Agent Best Practices
 
