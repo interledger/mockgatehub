@@ -140,7 +140,7 @@ func (h *harness) createCustomerAndCard(userID, walletAddress, nameOnCard string
 	}
 	headers := map[string]string{"x-gatehub-managed-user-uuid": userID}
 	var resp cardCustomerResponse
-	if err := h.postJSON("/cards/v1/customers", body, headers, &resp); err != nil {
+	if err := h.postJSON("/cards/v1/customers/managed", body, headers, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil

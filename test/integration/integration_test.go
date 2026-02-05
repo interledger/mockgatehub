@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 // TestServer wraps the HTTP server for integration testing
@@ -30,7 +31,7 @@ type TestServer struct {
 
 // NewTestServer creates a test server with in-memory storage
 func NewTestServer() *TestServer {
-	logger.Info.Println("[TEST] Creating test server")
+	logger.Info("creating test server")
 
 	store := storage.NewMemoryStorage()
 	if err := storage.SeedTestUsers(store); err != nil {
@@ -72,12 +73,10 @@ func NewTestServer() *TestServer {
 		r.Get("/liquidity_provider/vaults", h.GetVaults)
 	})
 	r.Route("/cards/v1", func(r chi.Router) {
-		r.Post("/customers", h.CreateManagedCustomer)
-		r.Get("/cards/{customerID}", h.ListCards)
-		r.Get("/cards/{cardID}/card", h.GetCard)
-		r.Put("/cards/{cardID}/lock", h.LockCard)
-		r.Put("/cards/{cardID}/unlock", h.UnlockCard)
-		r.Delete("/cards/{cardID}/card", h.DeleteCard)
+		r.Post("/customers/managed", h.CreateManagedCustomer)
+		r.Post("/cards", h.CreateCard)
+		r.Get("/cards/{cardID}", h.GetCard)
+		r.Delete("/cards/{cardID}", h.DeleteCard)
 	})
 
 	return &TestServer{
@@ -109,11 +108,11 @@ func (ts *TestServer) MakeRequest(method, path string, body interface{}) *httpte
 // Full Workflow Integration Tests
 
 func TestFullUserJourney(t *testing.T) {
-	logger.Info.Println("\n=== Starting Full User Journey Test ===")
+	logger.Info("starting full user journey test")
 	ts := NewTestServer()
 
 	// 1. Create a new managed user
-	logger.Info.Println("[TEST] Step 1: Create managed user")
+	logger.Info("step 1: create managed user")
 	createUserReq := models.CreateManagedUserRequest{
 		Email: "newuser@example.com",
 	}
@@ -135,7 +134,7 @@ func TestFullUserJourney(t *testing.T) {
 	}
 
 	// 2. Start KYC process
-	logger.Info.Println("[TEST] Step 2: Start KYC")
+	logger.Info("step 2: start kyc")
 	kycPath := fmt.Sprintf("/id/v1/users/%s/hubs/gateway-1", user.ID)
 	rr = ts.MakeRequest("POST", kycPath, nil)
 	require.Equal(t, http.StatusOK, rr.Code)
@@ -144,10 +143,10 @@ func TestFullUserJourney(t *testing.T) {
 	err = json.NewDecoder(rr.Body).Decode(&kycResponse)
 	require.NoError(t, err)
 	assert.NotEmpty(t, kycResponse.IframeURL)
-	logger.Info.Printf("[TEST] KYC iframe URL: %s", kycResponse.IframeURL)
+	logger.Info("kyc iframe url generated", zap.String("url", kycResponse.IframeURL))
 
 	// 3. Verify user is in action_required state (not auto-approved)
-	logger.Info.Println("[TEST] Step 3: Verify KYC is pending approval")
+	logger.Info("step 3: verify kyc is pending approval")
 	time.Sleep(100 * time.Millisecond) // Let goroutine complete
 	userPath := fmt.Sprintf("/id/v1/users/%s", user.ID)
 	rr = ts.MakeRequest("GET", userPath, nil)
@@ -157,10 +156,10 @@ func TestFullUserJourney(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "action_required", user.KYCState)
 	assert.Equal(t, "low", user.RiskLevel)
-	logger.Info.Printf("[TEST] KYC Status: %s, Risk: %s", user.KYCState, user.RiskLevel)
+	logger.Info("kyc status", zap.String("state", user.KYCState), zap.String("risk", user.RiskLevel))
 
 	// 3b. Submit KYC form to approve user
-	logger.Info.Println("[TEST] Step 3b: Submit KYC form")
+	logger.Info("step 3b: submit kyc form")
 	kycSubmitData := fmt.Sprintf("user_id=%s&first_name=John&last_name=Doe&dob=1990-01-01&address=123+Main+St&city=NY&country=USA&risk_level=low", user.ID)
 	req := httptest.NewRequest("POST", "/iframe/submit", bytes.NewBufferString(kycSubmitData))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -169,17 +168,17 @@ func TestFullUserJourney(t *testing.T) {
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	// 3c. Verify user is now accepted
-	logger.Info.Println("[TEST] Step 3c: Verify user is approved after form submission")
+	logger.Info("step 3c: verify user is approved after form submission")
 	rr = ts.MakeRequest("GET", userPath, nil)
 	require.Equal(t, http.StatusOK, rr.Code)
 
 	err = json.NewDecoder(rr.Body).Decode(&user)
 	require.NoError(t, err)
 	assert.Equal(t, "accepted", user.KYCState)
-	logger.Info.Printf("[TEST] KYC Status after submission: %s", user.KYCState)
+	logger.Info("kyc status after submission", zap.String("state", user.KYCState))
 
 	// 4. Create a wallet
-	logger.Info.Println("[TEST] Step 4: Create wallet")
+	logger.Info("step 4: create wallet")
 	createWalletReq := models.CreateWalletRequest{
 		UserID: user.ID,
 		Name:   "My Test Wallet",
@@ -192,10 +191,10 @@ func TestFullUserJourney(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEmpty(t, wallet.Address)
 	assert.Equal(t, user.ID, wallet.UserID)
-	logger.Info.Printf("[TEST] Created wallet: %s", wallet.Address)
+	logger.Info("wallet created", zap.String("address", wallet.Address))
 
 	// 5. Deposit funds
-	logger.Info.Println("[TEST] Step 5: Deposit funds")
+	logger.Info("step 5: deposit funds")
 	depositReq := models.CreateTransactionRequest{
 		UserID:   user.ID,
 		Amount:   500.00,
@@ -210,10 +209,10 @@ func TestFullUserJourney(t *testing.T) {
 	assert.Equal(t, "500.00", tx.Amount)
 	assert.Equal(t, "USD", tx.Currency)
 	assert.Equal(t, 1, tx.Status)
-	logger.Info.Printf("[TEST] Deposited: %s %s (TX: %s)", tx.Amount, tx.Currency, tx.ID)
+	logger.Info("deposited funds", zap.String("amount", tx.Amount), zap.String("currency", tx.Currency), zap.String("transaction_id", tx.ID))
 
 	// 6. Check balance (all currencies)
-	logger.Info.Println("[TEST] Step 6: Check balance")
+	logger.Info("step 6: check balance")
 	balancePath := fmt.Sprintf("/core/v1/wallets/%s/balance", wallet.Address)
 	rr = ts.MakeRequest("GET", balancePath, nil)
 	require.Equal(t, http.StatusOK, rr.Code)
@@ -232,12 +231,12 @@ func TestFullUserJourney(t *testing.T) {
 			valStr, _ := bal["available"].(string)
 			fmt.Sscan(valStr, &usdBalance)
 			assert.NotEmpty(t, v["uuid"])
-			logger.Info.Printf("[TEST] USD Balance: %s (Vault: %s)", valStr, v["uuid"])
+			logger.Info("usd balance retrieved", zap.String("balance", valStr), zap.String("vault", fmt.Sprintf("%v", v["uuid"])))
 		}
 	}
 	assert.Equal(t, 500.00, usdBalance)
 
-	logger.Info.Println("[TEST] ✅ Full user journey completed successfully!")
+	logger.Info("full user journey completed successfully")
 }
 
 func TestKYCIframe(t *testing.T) {
@@ -251,7 +250,7 @@ func TestKYCIframe(t *testing.T) {
 }
 
 func TestTransactionAPICompliance(t *testing.T) {
-	logger.Info.Println("\n=== Testing Transaction API Compliance ===")
+	logger.Info("testing transaction api compliance")
 	ts := NewTestServer()
 
 	// Create user and wallet
@@ -319,11 +318,11 @@ func TestTransactionAPICompliance(t *testing.T) {
 		assert.Equal(t, tx.ID, retrieved.ID)
 	})
 
-	logger.Info.Println("[TEST] ✅ Transaction API compliance verified!")
+	logger.Info("transaction api compliance verified")
 }
 
 func TestMultipleCurrencyDeposits(t *testing.T) {
-	logger.Info.Println("\n=== Testing Multiple Currency Deposits ===")
+	logger.Info("testing multiple currency deposits")
 	ts := NewTestServer()
 
 	// Create user
@@ -380,7 +379,7 @@ func TestMultipleCurrencyDeposits(t *testing.T) {
 			assert.Equal(t, curr.code, tx.Currency)
 			assert.Equal(t, 1, tx.Status)
 
-			logger.Info.Printf("[TEST] %s deposit: %s (status: %d)", curr.code, tx.Amount, tx.Status)
+			logger.Info("currency deposit processed", zap.String("currency", curr.code), zap.String("amount", tx.Amount), zap.Int("status", tx.Status))
 		})
 	}
 
@@ -389,5 +388,5 @@ func TestMultipleCurrencyDeposits(t *testing.T) {
 	rr := ts.MakeRequest("GET", balancePath, nil)
 	require.Equal(t, http.StatusOK, rr.Code)
 
-	logger.Info.Println("[TEST] ✅ Multi-currency deposits successful!")
+	logger.Info("multi-currency deposits successful")
 }

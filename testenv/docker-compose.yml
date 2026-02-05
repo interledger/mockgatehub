@@ -12,10 +12,11 @@ services:
     build:
       context: ..
       dockerfile: Dockerfile
-    container_name: mockgatehub-test
+    # container_name: mockgatehub-test
     ports:
       - "25151:8080"  # Use different port to avoid conflicts
     environment:
+      - LOG_LEVEL=debug
       - MOCKGATEHUB_PORT=8080
       - MOCKGATEHUB_REDIS_URL=redis://redis:6379
       - MOCKGATEHUB_REDIS_DB=0

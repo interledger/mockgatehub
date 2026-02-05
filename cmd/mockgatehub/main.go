@@ -17,30 +17,48 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"go.uber.org/zap"
 )
 
 func main() {
-	logger.Info.Println("Starting MockGatehub...")
-
 	cfg := config.Load()
-	logger.Info.Printf("Configuration: Port=%s, UseRedis=%v", cfg.Port, cfg.UseRedis)
+
+	// Initialize logger with configured log level
+	if err := logger.Initialize(cfg.LogLevel); err != nil {
+		logger.Fatal("failed to initialize logger", zap.Error(err))
+	}
+
+	logger.Info("starting MockGatehub")
+
+	// Log all startup configuration at INFO level
+	logger.Info("configuration loaded",
+		zap.String("log_level", cfg.LogLevel),
+		zap.String("port", cfg.Port),
+		zap.String("redis_url", cfg.RedisURL),
+		zap.Int("redis_db", cfg.RedisDB),
+		zap.Bool("use_redis", cfg.UseRedis),
+		zap.Bool("enforce_authentication", cfg.EnforceAuthentication),
+		zap.String("webhook_url", cfg.WebhookURL),
+		zap.String("webhook_secret", cfg.WebhookSecret),
+		zap.Strings("valid_app_ids", getAppIDList(cfg.ValidCredentials)),
+	)
 
 	var store storage.Storage
 	if cfg.UseRedis {
-		logger.Info.Printf("Using Redis storage: %s (DB: %d)", cfg.RedisURL, cfg.RedisDB)
+		logger.Info("setting up redis storage", zap.String("url", cfg.RedisURL), zap.Int("db", cfg.RedisDB))
 		redisStore, err := storage.NewRedisStorage(cfg.RedisURL, cfg.RedisDB)
 		if err != nil {
-			logger.Error.Fatalf("Failed to connect to Redis: %v", err)
+			logger.Fatal("failed to connect to redis", zap.Error(err))
 		}
 		defer redisStore.Close()
 		store = redisStore
 	} else {
-		logger.Info.Println("Using in-memory storage")
+		logger.Info("setting up in-memory storage")
 		store = storage.NewMemoryStorage()
 	}
 
 	if err := storage.SeedTestUsers(store); err != nil {
-		logger.Error.Fatalf("Failed to seed test users: %v", err)
+		logger.Fatal("failed to seed test users", zap.Error(err))
 	}
 
 	// Initialize webhook queue and worker
@@ -51,18 +69,18 @@ func main() {
 		// Use Redis-backed queue for webhook delivery
 		redisStore, ok := store.(*storage.RedisStorage)
 		if !ok {
-			logger.Error.Fatalf("Redis storage type assertion failed")
+			logger.Fatal("redis storage type assertion failed")
 		}
 		webhookQueue = webhook.NewQueue(redisStore.GetClient())
-		logger.Info.Println("Using Redis-backed webhook queue")
+		logger.Info("using redis-backed webhook queue")
 	} else {
 		// For in-memory mode, we still need Redis for webhook queue
 		// Create a dedicated Redis connection just for webhooks
-		logger.Warn.Println("WARNING: In-memory storage mode requires Redis for webhook queue")
-		logger.Warn.Printf("Connecting to Redis for webhook queue: %s (DB: %d)", cfg.RedisURL, cfg.RedisDB)
+		logger.Warn("in-memory storage mode requires redis for webhook queue")
+		logger.Info("connecting to redis for webhook queue", zap.String("url", cfg.RedisURL), zap.Int("db", cfg.RedisDB))
 		redisClient, err := storage.NewRedisClient(cfg.RedisURL, cfg.RedisDB)
 		if err != nil {
-			logger.Error.Fatalf("Failed to connect to Redis for webhook queue: %v", err)
+			logger.Fatal("failed to connect to redis for webhook queue", zap.Error(err))
 		}
 		webhookQueue = webhook.NewQueue(redisClient)
 	}
@@ -72,7 +90,7 @@ func main() {
 
 	// Start webhook worker in background
 	webhookWorker.StartAsync()
-	logger.Info.Println("Webhook worker started")
+	logger.Info("webhook worker started")
 	h := handler.NewHandler(store, webhookManager)
 	r := chi.NewRouter()
 
@@ -89,24 +107,28 @@ func main() {
 
 	// Authentication middleware (applied to protected routes)
 	if cfg.EnforceAuthentication {
-		logger.Info.Printf("Authentication enforcement ENABLED. Valid app IDs: %v", cfg.ValidCredentials)
+		logger.Info("authentication enforcement enabled", zap.Strings("valid_app_ids", getAppIDList(cfg.ValidCredentials)))
 		authMiddleware := auth.Middleware(cfg.ValidCredentials)
 		r.Use(authMiddleware)
 	} else {
-		logger.Info.Println("WARNING: Authentication enforcement DISABLED")
+		logger.Warn("authentication enforcement disabled")
 	}
 
 	setupRoutes(r, h)
 
 	// Log unmatched routes to surface any misrouted traffic
 	r.NotFound(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logger.Info.Printf("[NOTFOUND] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+		logger.Info("route not found - no handler registered",
+			zap.String("method", r.Method),
+			zap.String("path", r.URL.Path),
+			zap.String("remote_addr", r.RemoteAddr),
+		)
 		http.NotFound(w, r)
 	}))
 
 	// Log method-not-allowed for visibility
 	r.MethodNotAllowed(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logger.Info.Printf("[METHODNOTALLOWED] %s %s from %s", r.Method, r.URL.Path, r.RemoteAddr)
+		logger.Info("method not allowed", zap.String("method", r.Method), zap.String("path", r.URL.Path), zap.String("remote_addr", r.RemoteAddr))
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 	}))
 
@@ -119,9 +141,9 @@ func main() {
 	}
 
 	go func() {
-		logger.Info.Printf("MockGatehub listening on port %s", cfg.Port)
+		logger.Info("mockgatehub listening", zap.String("port", cfg.Port))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Error.Fatalf("Server failed to start: %v", err)
+			logger.Fatal("server failed to start", zap.Error(err))
 		}
 	}()
 
@@ -129,11 +151,11 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	logger.Info.Println("Shutting down server...")
+	logger.Info("shutting down server")
 
 	// Stop webhook worker
 	if webhookWorker != nil {
-		logger.Info.Println("Stopping webhook worker...")
+		logger.Info("stopping webhook worker")
 		webhookWorker.Stop()
 	}
 
@@ -141,24 +163,27 @@ func main() {
 	defer cancel()
 
 	if err := srv.Shutdown(ctx); err != nil {
-		logger.Error.Fatalf("Server forced to shutdown: %v", err)
+		logger.Fatal("server forced to shutdown", zap.Error(err))
 	}
 
-	logger.Info.Println("Server stopped")
+	logger.Info("server stopped")
 }
 
 func setupRoutes(r chi.Router, h *handler.Handler) {
+	logger.Info("========== SETTING UP ROUTES ==========")
 	r.Get("/", h.RootHandler)
 	r.Post("/transaction/complete", h.TransactionCompleteHandler)
 	r.Get("/health", h.HealthCheck)
 	r.Get("/api/user-currencies", h.GetUserCurrencies)
 	r.Route("/auth/v1", func(r chi.Router) {
+		logger.Info("REGISTERING /auth/v1 ROUTES")
 		r.Post("/tokens", h.CreateToken)
 		r.Post("/users/managed", h.CreateManagedUser)
 		r.Get("/users/managed", h.GetManagedUser)
 		r.Put("/users/managed/email", h.UpdateManagedUserEmail)
 	})
 	r.Route("/id/v1", func(r chi.Router) {
+		logger.Info("REGISTERING /id/v1 ROUTES")
 		r.Get("/users/{userID}", h.GetUser)
 		r.Post("/users/{userID}/hubs/{gatewayID}", h.StartKYC)
 		r.Put("/hubs/{gatewayID}/users/{userID}", h.UpdateKYCState)
@@ -167,6 +192,7 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 	r.Get("/iframe/onboarding", h.KYCIframe)
 	r.Post("/iframe/submit", h.KYCIframeSubmit)
 	r.Route("/core/v1", func(r chi.Router) {
+		logger.Info("REGISTERING /core/v1 ROUTES")
 		r.Get("/users/{userID}", h.GetUserWallets)
 		r.Post("/users/{userID}/wallets", h.CreateWallet)
 		r.Get("/users/{userID}/wallets/{walletID}", h.GetWallet)
@@ -175,32 +201,84 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		r.Get("/transactions/{txID}", h.GetTransaction)
 	})
 	r.Route("/rates/v1", func(r chi.Router) {
+		logger.Info("REGISTERING /rates/v1 ROUTES")
 		r.Get("/rates/current", h.GetCurrentRates)
 		r.Get("/liquidity_provider/vaults", h.GetVaults)
 	})
 	r.Route("/cards/v1", func(r chi.Router) {
-		r.Post("/customers", h.CreateManagedCustomer)
+		logger.Info("========== REGISTERING /cards/v1 ROUTES ==========")
+		// Generic customer handler
+		r.Post("/customers", h.CreateCustomer)
+		logger.Info("✓ REGISTERED: POST /customers")
+
+		// Handlers for managed customers
+		r.Post("/customers/managed", h.CreateManagedCustomer)
+		logger.Info("✓ REGISTERED: POST /customers/managed")
+
+		// Handlers for customer addresses - use full path pattern
+		r.Post("/customers/{customerID}/addresses", h.CreateCustomerAddress)
+		logger.Info("✓ REGISTERED: POST /customers/{customerID}/addresses")
+		r.Get("/customers/{customerID}/addresses", h.GetCustomerAddresses)
+		logger.Info("✓ REGISTERED: GET /customers/{customerID}/addresses")
+
+		// Handlers for additional cards
+		r.Post("/accounts/{accountID}/cards", h.OrderAdditionalCard)
+		logger.Info("✓ REGISTERED: POST /accounts/{accountID}/cards")
+		r.Post("/cards/{cardID}/card", h.OrderAdditionalCard)
+		logger.Info("✓ REGISTERED: POST /cards/{cardID}/card")
+
+		// Card handlers
 		r.Get("/cards/{customerID}", h.ListCards)
+		logger.Info("✓ REGISTERED: GET /cards/{customerID}")
+		r.Post("/cards", h.CreateCard)
+		logger.Info("✓ REGISTERED: POST /cards")
 		r.Get("/cards/{cardID}/card", h.GetCard)
-		r.Get("/cards/{cardID}/transactions", h.GetCardTransactions)
+		logger.Info("✓ REGISTERED: GET /cards/{cardID}/card")
+		r.Get("/cards/{cardID}", h.GetCard)
+		logger.Info("✓ REGISTERED: GET /cards/{cardID}")
+		r.Delete("/cards/{cardID}", h.DeleteCard)
+		logger.Info("✓ REGISTERED: DELETE /cards/{cardID}")
+
+		// Card limits
 		r.Get("/cards/{cardID}/limits", h.GetCardLimits)
-		r.Put("/cards/{cardID}/limits", h.SetCardLimits)
-		r.Put("/cards/{cardID}/lock", h.LockCard)
-		r.Put("/cards/{cardID}/unlock", h.UnlockCard)
-		r.Put("/cards/{cardID}/block", h.BlockCard)
-		r.Delete("/cards/{cardID}/card", h.DeleteCard)
-		r.Post("/cards/{cardID}/plastic", h.CreatePlasticForCard)
-		r.Post("/token/{tokenType}", h.GetCardToken)
-		r.Get("/token/{tokenType}/data", h.GetTokenData)
-		r.Post("/pin/change", h.ChangePin)
+		logger.Info("✓ REGISTERED: GET /cards/{cardID}/limits")
+		r.Put("/cards/{cardID}/limits", h.UpdateCardLimits)
+		logger.Info("✓ REGISTERED: PUT /cards/{cardID}/limits")
+
+		// Card tokenization and security
+		r.Post("/token/card-data", h.GetCardToken)
+		logger.Info("✓ REGISTERED: POST /token/card-data")
+
+		// Card transactions
 		r.Post("/transactions", h.CreateCardTransaction)
-		r.Get("/transactions/{txID}", h.GetCardTransaction)
+		logger.Info("✓ REGISTERED: POST /transactions")
+		r.Get("/cards/{cardID}/transactions", h.ListCardTransactions)
+		logger.Info("✓ REGISTERED: GET /cards/{cardID}/transactions")
+
+		// 3DS and confirmations
 		r.Get("/transaction/pending-confirmations", h.GetPendingConfirmations)
-		r.Post("/transaction/{txID}", h.ThreeDSPaymentConfirmation)
+		logger.Info("✓ REGISTERED: GET /transaction/pending-confirmations")
 		r.Post("/test/3ds/challenge", h.CreateThreeDSChallenge)
-		r.Get("/customers/{customerID}/addresses", h.GetDeliveryAddresses)
-		r.Post("/customers/{customerID}/addresses", h.CreateCustomerDeliveryAddress)
-		r.Post("/cards/{accountID}/card", h.OrderCard)
+		logger.Info("✓ REGISTERED: POST /test/3ds/challenge")
+		r.Post("/transaction/{txID}", h.ConfirmThreeDS)
+		logger.Info("✓ REGISTERED: POST /transaction/{txID}")
+
+		// Card products and plastic ordering
 		r.Get("/card-applications/{appID}/card-products", h.GetCardApplicationProducts)
+		logger.Info("✓ REGISTERED: GET /card-applications/{appID}/card-products")
+		r.Post("/cards/{cardID}/plastic", h.OrderPlasticCard)
+		logger.Info("✓ REGISTERED: POST /cards/{cardID}/plastic")
+
+		logger.Info("========== /cards/v1 ROUTES REGISTERED ==========")
 	})
+	logger.Info("========== ALL ROUTES REGISTERED SUCCESSFULLY ==========")
+}
+
+// getAppIDList returns a list of registered app IDs for logging
+func getAppIDList(validCredentials map[string]string) []string {
+	appIDs := make([]string, 0, len(validCredentials))
+	for appID := range validCredentials {
+		appIDs = append(appIDs, appID)
+	}
+	return appIDs
 }
