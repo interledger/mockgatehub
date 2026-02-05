@@ -1,0 +1,17 @@
+Feature: Card management and lifecycle
+  As a wallet integrator using cards
+  I want to manage card customers and their cards
+  So that I can provide card functionality to users
+
+  Background:
+    Given a clean MockGatehub instance
+    And a managed user with KYC state "accepted"
+    And HMAC headers using app id "local-test-app-id" and secret "local-test-app-secret"
+
+  Scenario: Create a managed customer with EUR account and initial card
+    When I POST /cards/v1/customers with managed user UUID header, nameOnCard "John Doe", account productCode "PWSR_DEBP_2404", currency "EUR", and card productCode "PWSR_DEBP_2404"
+    Then the response status is 201
+    And the response contains a customer with id, sourceId, type "Citizen", and kycStatus "accepted"
+    And the customer has one account with currency "EUR", status "ACTIVE", and type "PREPAID"
+    And the account has one card with status "Active", nameOnCard "John Doe", and expiryDate in the future
+    And a cards.card.created webhook is sent

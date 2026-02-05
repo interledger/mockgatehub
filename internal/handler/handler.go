@@ -42,8 +42,9 @@ func (h *Handler) RequestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
-		logger.Info("incoming request", zap.String("method", r.Method), zap.String("path", r.URL.Path))
-		logger.Debug("request details",
+		logger.Info("request incoming",
+			zap.String("method", r.Method),
+			zap.String("path", r.URL.Path),
 			zap.String("remote_addr", r.RemoteAddr),
 			zap.String("user_agent", r.UserAgent()),
 		)
@@ -64,7 +65,11 @@ func (h *Handler) RequestLogger(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 
 		duration := time.Since(start)
-		logger.Debug("request completed", zap.String("method", r.Method), zap.String("path", r.URL.Path), zap.Duration("duration", duration))
+		logger.Info("request completed",
+			zap.String("method", r.Method),
+			zap.String("path", r.URL.Path),
+			zap.Duration("duration", duration),
+		)
 	})
 }
 
@@ -295,7 +300,7 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 
 					logger.Info("sent deposit webhook", zap.String("user_id", userUUID), zap.String("amount", amountStr), zap.String("currency", txReq.Currency), zap.String("wallet_address", walletAddress))
 				} else {
-				logger.Error("no wallets found for user", zap.String("user_id", userUUID))
+					logger.Error("no wallets found for user", zap.String("user_id", userUUID))
 				}
 			} else {
 				logger.Error("user not found", zap.String("user_id", userUUID), zap.Error(err))

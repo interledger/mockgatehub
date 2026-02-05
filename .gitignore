@@ -34,3 +34,4 @@ node_modules/
 package.json
 package-lock.json
 .npm/
+test_binary

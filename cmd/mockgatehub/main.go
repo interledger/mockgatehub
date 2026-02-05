@@ -20,6 +20,8 @@ import (
 	"go.uber.org/zap"
 )
 
+var buildTime = "unknown"
+
 func main() {
 	cfg := config.Load()
 
@@ -27,6 +29,8 @@ func main() {
 	if err := logger.Initialize(cfg.LogLevel); err != nil {
 		logger.Fatal("failed to initialize logger", zap.Error(err))
 	}
+
+	logger.Info("mockgatehub build info", zap.String("build_time", buildTime))
 
 	logger.Info("starting MockGatehub")
 
@@ -118,7 +122,11 @@ func main() {
 
 	// Log unmatched routes to surface any misrouted traffic
 	r.NotFound(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		logger.Info("route not found", zap.String("method", r.Method), zap.String("path", r.URL.Path), zap.String("remote_addr", r.RemoteAddr))
+		logger.Info("route not found - no handler registered",
+			zap.String("method", r.Method),
+			zap.String("path", r.URL.Path),
+			zap.String("remote_addr", r.RemoteAddr),
+		)
 		http.NotFound(w, r)
 	}))
 
@@ -166,17 +174,20 @@ func main() {
 }
 
 func setupRoutes(r chi.Router, h *handler.Handler) {
+	logger.Info("========== SETTING UP ROUTES ==========")
 	r.Get("/", h.RootHandler)
 	r.Post("/transaction/complete", h.TransactionCompleteHandler)
 	r.Get("/health", h.HealthCheck)
 	r.Get("/api/user-currencies", h.GetUserCurrencies)
 	r.Route("/auth/v1", func(r chi.Router) {
+		logger.Info("REGISTERING /auth/v1 ROUTES")
 		r.Post("/tokens", h.CreateToken)
 		r.Post("/users/managed", h.CreateManagedUser)
 		r.Get("/users/managed", h.GetManagedUser)
 		r.Put("/users/managed/email", h.UpdateManagedUserEmail)
 	})
 	r.Route("/id/v1", func(r chi.Router) {
+		logger.Info("REGISTERING /id/v1 ROUTES")
 		r.Get("/users/{userID}", h.GetUser)
 		r.Post("/users/{userID}/hubs/{gatewayID}", h.StartKYC)
 		r.Put("/hubs/{gatewayID}/users/{userID}", h.UpdateKYCState)
@@ -185,6 +196,7 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 	r.Get("/iframe/onboarding", h.KYCIframe)
 	r.Post("/iframe/submit", h.KYCIframeSubmit)
 	r.Route("/core/v1", func(r chi.Router) {
+		logger.Info("REGISTERING /core/v1 ROUTES")
 		r.Get("/users/{userID}", h.GetUserWallets)
 		r.Post("/users/{userID}/wallets", h.CreateWallet)
 		r.Get("/users/{userID}/wallets/{walletID}", h.GetWallet)
@@ -193,16 +205,77 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		r.Get("/transactions/{txID}", h.GetTransaction)
 	})
 	r.Route("/rates/v1", func(r chi.Router) {
+		logger.Info("REGISTERING /rates/v1 ROUTES")
 		r.Get("/rates/current", h.GetCurrentRates)
 		r.Get("/liquidity_provider/vaults", h.GetVaults)
 	})
 	r.Route("/cards/v1", func(r chi.Router) {
+		logger.Info("========== REGISTERING /cards/v1 ROUTES ==========")
+		// Generic customer handler
+		r.Post("/customers", h.CreateCustomer)
+		logger.Info("✓ REGISTERED: POST /customers")
+
+		// Handlers for managed customers
 		r.Post("/customers/managed", h.CreateManagedCustomer)
+		logger.Info("✓ REGISTERED: POST /customers/managed")
+
+		// Handlers for customer addresses - use full path pattern
+		r.Post("/customers/{customerID}/addresses", h.CreateCustomerAddress)
+		logger.Info("✓ REGISTERED: POST /customers/{customerID}/addresses")
+		r.Get("/customers/{customerID}/addresses", h.GetCustomerAddresses)
+		logger.Info("✓ REGISTERED: GET /customers/{customerID}/addresses")
+
+		// Handlers for additional cards
+		r.Post("/accounts/{accountID}/cards", h.OrderAdditionalCard)
+		logger.Info("✓ REGISTERED: POST /accounts/{accountID}/cards")
+		r.Post("/cards/{cardID}/card", h.OrderAdditionalCard)
+		logger.Info("✓ REGISTERED: POST /cards/{cardID}/card")
+
+		// Card handlers
+		r.Get("/cards/{customerID}", h.ListCards)
+		logger.Info("✓ REGISTERED: GET /cards/{customerID}")
 		r.Post("/cards", h.CreateCard)
+		logger.Info("✓ REGISTERED: POST /cards")
+		r.Get("/cards/{cardID}/card", h.GetCard)
+		logger.Info("✓ REGISTERED: GET /cards/{cardID}/card")
 		r.Get("/cards/{cardID}", h.GetCard)
+		logger.Info("✓ REGISTERED: GET /cards/{cardID}")
 		r.Delete("/cards/{cardID}", h.DeleteCard)
+		logger.Info("✓ REGISTERED: DELETE /cards/{cardID}")
+
+		// Card limits
+		r.Get("/cards/{cardID}/limits", h.GetCardLimits)
+		logger.Info("✓ REGISTERED: GET /cards/{cardID}/limits")
+		r.Put("/cards/{cardID}/limits", h.UpdateCardLimits)
+		logger.Info("✓ REGISTERED: PUT /cards/{cardID}/limits")
+
+		// Card tokenization and security
+		r.Post("/token/card-data", h.GetCardToken)
+		logger.Info("✓ REGISTERED: POST /token/card-data")
+
+		// Card transactions
+		r.Post("/transactions", h.CreateCardTransaction)
+		logger.Info("✓ REGISTERED: POST /transactions")
+		r.Get("/cards/{cardID}/transactions", h.ListCardTransactions)
+		logger.Info("✓ REGISTERED: GET /cards/{cardID}/transactions")
+
+		// 3DS and confirmations
 		r.Get("/transaction/pending-confirmations", h.GetPendingConfirmations)
+		logger.Info("✓ REGISTERED: GET /transaction/pending-confirmations")
+		r.Post("/test/3ds/challenge", h.CreateThreeDSChallenge)
+		logger.Info("✓ REGISTERED: POST /test/3ds/challenge")
+		r.Post("/transaction/{txID}", h.ConfirmThreeDS)
+		logger.Info("✓ REGISTERED: POST /transaction/{txID}")
+
+		// Card products and plastic ordering
+		r.Get("/card-applications/{appID}/card-products", h.GetCardApplicationProducts)
+		logger.Info("✓ REGISTERED: GET /card-applications/{appID}/card-products")
+		r.Post("/cards/{cardID}/plastic", h.OrderPlasticCard)
+		logger.Info("✓ REGISTERED: POST /cards/{cardID}/plastic")
+
+		logger.Info("========== /cards/v1 ROUTES REGISTERED ==========")
 	})
+	logger.Info("========== ALL ROUTES REGISTERED SUCCESSFULLY ==========")
 }
 
 // getAppIDList returns a list of registered app IDs for logging

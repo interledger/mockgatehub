@@ -1,6 +1,8 @@
 # Build stage
 FROM golang:1.24-alpine AS builder
 
+ARG BUILD_TIME
+
 # Install build dependencies
 RUN apk add --no-cache git make
 
@@ -15,8 +17,9 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o mockgatehub ./cmd/mockgatehub
+# Clean Go cache and build the application
+RUN go clean -cache
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags="-X 'main.buildTime=${BUILD_TIME:-unknown}'" -o mockgatehub ./cmd/mockgatehub
 
 # Final stage
 FROM alpine:latest

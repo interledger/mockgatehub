@@ -29,12 +29,7 @@ testenv-tests: e2e-tests
 
 e2e-tests:
 	@echo "Running e2e harness (docker-compose)..."
-	@cd testenv && go run e2e_main.go client.go fixtures.go scenarios_*.go services.go types.go
-
-# Legacy testenv runner (deprecated)
-legacy-testenv-tests:
-	@echo "Running legacy testenv integration tests (deprecated)..."
-	@cd testenv && bash run-tests.sh
+	@cd testenv && docker compose build --no-cache mockgatehub && go run e2e_main.go client.go fixtures.go scenarios_*.go services.go types.go
 
 # Run tests with coverage report
 coverage:
