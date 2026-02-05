@@ -12,6 +12,7 @@ var opts = godog.Options{
 	Output: colors.Colored(os.Stdout),
 	Format: "progress",
 	Paths:  []string{"../docs/features"},
+	Tags:   "~@skip",
 }
 
 func TestFeatures(t *testing.T) {

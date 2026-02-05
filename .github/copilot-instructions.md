@@ -30,7 +30,8 @@ mockgatehub/
 │   └── logger/                # Logging setup
 ├── testenv/                   # Isolated integration test environment
 │   ├── docker-compose.yml    # Test-only compose (ports 28080, 26380)
-│   ├── testscript.go         # Go-based integration test suite
+│   ├── e2e_main.go           # E2E test setup and teardown
+│   ├── godog_test.go         # BDD-style E2E tests
 │   └── README.md             # Test environment documentation
 ├── web/                       # Static web assets
 │   └── kyc-iframe.html       # KYC iframe HTML
@@ -48,10 +49,10 @@ mockgatehub/
 3. **Multi-Currency Required**: Support all 11 currencies (XRP, USD, EUR, GBP, ZAR, MXN, SGD, CAD, EGG, PEB, PKR).
 4. **Immutable Vault UUIDs**: Vault IDs are hardcoded and must never change (applications may store these).
 5. **testenv/ Maintenance**: The `testenv/` directory is NOT optional. When making changes:
-   - Add test cases to `testenv/testscript.go` for new endpoints
+   - Add test cases to feature files and test scenarios for new endpoints
    - Update assertions if API responses change
    - Ensure backward compatibility (applications depend on exact Gatehub response format)
-   - Run integration tests: `cd testenv && go run testscript.go`
+   - Run all tests: `go test ./...`
 
 ## Key Architecture
 
@@ -101,18 +102,13 @@ go run ./cmd/mockgatehub
 ### Testing
 
 ```bash
-# Unit tests
+# All tests (unit + e2e)
 go test -v -race -coverprofile=coverage.out ./...
-
-# Integration tests (isolated environment)
-cd testenv
-go run testscript.go
 
 # Local validation before pushing
 go mod tidy
 go test ./...
-cd testenv && go run testscript.go
-cd .. && go build ./cmd/mockgatehub
+go build ./cmd/mockgatehub
 ```
 
 ### Docker Build & Test
@@ -122,8 +118,7 @@ cd .. && go build ./cmd/mockgatehub
 docker build -t local-mockgatehub .
 
 # Test in isolated environment
-cd testenv
-go run testscript.go
+go test ./testenv/...
 
 # Full stack with docker-compose
 docker compose up -d mockgatehub
@@ -219,9 +214,8 @@ go func() {
 
 ## Testing Checklist
 
-- [ ] Unit tests pass: `go test ./...`
+- [ ] All tests pass: `go test ./...` (includes unit + e2e)
 - [ ] Coverage acceptable: ≥80%
-- [ ] Integration test passes: `cd testenv && go run testscript.go`
 - [ ] Docker build succeeds: `docker build -t local-mockgatehub .`
 - [ ] Full stack starts: `docker compose up`
 - [ ] Application works with MockGatehub
@@ -285,7 +279,7 @@ logger.Info("deposit created successfully",
 
 ## Critical Notes for AI Agents
 
-1. **ALWAYS run testenv tests after changes**: `cd testenv && go run testscript.go`
+1. **ALWAYS run all tests after changes**: `go test ./...` (includes unit + e2e)
 2. **Maintain API compatibility**: Applications rely on exact Gatehub response format
 3. **Never modify generated/immutable content**: Vault UUIDs, currency codes
 4. **Test both storage backends**: Changes must work with memory AND Redis

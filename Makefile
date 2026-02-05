@@ -7,7 +7,6 @@ help:
 	@echo "unit-tests        Run unit tests only"
 	@echo "testenv-tests     Run e2e harness (docker-compose)"
 	@echo "e2e-tests         Run e2e harness (docker-compose)"
-	@echo "legacy-testenv-tests Run legacy testenv/testscript.go (deprecated)"
 	@echo "coverage          Run unit tests with coverage report"
 	@echo "build             Build the mockgatehub binary"
 	@echo "lint              Run linter (gofmt, go vet)"
@@ -53,6 +52,6 @@ lint:
 clean:
 	@echo "Cleaning up..."
 	@rm -f mockgatehub coverage.out coverage.html
-	@cd testenv && rm -f testscript
+	@cd testenv && rm -f test_e2e
 	@go clean -testcache
 	@echo "Clean complete"

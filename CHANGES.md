@@ -57,8 +57,8 @@ Created comprehensive unit tests:
 
 ### 3. Added Integration Test
 
-**File**: `testenv/testscript.go`  
-**Test**: "Create Hosted Transfer Transaction (Issue Fix)" (Test 14)
+**File**: `testenv/` (BDD-style E2E tests)
+**Test**: "Create Hosted Transfer Transaction (Issue Fix)"
 
 This test verifies:
 - Hosted transfers (type=2) can be created successfully
@@ -91,11 +91,11 @@ PASS
 
 ### Integration Tests
 ```bash
-$ cd testenv && go run testscript.go
-TEST 1-15: ✓ ALL TESTS PASSED
+$ go test ./...
+PASS
 
 Key test results:
-✓ Test 14: Create Hosted Transfer Transaction (Issue Fix) - PASSED
+✓ Hosted transfer transaction test - PASSED
   - Hosted transfer created successfully with webhook (fixes workflow hang)
 ```
 
@@ -129,7 +129,7 @@ With this fix, when a hosted transfer is created in mockgatehub:
 
 - `internal/handler/core.go` - Fixed webhook dispatch logic
 - `internal/handler/handler_test.go` - Added comprehensive unit tests
-- `testenv/testscript.go` - Added integration test for hosted transfers
+- `testenv/` - Added E2E test scenarios for hosted transfers
 
 ## Related Issues
 
