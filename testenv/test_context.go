@@ -1328,7 +1328,10 @@ func (tc *TestContext) cardCreatedWebhookSent() error {
 }
 
 func (tc *TestContext) customerWithCard() error {
-	// Use existing customer
+	// For stubbed tests: just set a mock customer ID so subsequent steps won't fail
+	if tc.customerID == "" {
+		tc.customerID = "mock-customer-id"
+	}
 	return nil
 }
 

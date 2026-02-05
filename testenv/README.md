@@ -7,24 +7,18 @@ This directory contains an isolated test environment for running MockGatehub int
 ```
 testenv/
 ├── docker-compose.yml              # Isolated compose environment
-├── testscript.go                   # Go-based integration tests
-├── run-tests.sh                    # Test runner script
+├── e2e_main.go                     # E2E test setup and lifecycle management
+├── godog_test.go                   # BDD-style E2E tests with Godog
 └── README.md                       # This file
 ```
 
 ## Quick Start
 
-**Option 1: Direct execution (recommended)**
 ```bash
-go run testscript.go
+go test ./...
 ```
 
-**Option 2: Using the wrapper script**
-```bash
-./run-tests.sh
-```
-
-The test script will:
+The tests will:
 1. Start MockGatehub and Redis in isolated containers (ports 25151, 26380)
 2. Wait for services to be ready
 3. Run all integration tests
@@ -129,19 +123,11 @@ docker compose down -v
 
 ### Modify Tests
 
-Edit `testscript.go` to add new tests or modify existing ones. The code is structured with clear helper functions:
-
-```go
-runTest("Test Name", func() (bool, string) {
-    // Your test logic here
-    return success, message
-})
-```
+Edit the BDD feature files (`docs/features/*.feature`) and test scenario implementations in the testenv directory. The e2e tests use Godog for BDD-style testing with clear step definitions.
 
 ### Run Specific Tests
 
-The test script runs all tests sequentially. To debug a specific test:
+You can run specific tests by using Go test flags:
 
-1. Comment out other tests in the `runTests()` function
-2. Run: `go run testscript.go`
-3. Check detailed error messages in output
+1. Run a specific test file: `go test ./testenv/godog_test.go`
+2. Use verbose mode for detailed output: `go test -v ./...

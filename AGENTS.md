@@ -81,7 +81,8 @@ mockgatehub/
 │       └── logger.go         # Simple logger setup
 ├── testenv/                   # Isolated integration test environment
 │   ├── docker-compose.yml    # Test-only compose (ports 28080, 26380)
-│   ├── testscript.go         # Go-based integration test suite
+│   ├── e2e_main.go           # E2E test setup and teardown
+│   ├── godog_test.go         # BDD-style E2E tests
 │   ├── .gitignore            # Ignore go.mod/go.sum
 │   └── README.md             # Test environment documentation
 ├── web/                       # Static web assets
@@ -457,9 +458,8 @@ Configure in your `docker-compose.yml`:
 
 ```bash
 go mod tidy                    # Update dependencies
-go test ./...                  # Run unit tests
-cd testenv && go run testscript.go  # Run integration tests
-cd .. && go build ./cmd/mockgatehub  # Build binary
+go test ./...                  # Run all tests (unit + e2e)
+go build ./cmd/mockgatehub     # Build binary
 ```
 
 ### 2. Running Locally
@@ -481,11 +481,9 @@ MOCKGATEHUB_REDIS_DB=1 \
 docker build -t local-mockgatehub .
 
 # Test in isolated environment
-cd testenv
-go run testscript.go
+go test ./testenv/...
 
 # Deploy with Docker Compose
-cd ..
 docker compose up -d mockgatehub
 docker compose logs -f mockgatehub
 ```
@@ -493,9 +491,8 @@ docker compose logs -f mockgatehub
 ### 4. Full Integration Testing
 
 ```bash
-# Option 1: Isolated test environment (recommended for development)
-cd testenv
-go run testscript.go
+# Option 1: Run all tests (unit + e2e)
+go test ./...
 
 # Option 2: With your application stack
 docker compose up -d  # Starts your app services with mockgatehub
@@ -588,9 +585,8 @@ If the provider balance shows the deposit amount but the Interledger UI does not
 
 ### Testing Checklist
 
-- [ ] Unit tests pass: `go test ./...`
+- [ ] All tests pass: `go test ./...` (includes unit + e2e)
 - [ ] Coverage acceptable: `go test -cover ./...` (aim for 80%+)
-- [ ] Integration test passes: `cd testenv && go run testscript.go`
 - [ ] Docker build succeeds
 - [ ] Full stack starts: `docker compose up`
 - [ ] Application works with MockGatehub
@@ -600,10 +596,10 @@ If the provider balance shows the deposit amount but the Interledger UI does not
 
 **The `testenv/` directory is NOT optional**. Future agents MUST maintain it when making changes:
 
-1. **When adding new endpoints**: Update `testscript.go` with corresponding test cases
+1. **When adding new endpoints**: Update BDD feature files and test scenarios with corresponding test cases
 2. **When changing API responses**: Verify tests still pass - update assertions if needed
 3. **When modifying authentication**: Ensure test headers are still valid
-4. **When adding new features**: Add comprehensive test coverage in testscript.go
+4. **When adding new features**: Add comprehensive test coverage in feature files and test scenarios
 
 **testenv/ provides**:
 - Isolated integration testing (no conflicts with `docker/local`)
@@ -613,15 +609,14 @@ If the provider balance shows the deposit amount but the Interledger UI does not
 
 **Running tests**:
 ```bash
-cd testenv
-go run testscript.go  # Starts containers, runs all tests, cleans up
+go test ./...  # Runs all tests including e2e
 ```
 
-**Expected outcome**: All 10 tests pass (Health → User → Auth → KYC → Wallet → Balance → Rates → Vaults → Transaction)
+**Expected outcome**: All tests pass (unit tests + e2e scenarios for Health, User, Auth, KYC, Wallet, Balance, Rates, Vaults, Transaction)
 
 **If tests fail after your changes**:
 1. Check what changed in API responses
-2. Update test assertions in testscript.go
+2. Update test assertions in the feature files and test scenarios
 3. Ensure backward compatibility (applications depend on exact Gatehub API response format)
 4. If breaking change is necessary, document it clearly in the changelog
 

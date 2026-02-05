@@ -29,13 +29,8 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Run unit tests
+      - name: Run all tests (unit + e2e)
         run: go test -v -race -coverprofile=coverage.out ./...
-
-      - name: Run integration tests
-        run: |
-          cd testenv
-          go run testscript.go
 
       - name: Upload coverage
         uses: codecov/codecov-action@v4
