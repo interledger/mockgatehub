@@ -123,7 +123,7 @@ docker compose down -v
 
 ### Modify Tests
 
-Edit the BDD feature files (`docs/features/*.feature`) and test scenario implementations in the testenv directory. The e2e tests use Godog for BDD-style testing with clear step definitions.
+Edit the BDD feature files (`features/*.feature`) and test scenario implementations in the testenv directory. The e2e tests use Godog for BDD-style testing with clear step definitions.
 
 ### Run Specific Tests
 

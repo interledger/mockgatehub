@@ -28,7 +28,7 @@ jobs:
             chore
             revert
 
-  # Run all tests
+  # Run unit and integration tests
   test:
     name: Run Tests
     runs-on: ubuntu-latest
@@ -45,7 +45,7 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Run all tests
+      - name: Run unit and integration tests
         run: go test -v -race -coverprofile=coverage.out ./...
 
       - name: Upload coverage
@@ -55,6 +55,26 @@ jobs:
         with:
           files: ./coverage.out
           flags: unittests
+
+  # Run e2e tests (requires Docker)
+  e2e:
+    name: Run E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run e2e tests
+        run: go test -tags e2e -v -count=1 ./testenv/
 
   # Build Docker image (but don't push)
   build:

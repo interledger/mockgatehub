@@ -213,65 +213,46 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		logger.Info("========== REGISTERING /cards/v1 ROUTES ==========")
 		// Generic customer handler
 		r.Post("/customers", h.CreateCustomer)
-		logger.Info("✓ REGISTERED: POST /customers")
 
 		// Handlers for managed customers
 		r.Post("/customers/managed", h.CreateManagedCustomer)
-		logger.Info("✓ REGISTERED: POST /customers/managed")
 
-		// Handlers for customer addresses - use full path pattern
+		// Handlers for customer addresses
 		r.Post("/customers/{customerID}/addresses", h.CreateCustomerAddress)
-		logger.Info("✓ REGISTERED: POST /customers/{customerID}/addresses")
 		r.Get("/customers/{customerID}/addresses", h.GetCustomerAddresses)
-		logger.Info("✓ REGISTERED: GET /customers/{customerID}/addresses")
 
 		// Handlers for additional cards
 		r.Post("/accounts/{accountID}/cards", h.OrderAdditionalCard)
-		logger.Info("✓ REGISTERED: POST /accounts/{accountID}/cards")
-		r.Post("/cards/{cardID}/card", h.OrderAdditionalCard)
-		logger.Info("✓ REGISTERED: POST /cards/{cardID}/card")
 
-		// Card handlers
+		// Card handlers - note: order matters for chi routing
 		r.Get("/cards/{customerID}", h.ListCards)
-		logger.Info("✓ REGISTERED: GET /cards/{customerID}")
 		r.Post("/cards", h.CreateCard)
-		logger.Info("✓ REGISTERED: POST /cards")
 		r.Get("/cards/{cardID}/card", h.GetCard)
-		logger.Info("✓ REGISTERED: GET /cards/{cardID}/card")
-		r.Get("/cards/{cardID}", h.GetCard)
-		logger.Info("✓ REGISTERED: GET /cards/{cardID}")
-		r.Delete("/cards/{cardID}", h.DeleteCard)
-		logger.Info("✓ REGISTERED: DELETE /cards/{cardID}")
+		r.Delete("/cards/{cardID}/card", h.DeleteCard)
+		r.Put("/cards/{cardID}/lock", h.LockCard)
+		r.Put("/cards/{cardID}/unlock", h.UnlockCard)
+		r.Put("/cards/{cardID}/block", h.BlockCard)
 
 		// Card limits
 		r.Get("/cards/{cardID}/limits", h.GetCardLimits)
-		logger.Info("✓ REGISTERED: GET /cards/{cardID}/limits")
 		r.Put("/cards/{cardID}/limits", h.UpdateCardLimits)
-		logger.Info("✓ REGISTERED: PUT /cards/{cardID}/limits")
 
 		// Card tokenization and security
 		r.Post("/token/card-data", h.GetCardToken)
-		logger.Info("✓ REGISTERED: POST /token/card-data")
 
 		// Card transactions
 		r.Post("/transactions", h.CreateCardTransaction)
-		logger.Info("✓ REGISTERED: POST /transactions")
+		r.Get("/transactions/{txID}", h.GetCardTransaction)
 		r.Get("/cards/{cardID}/transactions", h.ListCardTransactions)
-		logger.Info("✓ REGISTERED: GET /cards/{cardID}/transactions")
 
 		// 3DS and confirmations
 		r.Get("/transaction/pending-confirmations", h.GetPendingConfirmations)
-		logger.Info("✓ REGISTERED: GET /transaction/pending-confirmations")
 		r.Post("/test/3ds/challenge", h.CreateThreeDSChallenge)
-		logger.Info("✓ REGISTERED: POST /test/3ds/challenge")
 		r.Post("/transaction/{txID}", h.ConfirmThreeDS)
-		logger.Info("✓ REGISTERED: POST /transaction/{txID}")
 
 		// Card products and plastic ordering
 		r.Get("/card-applications/{appID}/card-products", h.GetCardApplicationProducts)
-		logger.Info("✓ REGISTERED: GET /card-applications/{appID}/card-products")
 		r.Post("/cards/{cardID}/plastic", h.OrderPlasticCard)
-		logger.Info("✓ REGISTERED: POST /cards/{cardID}/plastic")
 
 		logger.Info("========== /cards/v1 ROUTES REGISTERED ==========")
 	})

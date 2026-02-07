@@ -2,178 +2,414 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
+	"mockgatehub/internal/consts"
 	"mockgatehub/internal/logger"
+	"mockgatehub/internal/models"
 	"mockgatehub/internal/utils"
 
 	"github.com/go-chi/chi/v5"
 	"go.uber.org/zap"
 )
 
-// Card endpoint stubs - minimal implementation for sandbox
+// generateMaskedPan generates a realistic masked PAN
+func generateMaskedPan() string {
+	return fmt.Sprintf("5123%s******%s", utils.GenerateUUID()[:2], utils.GenerateUUID()[:4])
+}
 
 // CreateCustomer creates a card customer (generic endpoint)
 func (h *Handler) CreateCustomer(w http.ResponseWriter, r *http.Request) {
-	logger.Info("create customer called", zap.String("path", r.URL.Path), zap.String("method", r.Method))
+	h.CreateManagedCustomer(w, r)
+}
 
-	var req map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+// CreateManagedCustomer creates a card customer with account and initial card
+func (h *Handler) CreateManagedCustomer(w http.ResponseWriter, r *http.Request) {
+	logger.Info("create managed customer called")
+
+	userID := r.Header.Get("x-gatehub-managed-user-uuid")
+	if userID == "" {
+		h.sendError(w, http.StatusBadRequest, "missing x-gatehub-managed-user-uuid header")
+		return
+	}
+
+	// Validate user exists and KYC is accepted
+	user, err := h.store.GetUser(userID)
+	if err != nil {
+		h.sendError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if user.KYCState != consts.KYCStateAccepted {
+		h.sendError(w, http.StatusForbidden, "user KYC state must be accepted")
+		return
+	}
+
+	var req models.CreateCustomerAndCardArgs
+	if err := h.decodeJSON(r, &req); err != nil {
 		h.sendError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	// Extract customer details from request
-	walletAddress, _ := req["walletAddress"].(string)
-	nameOnCard, _ := req["nameOnCard"].(string)
-	account, _ := req["account"].(map[string]interface{})
+	// Validate nameOnCard
+	if req.NameOnCard == "" {
+		h.sendError(w, http.StatusBadRequest, "nameOnCard is required")
+		return
+	}
+	if len(req.NameOnCard) > 26 {
+		h.sendError(w, http.StatusBadRequest, "nameOnCard must be 26 characters or less")
+		return
+	}
 
-	accountCurrency := "EUR"
-	if account != nil {
-		if currency, ok := account["currency"].(string); ok {
-			accountCurrency = currency
+	// Validate currency
+	currency := req.Account.Currency
+	if currency == "" {
+		currency = "EUR"
+	}
+	if currency != "EUR" {
+		h.sendError(w, http.StatusBadRequest, "only EUR currency is supported for cards")
+		return
+	}
+
+	productCode := req.Account.ProductCode
+	if productCode == "" {
+		productCode = "PWSR_DEBP_2404"
+	}
+
+	// Create customer
+	customerID := utils.GenerateUUID()
+	customer := &models.Customer{
+		ID:        &customerID,
+		SourceID:  userID,
+		Type:      "Citizen",
+		Code:      fmt.Sprintf("CUST-%s", customerID[:8]),
+		KYCStatus: consts.KYCStateAccepted,
+		CreatedAt: time.Now(),
+	}
+
+	if err := h.store.CreateCustomer(customer); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to create customer")
+		return
+	}
+
+	// Create delivery address if provided
+	if req.Delivery != nil {
+		addr := &models.CustomerDeliveryAddress{
+			ID:               utils.GenerateUUID(),
+			SourceID:         utils.GenerateUUID(),
+			CustomerID:       customerID,
+			CustomerSourceID: userID,
+			Type:             req.Delivery.Type,
+			Line1:            req.Delivery.Line1,
+			Line2:            req.Delivery.Line2,
+			Line3:            req.Delivery.Line3,
+			City:             req.Delivery.City,
+			PostOffice:       req.Delivery.PostOffice,
+			ZipCode:          req.Delivery.ZipCode,
+			CountryCode:      req.Delivery.CountryCode,
+			Status:           "ACTIVE",
+		}
+		if err := h.store.CreateCustomerAddress(customerID, addr); err != nil {
+			logger.Warn("failed to create delivery address", zap.Error(err))
 		}
 	}
 
-	response := map[string]interface{}{
-		"walletAddress": walletAddress,
-		"customers": map[string]interface{}{
-			"id":         utils.GenerateUUID(),
-			"code":       "CUST" + utils.GenerateUUID()[:4],
-			"type":       "Citizen",
-			"nameOnCard": nameOnCard,
-			"accounts": []map[string]interface{}{
-				{
-					"id":       utils.GenerateUUID(),
-					"currency": accountCurrency,
-					"cards": []map[string]interface{}{
-						{
-							"id":     utils.GenerateUUID(),
-							"status": "active",
-							"type":   "physical",
-							"last4":  "1234",
-						},
-					},
-				},
-			},
-		},
+	// Create account
+	accountID := utils.GenerateUUID()
+	account := &models.Account{
+		ID:               &accountID,
+		SourceID:         accountID,
+		CustomerID:       &customerID,
+		CustomerSourceID: userID,
+		ProductCode:      productCode,
+		Currency:         currency,
+		AccountNumber:    fmt.Sprintf("GB29NWBK%s", utils.GenerateUUID()[:12]),
+		Type:             "DEBIT",
+		Status:           "ACTIVE",
+		CreatedAt:        time.Now(),
+	}
+
+	if err := h.store.CreateAccount(account); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to create account")
+		return
+	}
+
+	// Create card
+	cardID := utils.GenerateUUID()
+	card := &models.Card{
+		ID:               cardID,
+		SourceID:         cardID,
+		AccountID:        accountID,
+		AccountSourceID:  accountID,
+		CustomerID:       customerID,
+		CustomerSourceID: userID,
+		NameOnCard:       req.NameOnCard,
+		ProductCode:      productCode,
+		PanToken:         fmt.Sprintf("pan_%s", cardID),
+		MaskedPan:        generateMaskedPan(),
+		Status:           consts.CardStatusActive,
+		ExpiryDate:       time.Now().AddDate(3, 0, 0).Format("2006-01-02"),
+		RelationType:     "PRIMARY",
+		IsFirstTimeLock:  false,
+		PlasticCreated:   false,
+		CreatedAt:        time.Now(),
+	}
+
+	if err := h.store.CreateCard(card); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to create card")
+		return
+	}
+
+	// Seed default card limits
+	defaultLimits := []models.CardLimit{
+		{Type: "dailyOverall", Limit: 1000.00, Currency: "EUR", IsDisabled: false},
+		{Type: "perTransaction", Limit: 500.00, Currency: "EUR", IsDisabled: false},
+		{Type: "monthlyOverall", Limit: 5000.00, Currency: "EUR", IsDisabled: false},
+		{Type: "dailyAtm", Limit: 300.00, Currency: "EUR", IsDisabled: false},
+		{Type: "dailyEcomm", Limit: 800.00, Currency: "EUR", IsDisabled: false},
+	}
+	if err := h.store.SetCardLimits(cardID, defaultLimits); err != nil {
+		logger.Warn("failed to seed card limits", zap.Error(err))
+	}
+
+	// Build response matching the documented CustomerResponse shape
+	account.Cards = []models.Card{*card}
+	customer.Accounts = []models.Account{*account}
+
+	response := models.CustomerResponse{
+		WalletAddress: req.WalletAddress,
+		Customer:      *customer,
 	}
 
 	h.sendJSON(w, http.StatusCreated, response)
 }
 
-// CreateManagedCustomer creates a card customer (stub)
-func (h *Handler) CreateManagedCustomer(w http.ResponseWriter, r *http.Request) {
-	logger.Info("create managed customer called (stub)")
-	h.sendJSON(w, http.StatusOK, map[string]interface{}{
-		"walletAddress": "mock-wallet-address",
-		"customers": map[string]interface{}{
-			"id":   "mock-customer-id",
-			"code": "CUST001",
-			"type": "Citizen",
-			"accounts": []map[string]interface{}{
-				{
-					"id":       "mock-account-id",
-					"currency": "EUR",
-					"cards": []map[string]interface{}{
-						{
-							"id":     "mock-card-id",
-							"status": "active",
-							"type":   "virtual",
-							"last4":  "1234",
-						},
-					},
-				},
-			},
-		},
-	})
-}
-
-// ListCards retrieves cards for a customer (stub)
+// ListCards retrieves cards for a customer
 func (h *Handler) ListCards(w http.ResponseWriter, r *http.Request) {
 	customerID := chi.URLParam(r, "customerID")
-	logger.Info("list cards called (stub)", zap.String("customer_id", customerID))
+	logger.Info("list cards called", zap.String("customer_id", customerID))
 
-	cards := []map[string]interface{}{
-		{
-			"id":     utils.GenerateUUID(),
-			"status": "active",
-			"type":   "physical",
-			"last4":  "1234",
+	cards, err := h.store.GetCardsByCustomer(customerID)
+	if err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to get cards")
+		return
+	}
+
+	// Filter out SoftDelete cards
+	var activeCards []models.Card
+	for _, c := range cards {
+		if c.Status != consts.CardStatusSoftDelete {
+			activeCards = append(activeCards, *c)
+		}
+	}
+	if activeCards == nil {
+		activeCards = []models.Card{}
+	}
+
+	response := models.ListCardsResponse{
+		Data: activeCards,
+		Pagination: models.Pagination{
+			PageNumber: 1,
+			PageSize:   100,
+			TotalPages: 1,
 		},
 	}
 
-	h.sendJSON(w, http.StatusOK, map[string]interface{}{
-		"data": cards,
-	})
+	h.sendJSON(w, http.StatusOK, response)
 }
 
 // CreateCard creates a new card (stub)
 func (h *Handler) CreateCard(w http.ResponseWriter, r *http.Request) {
-	logger.Info("create card called (stub)")
+	logger.Info("create card called")
 	h.sendJSON(w, http.StatusOK, map[string]interface{}{
-		"id":     "mock-card-id",
-		"status": "active",
-		"type":   "virtual",
-		"last4":  "1234",
+		"id":     utils.GenerateUUID(),
+		"status": consts.CardStatusActive,
 	})
 }
 
-// GetCard retrieves card details (stub)
+// GetCard retrieves card details
 func (h *Handler) GetCard(w http.ResponseWriter, r *http.Request) {
 	cardID := chi.URLParam(r, "cardID")
-	logger.Info("get card called (stub)", zap.String("card_id", cardID))
+	logger.Info("get card called", zap.String("card_id", cardID))
 
-	h.sendJSON(w, http.StatusOK, map[string]interface{}{
-		"id":               cardID,
-		"status":           "active",
-		"type":             "virtual",
-		"last4":            "1234",
-		"maskedPan":        "****1234",
-		"expiryDate":       "12/28",
-		"nameOnCard":       "Test User",
-		"productCode":      "PROD_VIRTUAL_CARD",
-		"relationType":     "PRIMARY",
-		"OrderPlasticSync": false,
-	})
+	card, err := h.store.GetCard(cardID)
+	if err != nil {
+		h.sendError(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	h.sendJSON(w, http.StatusOK, card)
 }
 
-// DeleteCard deletes a card (stub)
+// DeleteCard soft-deletes a card
 func (h *Handler) DeleteCard(w http.ResponseWriter, r *http.Request) {
-	_ = chi.URLParam(r, "cardID")
-	// Card deleted
+	cardID := chi.URLParam(r, "cardID")
+	logger.Info("delete card called", zap.String("card_id", cardID))
+
+	card, err := h.store.GetCard(cardID)
+	if err != nil {
+		h.sendError(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	if card.Status == consts.CardStatusSoftDelete {
+		h.sendError(w, http.StatusBadRequest, "card is already deleted")
+		return
+	}
+
+	card.Status = consts.CardStatusSoftDelete
+	card.StatusReasonCode = nil
+	card.LockLevel = nil
+
+	if err := h.store.UpdateCard(card); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to delete card")
+		return
+	}
 
 	h.sendJSON(w, http.StatusOK, map[string]interface{}{
-		"message": "Card deleted successfully",
+		"success": true,
 	})
 }
 
-// GetPendingConfirmations retrieves pending 3DS confirmations (stub)
-// Returns mock pending confirmation for testing
-func (h *Handler) GetPendingConfirmations(w http.ResponseWriter, r *http.Request) {
-	logger.Info("get pending confirmations called (stub)")
+// LockCard locks a card temporarily
+func (h *Handler) LockCard(w http.ResponseWriter, r *http.Request) {
+	cardID := chi.URLParam(r, "cardID")
+	reasonCode := r.URL.Query().Get("reasonCode")
+	logger.Info("lock card called", zap.String("card_id", cardID), zap.String("reason_code", reasonCode))
 
-	// Return a mock pending confirmation for testing purposes
-	h.sendJSON(w, http.StatusOK, map[string]interface{}{
-		"pendingConfirmations": []map[string]interface{}{
-			{
-				"transactionId":    "3ds-" + utils.GenerateUUID()[:8],
-				"merchantName":     "Test Merchant",
-				"purchaseAmount":   "15.00",
-				"purchaseCurrency": "EUR",
-				"status":           "pending",
-				"createdAt":        time.Now().UTC().Format(time.RFC3339),
-			},
-		},
-	})
+	if reasonCode == "" {
+		reasonCode = "ClientRequestedLock"
+	}
+
+	card, err := h.store.GetCard(cardID)
+	if err != nil {
+		h.sendError(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	// Validate card can be locked
+	if card.Status == consts.CardStatusSoftDelete {
+		h.sendError(w, http.StatusBadRequest, "cannot lock a deleted card")
+		return
+	}
+	if card.Status == consts.CardStatusBlocked {
+		h.sendError(w, http.StatusBadRequest, "cannot lock a permanently blocked card")
+		return
+	}
+	if card.Status == consts.CardStatusTemporaryBlocked {
+		h.sendError(w, http.StatusBadRequest, "card is already locked")
+		return
+	}
+
+	card.Status = consts.CardStatusTemporaryBlocked
+	card.LockLevel = &reasonCode
+	if !card.IsFirstTimeLock {
+		card.IsFirstTimeLock = true
+	}
+
+	if err := h.store.UpdateCard(card); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to lock card")
+		return
+	}
+
+	h.sendJSON(w, http.StatusOK, card)
+}
+
+// UnlockCard unlocks a temporarily blocked card
+func (h *Handler) UnlockCard(w http.ResponseWriter, r *http.Request) {
+	cardID := chi.URLParam(r, "cardID")
+	logger.Info("unlock card called", zap.String("card_id", cardID))
+
+	card, err := h.store.GetCard(cardID)
+	if err != nil {
+		h.sendError(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	if card.Status != consts.CardStatusTemporaryBlocked {
+		h.sendError(w, http.StatusBadRequest, "card is not locked")
+		return
+	}
+
+	card.Status = consts.CardStatusActive
+	card.LockLevel = nil
+
+	if err := h.store.UpdateCard(card); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to unlock card")
+		return
+	}
+
+	h.sendJSON(w, http.StatusOK, card)
+}
+
+// BlockCard permanently blocks a card
+func (h *Handler) BlockCard(w http.ResponseWriter, r *http.Request) {
+	cardID := chi.URLParam(r, "cardID")
+	reasonCode := r.URL.Query().Get("reasonCode")
+	logger.Info("block card called", zap.String("card_id", cardID))
+
+	card, err := h.store.GetCard(cardID)
+	if err != nil {
+		h.sendError(w, http.StatusNotFound, "card not found")
+		return
+	}
+
+	if card.Status == consts.CardStatusSoftDelete {
+		h.sendError(w, http.StatusBadRequest, "cannot block a deleted card")
+		return
+	}
+	if card.Status == consts.CardStatusBlocked {
+		h.sendError(w, http.StatusBadRequest, "card is already blocked")
+		return
+	}
+
+	card.Status = consts.CardStatusBlocked
+	card.StatusReasonCode = &reasonCode
+	card.LockLevel = nil
+
+	if err := h.store.UpdateCard(card); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to block card")
+		return
+	}
+
+	h.sendJSON(w, http.StatusOK, card)
+}
+
+// GetPendingConfirmations retrieves pending 3DS confirmations
+func (h *Handler) GetPendingConfirmations(w http.ResponseWriter, r *http.Request) {
+	userID := r.Header.Get("x-gatehub-managed-user-uuid")
+	logger.Info("get pending confirmations called", zap.String("user_id", userID))
+
+	challenges, err := h.store.GetPendingThreeDSChallenges(userID)
+	if err != nil {
+		h.sendJSON(w, http.StatusOK, []models.PendingThreeDSConfirmation{})
+		return
+	}
+
+	var pending []models.PendingThreeDSConfirmation
+	for _, c := range challenges {
+		pending = append(pending, models.PendingThreeDSConfirmation{
+			TransactionID:    c.TransactionID,
+			MerchantName:     c.MerchantName,
+			PurchaseAmount:   c.PurchaseAmount,
+			PurchaseCurrency: c.PurchaseCurrency,
+			PurchaseDate:     c.PurchaseDate,
+			Timeout:          c.Timeout.Format(time.RFC3339),
+		})
+	}
+
+	if pending == nil {
+		pending = []models.PendingThreeDSConfirmation{}
+	}
+
+	h.sendJSON(w, http.StatusOK, pending)
 }
 
 // CreateCustomerAddress creates a delivery address for a card customer
 func (h *Handler) CreateCustomerAddress(w http.ResponseWriter, r *http.Request) {
-	logger.Info("creating customer address", zap.String("path", r.URL.Path), zap.String("method", r.Method))
 	customerID := chi.URLParam(r, "customerID")
-	logger.Info("customer address path params", zap.String("customer_id", customerID))
+	logger.Info("creating customer address", zap.String("customer_id", customerID))
 
 	var req map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -181,39 +417,36 @@ func (h *Handler) CreateCustomerAddress(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	address := map[string]interface{}{
-		"id":          utils.GenerateUUID(),
-		"customerID":  customerID,
-		"type":        req["type"],
-		"countryCode": req["countryCode"],
-		"line1":       req["line1"],
-		"city":        req["city"],
-		"zipCode":     req["zipCode"],
-		"reason":      req["reason"],
-		"createdAt":   time.Now().UTC().Format(time.RFC3339),
+	address := &models.CustomerDeliveryAddress{
+		ID:         utils.GenerateUUID(),
+		CustomerID: customerID,
+		Type:       fmt.Sprintf("%v", req["type"]),
+		Line1:      fmt.Sprintf("%v", req["line1"]),
+		City:       fmt.Sprintf("%v", req["city"]),
+		ZipCode:    fmt.Sprintf("%v", req["zipCode"]),
+		Status:     "ACTIVE",
+	}
+	if cc, ok := req["countryCode"].(string); ok {
+		address.CountryCode = cc
 	}
 
-	// Return as array of addresses
-	h.sendJSON(w, http.StatusCreated, []map[string]interface{}{address})
+	if err := h.store.CreateCustomerAddress(customerID, address); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to create address")
+		return
+	}
+
+	h.sendJSON(w, http.StatusCreated, []models.CustomerDeliveryAddress{*address})
 }
 
 // GetCustomerAddresses retrieves delivery addresses for a card customer
 func (h *Handler) GetCustomerAddresses(w http.ResponseWriter, r *http.Request) {
-	logger.Info("getting customer addresses", zap.String("path", r.URL.Path), zap.String("method", r.Method))
 	customerID := chi.URLParam(r, "customerID")
-	logger.Info("customer address path params", zap.String("customer_id", customerID))
+	logger.Info("getting customer addresses", zap.String("customer_id", customerID))
 
-	addresses := []map[string]interface{}{
-		{
-			"id":          utils.GenerateUUID(),
-			"customerID":  customerID,
-			"type":        "DELIVERY",
-			"countryCode": "USA",
-			"line1":       "123 Main St",
-			"city":        "NYC",
-			"zipCode":     "10001",
-			"createdAt":   time.Now().UTC().Format(time.RFC3339),
-		},
+	addresses, err := h.store.GetCustomerAddresses(customerID)
+	if err != nil {
+		h.sendJSON(w, http.StatusOK, []models.CustomerDeliveryAddress{})
+		return
 	}
 
 	h.sendJSON(w, http.StatusOK, addresses)
@@ -221,9 +454,8 @@ func (h *Handler) GetCustomerAddresses(w http.ResponseWriter, r *http.Request) {
 
 // OrderAdditionalCard orders an additional card for an account
 func (h *Handler) OrderAdditionalCard(w http.ResponseWriter, r *http.Request) {
-	logger.Info("ordering additional card", zap.String("path", r.URL.Path), zap.String("method", r.Method))
 	accountID := chi.URLParam(r, "accountID")
-	logger.Info("additional card path params", zap.String("account_id", accountID))
+	logger.Info("ordering additional card", zap.String("account_id", accountID))
 
 	card := map[string]interface{}{
 		"id":         utils.GenerateUUID(),
@@ -236,92 +468,134 @@ func (h *Handler) OrderAdditionalCard(w http.ResponseWriter, r *http.Request) {
 	h.sendJSON(w, http.StatusCreated, card)
 }
 
-// GetCardLimits retrieves spending limits for a card (stub)
+// GetCardLimits retrieves spending limits for a card
 func (h *Handler) GetCardLimits(w http.ResponseWriter, r *http.Request) {
 	cardID := chi.URLParam(r, "cardID")
 	logger.Info("get card limits called", zap.String("card_id", cardID))
 
-	limits := []map[string]interface{}{
-		{
-			"type":       "dailyOverall",
-			"limit":      1000.00,
-			"currency":   "EUR",
-			"isDisabled": false,
-		},
-		{
-			"type":       "perTransaction",
-			"limit":      500.00,
-			"currency":   "EUR",
-			"isDisabled": false,
-		},
-		{
-			"type":       "monthlyOverall",
-			"limit":      5000.00,
-			"currency":   "EUR",
-			"isDisabled": false,
-		},
+	limits, err := h.store.GetCardLimits(cardID)
+	if err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to get limits")
+		return
+	}
+
+	// Seed default limits if empty
+	if len(limits) == 0 {
+		limits = []models.CardLimit{
+			{Type: "dailyOverall", Limit: 1000.00, Currency: "EUR", IsDisabled: false},
+			{Type: "perTransaction", Limit: 500.00, Currency: "EUR", IsDisabled: false},
+			{Type: "monthlyOverall", Limit: 5000.00, Currency: "EUR", IsDisabled: false},
+			{Type: "dailyAtm", Limit: 300.00, Currency: "EUR", IsDisabled: false},
+			{Type: "dailyEcomm", Limit: 800.00, Currency: "EUR", IsDisabled: false},
+		}
+		_ = h.store.SetCardLimits(cardID, limits)
 	}
 
 	h.sendJSON(w, http.StatusOK, limits)
 }
 
-// UpdateCardLimits updates spending limits for a card (stub)
+// UpdateCardLimits updates spending limits for a card
 func (h *Handler) UpdateCardLimits(w http.ResponseWriter, r *http.Request) {
 	cardID := chi.URLParam(r, "cardID")
 	logger.Info("update card limits called", zap.String("card_id", cardID))
 
-	var limits []map[string]interface{}
+	var limits []models.CardLimit
 	if err := json.NewDecoder(r.Body).Decode(&limits); err != nil {
 		h.sendError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	// Return the updated limits
+	if err := h.store.SetCardLimits(cardID, limits); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to update limits")
+		return
+	}
+
 	h.sendJSON(w, http.StatusOK, limits)
 }
 
-// GetCardToken generates a token for retrieving card data (stub)
+// GetCardToken generates a token for retrieving card data
 func (h *Handler) GetCardToken(w http.ResponseWriter, r *http.Request) {
 	logger.Info("get card token called")
 
-	h.sendJSON(w, http.StatusOK, map[string]interface{}{
-		"token": "mock-card-token-" + utils.GenerateUUID(),
-		"links": []map[string]interface{}{
-			{
-				"href":   "https://secure-card-service.example.com/v1/card-data",
-				"rel":    "card-data",
-				"method": "GET",
-			},
-		},
-	})
-}
-
-// CreateCardTransaction creates a card transaction (stub)
-func (h *Handler) CreateCardTransaction(w http.ResponseWriter, r *http.Request) {
-	logger.Info("create card transaction called")
-
-	var req map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var req models.GetCardTokenArgs
+	if err := h.decodeJSON(r, &req); err != nil {
 		h.sendError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	response := map[string]interface{}{
-		"id":                  utils.GenerateUUID(),
-		"transactionId":       "tx-" + utils.GenerateUUID()[:8],
-		"type":                1,
-		"txStatus":            "completed",
-		"transactionAmount":   req["amount"],
-		"transactionCurrency": req["currency"],
-		"billingAmount":       req["amount"],
-		"billingCurrency":     req["currency"],
-		"merchantName":        req["merchantName"],
-		"transactionDateTime": time.Now().UTC().Format(time.RFC3339),
-		"cardScheme":          2,
-		"ghResponseCode":      "00",
+	response := models.CardTokenResponse{
+		Token: fmt.Sprintf("mock-card-data-%s", req.CardID),
+		Links: []models.CardTokenLink{
+			{
+				Href:   fmt.Sprintf("/cards/v1/token/card-data/data?token=mock-card-data-%s", req.CardID),
+				Rel:    "data",
+				Method: "GET",
+			},
+		},
 	}
 
-	h.sendJSON(w, http.StatusCreated, response)
+	h.sendJSON(w, http.StatusOK, response)
+}
+
+// CreateCardTransaction creates a card transaction
+func (h *Handler) CreateCardTransaction(w http.ResponseWriter, r *http.Request) {
+	logger.Info("create card transaction called")
+
+	var req models.CreateCardTransactionArgs
+	if err := h.decodeJSON(r, &req); err != nil {
+		h.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	txID := fmt.Sprintf("tx-%s", utils.GenerateUUID()[:8])
+	now := time.Now().UTC().Format(time.RFC3339)
+
+	tx := &models.CardTransaction{
+		TransactionID:         txID,
+		GHResponseCode:        "00",
+		GHResponseDescription: "Approved",
+		TransactionAmount:     &req.Amount,
+		TransactionCurrency:   &req.Currency,
+		BillingAmount:         &req.Amount,
+		BillingCurrency:       &req.Currency,
+		Type:                  req.Type,
+		CardScheme:            2,
+		TerminalID:            "TERM001",
+		CreatedAt:             now,
+		TxStatus:              strPtr("COMPLETED"),
+		Operation:             0,
+		MerchantName:          req.MerchantName,
+		MerchantCity:          req.MerchantCity,
+		MerchantCountry:       req.MerchantCountry,
+		TransactionDateTime:   &now,
+		ProcessDateTime:       &now,
+	}
+
+	if err := h.store.CreateCardTransaction(tx); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to create transaction")
+		return
+	}
+
+	// Index by card
+	if req.CardID != "" {
+		_ = h.store.AddCardTransactionIndex(req.CardID, txID)
+	}
+
+	h.sendJSON(w, http.StatusCreated, tx)
+}
+
+// GetCardTransaction retrieves a single card transaction by ID
+func (h *Handler) GetCardTransaction(w http.ResponseWriter, r *http.Request) {
+	txID := chi.URLParam(r, "txID")
+	logger.Info("get card transaction called", zap.String("tx_id", txID))
+
+	tx, err := h.store.GetCardTransaction(txID)
+	if err != nil {
+		h.sendError(w, http.StatusNotFound, "transaction not found")
+		return
+	}
+
+	h.sendJSON(w, http.StatusOK, tx)
 }
 
 // ListCardTransactions retrieves card transactions (stub)
@@ -329,75 +603,116 @@ func (h *Handler) ListCardTransactions(w http.ResponseWriter, r *http.Request) {
 	cardID := chi.URLParam(r, "cardID")
 	logger.Info("list card transactions called", zap.String("card_id", cardID))
 
-	transactions := []map[string]interface{}{
-		{
-			"id":                  1,
-			"transactionId":       "tx-" + utils.GenerateUUID()[:8],
-			"type":                0,
-			"txStatus":            "completed",
-			"transactionAmount":   "12.50",
-			"transactionCurrency": "EUR",
-			"billingAmount":       "12.50",
-			"billingCurrency":     "EUR",
-			"merchantName":        "Test Store",
-			"transactionDateTime": time.Now().UTC().Format(time.RFC3339),
-			"cardScheme":          2,
-			"ghResponseCode":      "00",
-		},
+	txIDs, err := h.store.GetCardTransactionIDs(cardID)
+	if err != nil {
+		h.sendJSON(w, http.StatusOK, models.CardTransactionsResponse{
+			Data: []models.CardTransaction{},
+			Pagination: models.CardTransactionsPagination{
+				PageNumber:   1,
+				PageSize:     20,
+				TotalPages:   1,
+				TotalRecords: 0,
+			},
+		})
+		return
 	}
 
-	h.sendJSON(w, http.StatusOK, map[string]interface{}{
-		"data": transactions,
-		"pagination": map[string]interface{}{
-			"pageNumber":   1,
-			"pageSize":     20,
-			"totalPages":   1,
-			"totalRecords": len(transactions),
+	var txs []models.CardTransaction
+	for _, txID := range txIDs {
+		tx, err := h.store.GetCardTransaction(txID)
+		if err == nil {
+			txs = append(txs, *tx)
+		}
+	}
+	if txs == nil {
+		txs = []models.CardTransaction{}
+	}
+
+	h.sendJSON(w, http.StatusOK, models.CardTransactionsResponse{
+		Data: txs,
+		Pagination: models.CardTransactionsPagination{
+			PageNumber:   1,
+			PageSize:     20,
+			TotalPages:   1,
+			TotalRecords: uint(len(txs)),
 		},
 	})
 }
 
-// CreateThreeDSChallenge creates a 3DS challenge for testing (stub)
+// CreateThreeDSChallenge creates a 3DS challenge for testing
 func (h *Handler) CreateThreeDSChallenge(w http.ResponseWriter, r *http.Request) {
 	logger.Info("create 3ds challenge called")
 
-	var req map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var req struct {
+		CardID           string `json:"cardId"`
+		UserID           string `json:"userId"`
+		MerchantName     string `json:"merchantName"`
+		PurchaseAmount   string `json:"purchaseAmount"`
+		PurchaseCurrency string `json:"purchaseCurrency"`
+	}
+	if err := h.decodeJSON(r, &req); err != nil {
 		h.sendError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	h.sendJSON(w, http.StatusCreated, map[string]interface{}{
-		"transactionId": "3ds-" + utils.GenerateUUID()[:8],
-		"status":        "pending",
-		"challengeUrl":  "/cards/v1/test/3ds/challenge/" + utils.GenerateUUID(),
-	})
+	txID := fmt.Sprintf("3ds-%s", utils.GenerateUUID()[:8])
+
+	challenge := &models.ThreeDSChallenge{
+		TransactionID:    txID,
+		CardID:           req.CardID,
+		UserID:           req.UserID,
+		MerchantName:     req.MerchantName,
+		PurchaseAmount:   req.PurchaseAmount,
+		PurchaseCurrency: req.PurchaseCurrency,
+		PurchaseDate:     time.Now().UTC().Format(time.RFC3339),
+		Timeout:          time.Now().Add(5 * time.Minute),
+		Status:           "pending",
+		CreatedAt:        time.Now(),
+	}
+
+	if err := h.store.CreateThreeDSChallenge(challenge); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to create 3DS challenge")
+		return
+	}
+
+	h.sendJSON(w, http.StatusCreated, challenge)
 }
 
-// ConfirmThreeDS confirms or denies a 3DS challenge (stub)
+// ConfirmThreeDS confirms or denies a 3DS challenge
 func (h *Handler) ConfirmThreeDS(w http.ResponseWriter, r *http.Request) {
 	txID := chi.URLParam(r, "txID")
 	logger.Info("confirm 3ds called", zap.String("tx_id", txID))
 
-	var req map[string]interface{}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var req models.ThreeDSPaymentConfirmationArgs
+	if err := h.decodeJSON(r, &req); err != nil {
 		h.sendError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	confirmed, _ := req["confirmed"].(bool)
-	status := "declined"
-	if confirmed {
-		status = "approved"
+	challenge, err := h.store.GetThreeDSChallenge(txID)
+	if err != nil {
+		h.sendError(w, http.StatusNotFound, "3DS challenge not found")
+		return
+	}
+
+	if req.Confirmed {
+		challenge.Status = "approved"
+	} else {
+		challenge.Status = "declined"
+	}
+
+	if err := h.store.UpdateThreeDSChallenge(challenge); err != nil {
+		h.sendError(w, http.StatusInternalServerError, "failed to update 3DS challenge")
+		return
 	}
 
 	h.sendJSON(w, http.StatusOK, map[string]interface{}{
 		"transactionId": txID,
-		"status":        status,
+		"status":        challenge.Status,
 	})
 }
 
-// GetCardApplicationProducts retrieves available card products (stub)
+// GetCardApplicationProducts retrieves available card products
 func (h *Handler) GetCardApplicationProducts(w http.ResponseWriter, r *http.Request) {
 	appID := chi.URLParam(r, "appID")
 	logger.Info("get card application products called", zap.String("app_id", appID))
@@ -406,7 +721,7 @@ func (h *Handler) GetCardApplicationProducts(w http.ResponseWriter, r *http.Requ
 		{
 			"uuid":               utils.GenerateUUID(),
 			"accountProductCode": "PROD_EUR_ACCOUNT",
-			"code":               "PROD_VIRTUAL_CARD",
+			"code":               "PWSR_DEBP_2404",
 			"name":               "Virtual Debit Card",
 			"cost":               "0.00",
 			"cardProductLimits": []map[string]interface{}{
@@ -440,7 +755,7 @@ func (h *Handler) GetCardApplicationProducts(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// OrderPlasticCard orders a physical card (stub)
+// OrderPlasticCard orders a physical card
 func (h *Handler) OrderPlasticCard(w http.ResponseWriter, r *http.Request) {
 	cardID := chi.URLParam(r, "cardID")
 	logger.Info("order plastic card called", zap.String("card_id", cardID))
@@ -451,13 +766,10 @@ func (h *Handler) OrderPlasticCard(w http.ResponseWriter, r *http.Request) {
 		"status":    "PENDING",
 		"type":      "PLASTIC",
 		"createdAt": time.Now().UTC().Format(time.RFC3339),
-		"deliveryAddress": map[string]interface{}{
-			"firstName":   "John",
-			"lastName":    "Doe",
-			"countryCode": "USA",
-			"line1":       "123 Main St",
-			"city":        "NYC",
-			"zipCode":     "10001",
-		},
 	})
+}
+
+// strPtr returns a pointer to a string
+func strPtr(s string) *string {
+	return &s
 }
