@@ -164,7 +164,6 @@ func (tc *TestContext) postExternalDeposit(path string, txType int, depositType 
 		"receiving_address": tc.walletAddress,
 		"amount":            amount,
 		"currency":          currency,
-		"vault_uuid":        "test-vault-uuid",
 	}
 	headers := map[string]string{
 		"x-gatehub-managed-user-uuid": tc.userID,
