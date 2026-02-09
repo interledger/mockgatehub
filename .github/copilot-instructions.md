@@ -30,7 +30,6 @@ mockgatehub/
 │   └── logger/                # Logging setup
 ├── testenv/                   # Isolated integration test environment
 │   ├── docker-compose.yml    # Test-only compose (ports 28080, 26380)
-│   ├── e2e_main.go           # E2E test setup and teardown
 │   ├── godog_test.go         # BDD-style E2E tests
 │   └── README.md             # Test environment documentation
 ├── web/                       # Static web assets
@@ -63,7 +62,7 @@ mockgatehub/
 - Seeder: pre-creates test users with balances for testing
 
 ### Authentication (HMAC Signatures)
-- Format: `HMAC-SHA256(timestamp + method + path + body, secret)`
+- Format: `HMAC-SHA256(timestamp_ms|method|full_url|body, secret)`
 - Request headers: `x-gatehub-app-id`, `x-gatehub-timestamp`, `x-gatehub-signature`
 - Used for both incoming request validation and outgoing webhooks
 

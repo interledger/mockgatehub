@@ -22,7 +22,7 @@ services:
       - MOCKGATEHUB_REDIS_DB=0
       - WEBHOOK_URL=http://mockgatehub:8080/test-webhook
       - WEBHOOK_SECRET=test-webhook-secret
-      - MOCKGATEHUB_ENFORCE_AUTHENTICATION=false
+      - MOCKGATEHUB_ENFORCE_AUTHENTICATION=true
     depends_on:
       - redis
     networks:

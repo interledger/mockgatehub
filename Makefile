@@ -1,19 +1,18 @@
-.PHONY: help test unit-tests testenv-tests e2e-tests legacy-testenv-tests coverage build lint clean
+.PHONY: help test unit-tests e2e-tests coverage build lint clean
 
 help:
 	@echo "MockGatehub Test Commands"
 	@echo ""
-	@echo "test              Run unit tests + e2e harness"
+	@echo "test              Run unit tests + feature e2e tests"
 	@echo "unit-tests        Run unit tests only"
-	@echo "testenv-tests     Run e2e harness (docker-compose)"
-	@echo "e2e-tests         Run e2e harness (docker-compose)"
+	@echo "e2e-tests         Run feature (godog) e2e tests"
 	@echo "coverage          Run unit tests with coverage report"
 	@echo "build             Build the mockgatehub binary"
 	@echo "lint              Run linter (gofmt, go vet)"
 	@echo "clean             Clean up build artifacts and test binaries"
 	@echo ""
 
-# Run all tests: unit tests + e2e harness
+# Run all tests: unit tests + feature tests
 test: unit-tests e2e-tests
 	@echo ""
 	@echo "✅ All tests completed"
@@ -23,12 +22,9 @@ unit-tests:
 	@echo "Running unit tests..."
 	@go test -v ./... -cover
 
-# Run e2e harness (docker-compose backed)
-testenv-tests: e2e-tests
-
 e2e-tests:
-	@echo "Running e2e harness (docker-compose)..."
-	@cd testenv && docker compose build --no-cache mockgatehub && go run e2e_main.go client.go fixtures.go scenarios_*.go services.go types.go
+	@echo "Running feature e2e tests (godog)..."
+	@go test -tags e2e -v -count=1 ./testenv/ -run TestFeatures
 
 # Run tests with coverage report
 coverage:

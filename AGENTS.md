@@ -81,7 +81,6 @@ mockgatehub/
 │       └── logger.go         # Simple logger setup
 ├── testenv/                   # Isolated integration test environment
 │   ├── docker-compose.yml    # Test-only compose (ports 28080, 26380)
-│   ├── e2e_main.go           # E2E test setup and teardown
 │   ├── godog_test.go         # BDD-style E2E tests
 │   ├── .gitignore            # Ignore go.mod/go.sum
 │   └── README.md             # Test environment documentation
@@ -152,7 +151,7 @@ Pre-creates two test users with balances:
 
 **Format**:
 ```
-signature = HMAC-SHA256(timestamp + method + path + body, secret)
+signature = HMAC-SHA256(timestamp_ms|method|full_url|body, secret)
 ```
 
 **Request Headers**:

@@ -7,7 +7,6 @@ This directory contains an isolated test environment for running MockGatehub int
 ```
 testenv/
 ├── docker-compose.yml              # Isolated compose environment
-├── e2e_main.go                     # E2E test setup and lifecycle management
 ├── godog_test.go                   # BDD-style E2E tests with Godog
 └── README.md                       # This file
 ```
@@ -15,7 +14,7 @@ testenv/
 ## Quick Start
 
 ```bash
-go test ./...
+go test -tags e2e -v -count=1 ./testenv/ -run TestFeatures
 ```
 
 The tests will:
@@ -73,7 +72,7 @@ All tests pass against the isolated test environment.
 - **Docker and Docker Compose** (for containers)
 - **MockGatehub Docker image** built as `local-mockgatehub`
 
-No additional tools needed - the Go script handles all HTTP requests and JSON parsing.
+No additional tools needed - the Godog tests handle all HTTP requests and assertions.
 
 ## Building the Docker Image
 
@@ -100,8 +99,7 @@ docker build -f packages/mockgatehub/Dockerfile -t local-mockgatehub .
 
 **Go issues:**
 - Ensure Go 1.24+: `go version`
-- If `go run` fails, the script doesn't need a go.mod (it's a single-file program)
-- On first run, Go will download standard library packages automatically
+- If tests fail to start services, check Docker daemon and port availability
 
 ## Manual Usage
 
