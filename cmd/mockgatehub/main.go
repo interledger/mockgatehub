@@ -223,6 +223,7 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 
 		// Handlers for additional cards
 		r.Post("/accounts/{accountID}/cards", h.OrderAdditionalCard)
+		r.Post("/cards/{accountID}/card", h.OrderAdditionalCard)
 
 		// Card handlers - note: order matters for chi routing
 		r.Get("/cards/{customerID}", h.ListCards)

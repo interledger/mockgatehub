@@ -14,23 +14,33 @@ import (
 )
 
 type TestContext struct {
-	client           *http.Client
-	baseURL          string
-	appID            string
-	appSecret        string
-	lastResponse     *http.Response
-	lastResponseBody []byte
-	lastError        error
-	userID           string
-	walletAddress    string
-	previousAddress  string
-	accessToken      string
-	iframeToken      string
-	kycToken         string
-	email            string
-	customerID       string
-	cardID           string
-	transactionID    string
+	client            *http.Client
+	baseURL           string
+	appID             string
+	appSecret         string
+	signatureTime     string
+	signatureBody     string
+	signatureBase     string
+	signatureURL      string
+	signatureOverride string
+	signatureHeaders  map[string]string
+	pendingMethod     string
+	pendingPath       string
+	pendingBody       string
+	pendingMode       string
+	lastResponse      *http.Response
+	lastResponseBody  []byte
+	lastError         error
+	userID            string
+	walletAddress     string
+	previousAddress   string
+	accessToken       string
+	iframeToken       string
+	kycToken          string
+	email             string
+	customerID        string
+	cardID            string
+	transactionID     string
 }
 
 func (tc *TestContext) Reset() {
@@ -38,6 +48,16 @@ func (tc *TestContext) Reset() {
 	tc.baseURL = "http://localhost:25151"
 	tc.appID = ""
 	tc.appSecret = ""
+	tc.signatureTime = ""
+	tc.signatureBody = ""
+	tc.signatureBase = ""
+	tc.signatureURL = ""
+	tc.signatureOverride = ""
+	tc.signatureHeaders = nil
+	tc.pendingMethod = ""
+	tc.pendingPath = ""
+	tc.pendingBody = ""
+	tc.pendingMode = ""
 	tc.userID = ""
 	tc.walletAddress = ""
 	tc.accessToken = ""
@@ -45,12 +65,68 @@ func (tc *TestContext) Reset() {
 	tc.kycToken = ""
 }
 
-func (tc *TestContext) generateHMAC(method, path, body string) string {
-	timestamp := fmt.Sprintf("%d", time.Now().Unix())
-	payload := timestamp + method + path + body
+func (tc *TestContext) generateHMAC(timestamp, method, fullURL, body string) string {
+	payload := fmt.Sprintf("%s|%s|%s|%s", timestamp, method, fullURL, body)
+	payload = strings.Trim(payload, "|")
 	h := hmac.New(sha256.New, []byte(tc.appSecret))
 	h.Write([]byte(payload))
 	return hex.EncodeToString(h.Sum(nil))
+}
+
+func computeHMAC(secret, payload string) string {
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(payload))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func (tc *TestContext) buildBaseString(template string) string {
+	base := template
+	if tc.signatureTime != "" {
+		base = strings.ReplaceAll(base, "timestamp_ms", tc.signatureTime)
+	}
+	if tc.signatureBody != "" {
+		base = strings.ReplaceAll(base, "{body}", tc.signatureBody)
+	}
+	return tc.replacePlaceholders(base)
+}
+
+func (tc *TestContext) requestRaw(method, path, bodyStr, contentType string, headers map[string]string) (*http.Response, error) {
+	path = tc.replacePlaceholders(path)
+	url := tc.baseURL + path
+
+	var bodyBytes []byte
+	if bodyStr != "" {
+		bodyBytes = []byte(bodyStr)
+	}
+
+	req, err := http.NewRequest(method, url, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, err
+	}
+
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := tc.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	respBody, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return nil, err
+	}
+
+	tc.lastResponse = resp
+	tc.lastResponse.Body = io.NopCloser(bytes.NewReader(respBody))
+	tc.lastResponseBody = respBody
+
+	return resp, nil
 }
 
 func (tc *TestContext) replacePlaceholders(path string) string {
@@ -88,9 +164,10 @@ func (tc *TestContext) request(method, path string, body interface{}, headers ma
 
 	// Add HMAC headers if appSecret is set
 	if tc.appSecret != "" {
+		timestamp := fmt.Sprintf("%d", time.Now().UnixMilli())
 		req.Header.Set("x-gatehub-app-id", tc.appID)
-		req.Header.Set("x-gatehub-timestamp", fmt.Sprintf("%d", time.Now().Unix()))
-		req.Header.Set("x-gatehub-signature", tc.generateHMAC(method, path, bodyStr))
+		req.Header.Set("x-gatehub-timestamp", timestamp)
+		req.Header.Set("x-gatehub-signature", tc.generateHMAC(timestamp, method, url, bodyStr))
 	}
 
 	// Add custom headers
@@ -139,9 +216,10 @@ func (tc *TestContext) requestForm(method, path string, formData map[string]stri
 
 	// Add HMAC headers if appSecret is set
 	if tc.appSecret != "" {
+		timestamp := fmt.Sprintf("%d", time.Now().UnixMilli())
 		req.Header.Set("x-gatehub-app-id", tc.appID)
-		req.Header.Set("x-gatehub-timestamp", fmt.Sprintf("%d", time.Now().Unix()))
-		req.Header.Set("x-gatehub-signature", tc.generateHMAC(method, path, bodyStr))
+		req.Header.Set("x-gatehub-timestamp", timestamp)
+		req.Header.Set("x-gatehub-signature", tc.generateHMAC(timestamp, method, url, bodyStr))
 	}
 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -177,8 +255,8 @@ func (tc *TestContext) serviceURLIs(url string) error {
 }
 
 func (tc *TestContext) sendGetRequestWithHMAC(path string) error {
-	tc.appID = "test-app-id"
-	tc.appSecret = "test-app-secret"
+	tc.appID = "local-test-app-id"
+	tc.appSecret = "local-test-app-secret"
 	resp, err := tc.request("GET", path, nil, nil)
 	if err != nil {
 		tc.lastError = err
@@ -263,57 +341,307 @@ func (tc *TestContext) managedFlagTrue() error {
 	return nil
 }
 
+// ============ SIGNATURE AUTH STEPS ============
+
+func (tc *TestContext) cleanMockGatehubInstanceWithAuthenticationEnforced() error {
+	tc.Reset()
+	return nil
+}
+
+func (tc *TestContext) validCredentialsWithAppIdAndSecret(appID, secret string) error {
+	tc.appID = appID
+	tc.appSecret = secret
+	return nil
+}
+
+func (tc *TestContext) currentTimestampInMilliseconds() error {
+	tc.signatureTime = fmt.Sprintf("%d", time.Now().UnixMilli())
+	return nil
+}
+
+func (tc *TestContext) fixedTimestampValue(value string) error {
+	tc.signatureTime = value
+	return nil
+}
+
+func (tc *TestContext) bodyIs(body string) error {
+	tc.signatureBody = body
+	return nil
+}
+
+func (tc *TestContext) baseStringIs(template string) error {
+	tc.signatureBase = template
+	return nil
+}
+
+func (tc *TestContext) baseStringWithNoBodyComponent(template string) error {
+	tc.signatureBase = template
+	return nil
+}
+
+func (tc *TestContext) baseStringUsingPathOnly(template string) error {
+	tc.signatureBase = template
+	return nil
+}
+
+func (tc *TestContext) baseStringUsingOldSimpleFormat(template string) error {
+	tc.signatureBase = template
+	return nil
+}
+
+func (tc *TestContext) baseStringIncludesQueryString() error {
+	return nil
+}
+
+func (tc *TestContext) baseStringUsesURL(url string) error {
+	tc.signatureURL = url
+	return nil
+}
+
+func (tc *TestContext) signatureComputedFrom(baseTemplate string) error {
+	base := tc.buildBaseString(baseTemplate)
+	tc.signatureOverride = computeHMAC(tc.appSecret, base)
+	return nil
+}
+
+func (tc *TestContext) signatureComputedUsingSeconds(seconds string) error {
+	base := fmt.Sprintf("%s|POST|http://localhost:25151/auth/v1/users/managed|%s", seconds, tc.signatureBody)
+	base = strings.Trim(base, "|")
+	tc.signatureOverride = computeHMAC(tc.appSecret, base)
+	return nil
+}
+
+func (tc *TestContext) requestIncludesHeaderXForwardedProto(value string) error {
+	if tc.signatureHeaders == nil {
+		tc.signatureHeaders = map[string]string{}
+	}
+	tc.signatureHeaders["X-Forwarded-Proto"] = value
+	return tc.maybeSendPendingRequest()
+}
+
+func (tc *TestContext) requestIncludesHeaderXForwardedHost(value string) error {
+	if tc.signatureHeaders == nil {
+		tc.signatureHeaders = map[string]string{}
+	}
+	tc.signatureHeaders["X-Forwarded-Host"] = value
+	return tc.maybeSendPendingRequest()
+}
+
+func (tc *TestContext) maybeSendPendingRequest() error {
+	if tc.pendingMethod == "" {
+		return nil
+	}
+	if tc.signatureHeaders == nil {
+		return nil
+	}
+	if tc.signatureHeaders["X-Forwarded-Proto"] == "" || tc.signatureHeaders["X-Forwarded-Host"] == "" {
+		return nil
+	}
+	err := tc.sendSignedRequest(tc.pendingMethod, tc.pendingPath, tc.pendingBody, tc.pendingMode, "", "", "", false, false, false)
+	if err != nil {
+		return err
+	}
+	tc.pendingMethod = ""
+	tc.pendingPath = ""
+	tc.pendingBody = ""
+	tc.pendingMode = ""
+	return nil
+}
+
+func (tc *TestContext) responseContainsUserID() error {
+	var result map[string]interface{}
+	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
+		return err
+	}
+	if id, ok := result["id"].(string); ok && id != "" {
+		return nil
+	}
+	if id, ok := result["user_id"].(string); ok && id != "" {
+		return nil
+	}
+	return fmt.Errorf("no user id in response")
+}
+
+func (tc *TestContext) responseStatusIsNot(status int) error {
+	if tc.lastResponse == nil {
+		return fmt.Errorf("no response")
+	}
+	if tc.lastResponse.StatusCode == status {
+		return fmt.Errorf("expected status not %d, got %d", status, tc.lastResponse.StatusCode)
+	}
+	return nil
+}
+
+func (tc *TestContext) sendSignedRequest(method, path, bodyStr, mode, appIDOverride, secretOverride, timestampOverride string, omitAppID, omitTimestamp, omitSignature bool) error {
+	path = tc.replacePlaceholders(path)
+	url := tc.baseURL + path
+
+	if timestampOverride == "" {
+		if tc.signatureTime == "" {
+			tc.signatureTime = fmt.Sprintf("%d", time.Now().UnixMilli())
+		}
+		timestampOverride = tc.signatureTime
+	}
+
+	appID := tc.appID
+	if appIDOverride != "" {
+		appID = appIDOverride
+	}
+	secret := tc.appSecret
+	if secretOverride != "" {
+		secret = secretOverride
+	}
+
+	signURL := url
+	if tc.signatureURL != "" {
+		signURL = tc.signatureURL
+	}
+	if mode == "path" {
+		signURL = path
+	}
+
+	signature := tc.signatureOverride
+	if signature == "" {
+		if mode == "simple" {
+			base := timestampOverride + method + path + bodyStr
+			signature = computeHMAC(secret, base)
+		} else {
+			base := fmt.Sprintf("%s|%s|%s|%s", timestampOverride, method, signURL, bodyStr)
+			base = strings.Trim(base, "|")
+			signature = computeHMAC(secret, base)
+		}
+	}
+
+	headers := map[string]string{}
+	for k, v := range tc.signatureHeaders {
+		headers[k] = v
+	}
+	if !omitAppID {
+		headers["x-gatehub-app-id"] = appID
+	}
+	if !omitTimestamp {
+		headers["x-gatehub-timestamp"] = timestampOverride
+	}
+	if !omitSignature {
+		headers["x-gatehub-signature"] = signature
+	}
+
+	contentType := ""
+	if bodyStr != "" {
+		contentType = "application/json"
+	}
+
+	_, err := tc.requestRaw(method, path, bodyStr, contentType, headers)
+
+	tc.signatureOverride = ""
+	tc.signatureURL = ""
+	tc.signatureHeaders = nil
+
+	return err
+}
+
+func (tc *TestContext) postSignedUsingFullURL(path, body string) error {
+	return tc.sendSignedRequest("POST", path, body, "full", "", "", "", false, false, false)
+}
+
+func (tc *TestContext) getSignedUsingFullURL(path string) error {
+	return tc.sendSignedRequest("GET", path, "", "full", "", "", "", false, false, false)
+}
+
+func (tc *TestContext) postSignedUsingFullURLWithQuery(path, body string) error {
+	return tc.sendSignedRequest("POST", path, body, "full", "", "", "", false, false, false)
+}
+
+func (tc *TestContext) postSignedUsingProxiedURL(path, body string) error {
+	tc.pendingMethod = "POST"
+	tc.pendingPath = path
+	tc.pendingBody = body
+	tc.pendingMode = "full"
+	return tc.maybeSendPendingRequest()
+}
+
+func (tc *TestContext) postSignedUsingPathOnly(path, body string) error {
+	return tc.sendSignedRequest("POST", path, body, "path", "", "", "", false, false, false)
+}
+
+func (tc *TestContext) postSignedUsingSimpleFormat(path, body string) error {
+	return tc.sendSignedRequest("POST", path, body, "simple", "", "", "", false, false, false)
+}
+
+func (tc *TestContext) postWithoutSignatureHeader(path, body string) error {
+	return tc.sendSignedRequest("POST", path, body, "full", "", "", "", false, false, true)
+}
+
+func (tc *TestContext) postWithoutTimestampHeader(path, body string) error {
+	return tc.sendSignedRequest("POST", path, body, "full", "", "", "", false, true, false)
+}
+
+func (tc *TestContext) postWithoutAppIDHeader(path, body string) error {
+	return tc.sendSignedRequest("POST", path, body, "full", "", "", "", true, false, false)
+}
+
+func (tc *TestContext) postWithUnknownAppID(path, body, appID string) error {
+	return tc.sendSignedRequest("POST", path, body, "full", appID, "", "", false, false, false)
+}
+
+func (tc *TestContext) postSignedWithSecret(path, body, secret string) error {
+	return tc.sendSignedRequest("POST", path, body, "full", "", secret, "", false, false, false)
+}
+
+func (tc *TestContext) postSignedWithTimestamp(path, timestamp string) error {
+	return tc.sendSignedRequest("POST", path, tc.signatureBody, "full", "", "", timestamp, false, false, false)
+}
+
+func (tc *TestContext) getHealthWithoutHMAC() error {
+	_, err := tc.requestRaw("GET", "/health", "", "", nil)
+	return err
+}
+
+func (tc *TestContext) getRootWithoutHMAC() error {
+	if tc.userID == "" {
+		if err := tc.existingManagedUserGeneric(); err != nil {
+			return err
+		}
+	}
+	body := map[string]interface{}{"scope": []string{"auth"}}
+	headers := map[string]string{"x-gatehub-managed-user-uuid": tc.userID}
+	_, err := tc.request("POST", "/auth/v1/tokens?clientId=test-client", body, headers)
+	if err != nil {
+		return err
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
+		return err
+	}
+	token, _ := result["token"].(string)
+	if token == "" {
+		return fmt.Errorf("missing token for root request")
+	}
+
+	path := fmt.Sprintf("/?paymentType=onboarding&bearer=%s", token)
+	_, err = tc.requestRaw("GET", path, "", "", nil)
+	return err
+}
+
+func (tc *TestContext) postIframeSubmitWithoutHMAC() error {
+	if tc.userID == "" {
+		if err := tc.existingManagedUserGeneric(); err != nil {
+			return err
+		}
+	}
+
+	body := fmt.Sprintf("user_id=%s&first_name=Test&last_name=User&dob=1990-01-01&address=123+Main+St&city=NY&country=USA&risk_level=low", tc.userID)
+	_, err := tc.requestRaw("POST", "/iframe/submit", body, "application/x-www-form-urlencoded", nil)
+	return err
+}
+
 // ============ USER/TOKEN STEPS ============
 
-func (tc *TestContext) existingManagedUser(email string) error {
-	tc.email = email
-	body := map[string]string{"email": email}
-	resp, err := tc.request("POST", "/auth/v1/users/managed", body, nil)
-	if err != nil {
-		return err
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	if id, ok := result["id"].(string); ok {
-		tc.userID = id
-	}
-
-	tc.lastResponse = resp
-	return nil
-}
-
-func (tc *TestContext) postWithCredentials(path, username, password string) error {
-	body := map[string]string{"username": username, "password": password}
-	resp, err := tc.request("POST", path, body, nil)
-	if err != nil {
-		return err
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	if token, ok := result["access_token"].(string); ok {
-		tc.accessToken = token
-	}
-
-	tc.lastResponse = resp
-	return nil
-}
-
-func (tc *TestContext) responseHasAccessToken() error {
-	if tc.accessToken == "" {
-		return fmt.Errorf("no access_token in response")
-	}
-	return nil
-}
-
 func (tc *TestContext) existingManagedUserGeneric() error {
+	if tc.appSecret == "" {
+		tc.hmacHeaders("local-test-app-id", "local-test-app-secret")
+	}
 	body := map[string]string{"email": fmt.Sprintf("user%d@example.com", time.Now().UnixNano())}
 	resp, err := tc.request("POST", "/auth/v1/users/managed", body, nil)
 	if err != nil {
@@ -359,48 +687,6 @@ func (tc *TestContext) existingManagedUserWithKYC(kycState string) error {
 		_, _ = tc.requestForm("POST", "/iframe/submit", submitBody)
 	}
 
-	return nil
-}
-
-func (tc *TestContext) postWithScopeAndHeader(path, scope string) error {
-	headers := map[string]string{
-		"x-gatehub-managed-user-uuid": tc.userID,
-	}
-	scopes := strings.Split(strings.Trim(scope, "\""), ",")
-	for i := range scopes {
-		scopes[i] = strings.TrimSpace(scopes[i])
-		scopes[i] = strings.Trim(scopes[i], "\"")
-	}
-	body := map[string]interface{}{
-		"scope": scopes,
-	}
-	resp, err := tc.request("POST", path, body, headers)
-	if err != nil {
-		return err
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	if token, ok := result["token"].(string); ok {
-		tc.iframeToken = token
-	}
-
-	tc.lastResponse = resp
-	return nil
-}
-
-func (tc *TestContext) responseHasTokenPrefix(prefix string) error {
-	if !strings.HasPrefix(tc.iframeToken, prefix) {
-		return fmt.Errorf("expected token to start with %s, got %s", prefix, tc.iframeToken)
-	}
-	return nil
-}
-
-func (tc *TestContext) tokenReusableAsBearer() error {
-	// Token is stored for later use
 	return nil
 }
 
@@ -464,15 +750,6 @@ func (tc *TestContext) getEndpoint(path string) error {
 	return nil
 }
 
-func (tc *TestContext) getEndpointBalance(path string) error {
-	resp, err := tc.request("GET", path, nil, nil)
-	if err != nil {
-		return err
-	}
-	tc.lastResponse = resp
-	return nil
-}
-
 func (tc *TestContext) responseIsHTMLMentioning(text1, text2 string) error {
 	if !strings.Contains(string(tc.lastResponseBody), text1) || !strings.Contains(string(tc.lastResponseBody), text2) {
 		return fmt.Errorf("expected HTML to mention %s and %s", text1, text2)
@@ -480,97 +757,10 @@ func (tc *TestContext) responseIsHTMLMentioning(text1, text2 string) error {
 	return nil
 }
 
-func (tc *TestContext) userInActionRequired() error {
-	// Create user with action_required state
-	body := map[string]string{"email": fmt.Sprintf("user%d@example.com", time.Now().UnixNano())}
-	resp, err := tc.request("POST", "/auth/v1/users/managed", body, nil)
-	if err != nil {
-		return err
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	if id, ok := result["id"].(string); ok {
-		tc.userID = id
-	}
-
-	// Start KYC to set state to action_required
-	path := fmt.Sprintf("/id/v1/users/%s/hubs/gw", tc.userID)
-	_, err = tc.request("POST", path, nil, nil)
-	tc.lastResponse = resp
-	return err
-}
-
-func (tc *TestContext) postKYCForm(path, sep, riskLevel string) error {
-	// Post to iframe submit using form encoding
-	body := map[string]string{
-		"first_name": "John",
-		"last_name":  "Doe",
-		"dob":        "1990-01-01",
-		"address":    "123 Main St",
-		"city":       "Anytown",
-		"country":    "US",
-		"risk_level": riskLevel,
-	}
-	resp, err := tc.requestForm("POST", path, body)
-	if err != nil {
-		return err
-	}
-	tc.lastResponse = resp
-	return nil
-}
-
-func (tc *TestContext) postKYCFormSimple(path, riskLevel string) error {
-	// Post to iframe submit using form encoding
-	body := map[string]string{
-		"first_name": "John",
-		"last_name":  "Doe",
-		"dob":        "1990-01-01",
-		"address":    "123 Main St",
-		"city":       "Anytown",
-		"country":    "US",
-		"risk_level": riskLevel,
-	}
-	resp, err := tc.requestForm("POST", path, body)
-	if err != nil {
-		return err
-	}
-	tc.lastResponse = resp
-	return nil
-}
-
-func (tc *TestContext) getReturnsKYCState(path, kycState string) error {
-	resp, err := tc.request("GET", path, nil, nil)
-	if err != nil {
-		return err
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	if state, ok := result["kyc_state"].(string); !ok || state != kycState {
-		return fmt.Errorf("expected kyc_state %s, got %v", kycState, result["kyc_state"])
-	}
-
-	tc.lastResponse = resp
-	return nil
-}
-
 // ============ WALLET STEPS ============
 
 func (tc *TestContext) authenticatedRequest() error {
 	tc.hmacHeaders("local-test-app-id", "local-test-app-secret")
-	return nil
-}
-
-func (tc *TestContext) authenticatedRequests() error {
-	tc.appID = "local-test-app-id"
-	tc.appSecret = "local-test-app-secret"
 	return nil
 }
 
@@ -636,254 +826,7 @@ func (tc *TestContext) firstWalletStartsWith(prefix string) error {
 	return nil
 }
 
-func (tc *TestContext) addressStored() error {
-	tc.previousAddress = tc.walletAddress
-	return nil
-}
-
-func (tc *TestContext) previousWalletAddress() error {
-	tc.walletAddress = tc.previousAddress
-	return nil
-}
-
-func (tc *TestContext) getAgain(path string) error {
-	return tc.getEndpoint(path)
-}
-
-func (tc *TestContext) sameWalletAddressReturned() error {
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	wallets, ok := result["wallets"].([]interface{})
-	if !ok || len(wallets) == 0 {
-		return fmt.Errorf("no wallets found")
-	}
-
-	wallet, ok := wallets[0].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("wallet is not an object")
-	}
-
-	address, ok := wallet["address"].(string)
-	if !ok {
-		return fmt.Errorf("no address in wallet")
-	}
-
-	if address != tc.previousAddress {
-		return fmt.Errorf("expected same wallet %s, got %s", tc.previousAddress, address)
-	}
-
-	return nil
-}
-
-func (tc *TestContext) postWithNameAndCurrency(path, name, currency string) error {
-	body := map[string]string{
-		"name":     name,
-		"currency": currency,
-	}
-	resp, err := tc.request("POST", path, body, nil)
-	if err != nil {
-		return err
-	}
-	tc.lastResponse = resp
-	return nil
-}
-
-func (tc *TestContext) newWalletAddressStarts(prefix string) error {
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	address, ok := result["address"].(string)
-	if !ok {
-		return fmt.Errorf("no address in response")
-	}
-
-	if !strings.HasPrefix(address, prefix) {
-		return fmt.Errorf("expected address to start with %s, got %s", prefix, address)
-	}
-
-	tc.walletAddress = address
-	return nil
-}
-
-func (tc *TestContext) postWalletGlobal(path string) error {
-	body := map[string]interface{}{
-		"user_id": tc.userID,
-		"name":    "Test Wallet",
-	}
-	resp, err := tc.request("POST", path, body, nil)
-	if err != nil {
-		return err
-	}
-	tc.lastResponse = resp
-	return nil
-}
-
-func (tc *TestContext) walletBelongsToUser() error {
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	userID, ok := result["user_id"].(string)
-	if !ok || userID != tc.userID {
-		return fmt.Errorf("expected user_id %s, got %v", tc.userID, result["user_id"])
-	}
-
-	return nil
-}
-
-func (tc *TestContext) haveWalletAddress() error {
-	if tc.walletAddress == "" {
-		return fmt.Errorf("no wallet address stored")
-	}
-	return nil
-}
-
-func (tc *TestContext) responseHasAllCurrencies() error {
-	var result []interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	if len(result) != 11 {
-		return fmt.Errorf("expected 11 currencies, got %d, response: %s", len(result), string(tc.lastResponseBody))
-	}
-
-	return nil
-}
-
-func (tc *TestContext) eachEntryHasCurrencyAndVault() error {
-	var result []map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	for _, entry := range result {
-		// Check for vault object (which contains uuid)
-		vault, ok := entry["vault"].(map[string]interface{})
-		if !ok {
-			// Try old format with vault_uuid
-			if _, ok := entry["vault_uuid"]; !ok {
-				return fmt.Errorf("missing vault object or vault_uuid field")
-			}
-			continue
-		}
-
-		// Vault object should have uuid
-		if _, ok := vault["uuid"]; !ok {
-			return fmt.Errorf("vault object missing uuid field")
-		}
-	}
-
-	return nil
-}
-
-func (tc *TestContext) walletWithDeposits(amount, currency string) error {
-	// Create transaction
-	vaultMap := map[string]string{
-		"USD": "450d2156-132a-4d3f-88c5-74822547658d",
-		"EUR": "a09a0a2c-1a3a-44c5-a1b9-603a6eea9341",
-		"GBP": "992b932d-7e9e-44b0-90ea-b82a530b6784",
-	}
-	vault := vaultMap[currency]
-	if vault == "" {
-		vault = "450d2156-132a-4d3f-88c5-74822547658d"
-	}
-
-	body := map[string]interface{}{
-		"user_id":           tc.userID,
-		"amount":            amount,
-		"currency":          currency,
-		"receiving_address": tc.walletAddress,
-		"type":              1,
-		"deposit_type":      "external",
-		"vault_uuid":        vault,
-	}
-	_, err := tc.request("POST", "/core/v1/transactions", body, nil)
-	return err
-}
-
-func (tc *TestContext) currencyBalanceShows(currency, amount string) error {
-	var result []map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	for _, entry := range result {
-		if curr, ok := entry["currency"].(string); ok && curr == currency {
-			if balance, ok := entry["balance"].(float64); ok {
-				if fmt.Sprintf("%.2f", balance) == amount {
-					return nil
-				}
-			}
-		}
-	}
-
-	return fmt.Errorf("expected %s balance %s, got %s", currency, amount, string(tc.lastResponseBody))
-}
-
-func (tc *TestContext) vaultMetadataPresent(currency string) error {
-	var result []map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	for _, entry := range result {
-		if curr, ok := entry["currency"].(string); ok && curr == currency {
-			if _, ok := entry["vault_uuid"]; ok {
-				return nil
-			}
-		}
-	}
-
-	return fmt.Errorf("no vault metadata for %s", currency)
-}
-
 // ============ TRANSACTION STEPS ============
-
-func (tc *TestContext) managedUserWithWallet() error {
-	body := map[string]string{"email": fmt.Sprintf("user%d@example.com", time.Now().UnixNano())}
-	resp, err := tc.request("POST", "/auth/v1/users/managed", body, nil)
-	if err != nil {
-		return err
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	if id, ok := result["id"].(string); ok {
-		tc.userID = id
-	}
-
-	// Get wallet
-	path := fmt.Sprintf("/core/v1/users/%s", tc.userID)
-	resp, err = tc.request("GET", path, nil, nil)
-	if err != nil {
-		return err
-	}
-
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	if wallets, ok := result["wallets"].([]interface{}); ok && len(wallets) > 0 {
-		if wallet, ok := wallets[0].(map[string]interface{}); ok {
-			if addr, ok := wallet["address"].(string); ok {
-				tc.walletAddress = addr
-			}
-		}
-	}
-
-	tc.lastResponse = resp
-	return nil
-}
 
 func (tc *TestContext) iframeTokenWithScope(scope string) error {
 	scopes := strings.Split(strings.Trim(scope, "\""), ",")
@@ -915,22 +858,6 @@ func (tc *TestContext) iframeTokenWithScope(scope string) error {
 	return nil
 }
 
-func (tc *TestContext) postWithAmountCurrencyAuth(path, amount, currency, authHeader string) error {
-	body := map[string]interface{}{
-		"amount":   amount,
-		"currency": currency,
-	}
-	headers := map[string]string{
-		"Authorization": authHeader,
-	}
-	resp, err := tc.request("POST", path, body, headers)
-	if err != nil {
-		return err
-	}
-	tc.lastResponse = resp
-	return nil
-}
-
 func (tc *TestContext) responseStatusWithStatus(status int, statusStr string) error {
 	if tc.lastResponse.StatusCode != status {
 		return fmt.Errorf("expected status %d, got %d", status, tc.lastResponse.StatusCode)
@@ -945,47 +872,6 @@ func (tc *TestContext) responseStatusWithStatus(status int, statusStr string) er
 		return fmt.Errorf("expected status %s, got %v", statusStr, result["status"])
 	}
 
-	return nil
-}
-
-func (tc *TestContext) balanceIncreases(currency, amount string) error {
-	path := fmt.Sprintf("/core/v1/wallets/%s/balance", tc.walletAddress)
-	_, err := tc.request("GET", path, nil, nil)
-	if err != nil {
-		return err
-	}
-
-	var result []map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	for _, entry := range result {
-		if curr, ok := entry["currency"].(string); ok && curr == currency {
-			if balance, ok := entry["balance"].(float64); ok {
-				if fmt.Sprintf("%.2f", balance) == amount {
-					return nil
-				}
-			}
-		}
-	}
-
-	return fmt.Errorf("expected %s balance %s", currency, amount)
-}
-
-func (tc *TestContext) postTransactionHosted(path string, amount float64, currency string, txType int, depositType string) error {
-	body := map[string]interface{}{
-		"user_id":      tc.userID,
-		"amount":       amount,
-		"currency":     currency,
-		"type":         txType,
-		"deposit_type": depositType,
-	}
-	resp, err := tc.request("POST", path, body, nil)
-	if err != nil {
-		return err
-	}
-	tc.lastResponse = resp
 	return nil
 }
 
@@ -1033,25 +919,6 @@ func (tc *TestContext) amountEchoes(amount float64) error {
 	return nil
 }
 
-func (tc *TestContext) statusCompleted(statusInt int, statusStr string) error {
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	// Check for integer status
-	if status, ok := result["status"].(float64); ok && int(status) == statusInt {
-		return nil
-	}
-
-	// Check for string status
-	if status, ok := result["status"].(string); ok && status == statusStr {
-		return nil
-	}
-
-	return fmt.Errorf("expected status %d or %s, got %v", statusInt, statusStr, result["status"])
-}
-
 func (tc *TestContext) depositTypeIs(depositType string) error {
 	var result map[string]interface{}
 	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
@@ -1060,43 +927,6 @@ func (tc *TestContext) depositTypeIs(depositType string) error {
 
 	if dt, ok := result["deposit_type"].(string); !ok || dt != depositType {
 		return fmt.Errorf("expected deposit_type %s, got %v", depositType, result["deposit_type"])
-	}
-
-	return nil
-}
-
-func (tc *TestContext) webhookEmitted() error {
-	// Webhook would be emitted asynchronously
-	return nil
-}
-
-func (tc *TestContext) postExternalTransaction(path string, txType int, depositType string, address string, amount float64, currency string) error {
-	body := map[string]interface{}{
-		"type":              txType,
-		"deposit_type":      depositType,
-		"receiving_address": tc.walletAddress,
-		"amount":            amount,
-		"currency":          currency,
-		"vault_uuid":        "450d2156-132a-4d3f-88c5-74822547658d", // USD vault
-	}
-	resp, err := tc.request("POST", path, body, nil)
-	if err != nil {
-		return err
-	}
-	tc.lastResponse = resp
-	return nil
-}
-
-func (tc *TestContext) fieldsStringFormatted() error {
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	for _, field := range []string{"amount", "total_amount", "fee"} {
-		if _, ok := result[field].(string); !ok {
-			return fmt.Errorf("expected %s to be string, got %T", field, result[field])
-		}
 	}
 
 	return nil
@@ -1115,68 +945,7 @@ func (tc *TestContext) statusIsInteger(status int) error {
 	return nil
 }
 
-func (tc *TestContext) transactionCanBeRetrieved(path string) error {
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	var txID string
-	if id, ok := result["id"].(string); ok {
-		txID = id
-	} else if id, ok := result["uuid"].(string); ok {
-		txID = id
-	}
-
-	if txID == "" {
-		return fmt.Errorf("no transaction id")
-	}
-
-	// Get transaction
-	retrievePath := fmt.Sprintf("/core/v1/transactions/%s", txID)
-	_, err := tc.request("GET", retrievePath, nil, nil)
-	return err
-}
-
 // ============ CARD STEPS ============
-
-func (tc *TestContext) managedUserWithKYCState(state string) error {
-	body := map[string]string{"email": fmt.Sprintf("user%d@example.com", time.Now().UnixNano())}
-	resp, err := tc.request("POST", "/auth/v1/users/managed", body, nil)
-	if err != nil {
-		return err
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	if id, ok := result["id"].(string); ok {
-		tc.userID = id
-	}
-
-	// Set KYC state if needed
-	if state == "accepted" {
-		// Start and submit KYC
-		path := fmt.Sprintf("/id/v1/users/%s/hubs/gw", tc.userID)
-		_, _ = tc.request("POST", path, nil, nil)
-
-		submitBody := map[string]string{
-			"first_name": "John",
-			"last_name":  "Doe",
-			"dob":        "1990-01-01",
-			"address":    "123 Main St",
-			"city":       "Anytown",
-			"country":    "US",
-			"risk_level": "low",
-		}
-		_, _ = tc.requestForm("POST", "/iframe/submit", submitBody)
-	}
-
-	tc.lastResponse = resp
-	return nil
-}
 
 func (tc *TestContext) postCardCustomer(path, nameOnCard, accountCode, currency, cardCode string) error {
 	body := map[string]interface{}{
@@ -1325,19 +1094,6 @@ func (tc *TestContext) accountHasCard(status, nameOnCard string, inFuture interf
 	return nil
 }
 
-func (tc *TestContext) cardCreatedWebhookSent() error {
-	// Webhook would be sent asynchronously
-	return nil
-}
-
-func (tc *TestContext) customerWithCard() error {
-	// For stubbed tests: just set a mock customer ID so subsequent steps won't fail
-	if tc.customerID == "" {
-		tc.customerID = "mock-customer-id"
-	}
-	return nil
-}
-
 func (tc *TestContext) getWithManagedUserHeader(path string) error {
 	headers := map[string]string{
 		"x-gatehub-managed-user-uuid": tc.userID,
@@ -1434,11 +1190,6 @@ func (tc *TestContext) responsePaginated() error {
 	return nil
 }
 
-func (tc *TestContext) cardExists() error {
-	// Use existing card
-	return nil
-}
-
 func (tc *TestContext) responseHasCardObject() error {
 	var result map[string]interface{}
 	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
@@ -1468,11 +1219,6 @@ func (tc *TestContext) cardStatusIs(status string) error {
 	return nil
 }
 
-func (tc *TestContext) cardWithStatus(status string) error {
-	// Use existing card with status
-	return nil
-}
-
 func (tc *TestContext) putWithNote(path, note string) error {
 	headers := map[string]string{
 		"x-gatehub-managed-user-uuid": tc.userID,
@@ -1497,8 +1243,8 @@ func (tc *TestContext) cardStatusChangedBackTo(status string) error {
 // ============ RATES STEPS ============
 
 func (tc *TestContext) mockgatehubRunningWithHeaders() error {
-	tc.appID = "test-app-id"
-	tc.appSecret = "test-app-secret"
+	tc.appID = "local-test-app-id"
+	tc.appSecret = "local-test-app-secret"
 	return nil
 }
 
@@ -1563,14 +1309,6 @@ func (tc *TestContext) deleteWithManagedUserHeader(path string) error {
 	return err
 }
 
-func (tc *TestContext) putWithManagedUserHeader(path string) error {
-	headers := map[string]string{
-		"x-gatehub-managed-user-uuid": tc.userID,
-	}
-	_, err := tc.request("PUT", path, nil, headers)
-	return err
-}
-
 func (tc *TestContext) postWithManagedUserHeader(path string) error {
 	headers := map[string]string{
 		"x-gatehub-managed-user-uuid": tc.userID,
@@ -1595,28 +1333,6 @@ func (tc *TestContext) responseContainsTokenStarting(prefix string) error {
 	}
 
 	return nil
-}
-
-func (tc *TestContext) tokenContainsLink() error {
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	// Check for links array
-	if links, ok := result["links"].([]interface{}); ok && len(links) > 0 {
-		return nil
-	}
-
-	// Fallback: check for link or href fields
-	if _, ok := result["link"]; ok {
-		return nil
-	}
-	if _, ok := result["href"]; ok {
-		return nil
-	}
-
-	return fmt.Errorf("no links array, link, or href field in response")
 }
 
 func (tc *TestContext) responseIsArrayOfPending3DSConfirmations(version int) error {
@@ -1698,24 +1414,6 @@ func (tc *TestContext) responseIndicatesDeclined(status string) error {
 	return nil
 }
 
-func (tc *TestContext) transactionStatusChangesTo(status string) error {
-	// This would require fetching the transaction to verify status changed
-	// For now, just verify the response indicates the change
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	// Check if transaction status is in the response
-	if txStatus, ok := result["transactionStatus"].(string); ok {
-		if txStatus != status {
-			return fmt.Errorf("expected transaction status %s, got %s", status, txStatus)
-		}
-	}
-
-	return nil
-}
-
 func (tc *TestContext) responseHasCardProducts() error {
 	var result map[string]interface{}
 	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
@@ -1724,82 +1422,6 @@ func (tc *TestContext) responseHasCardProducts() error {
 
 	if data, ok := result["data"].([]interface{}); !ok || len(data) == 0 {
 		return fmt.Errorf("missing or empty data array")
-	}
-
-	return nil
-}
-
-func (tc *TestContext) eachProductHasRequiredFields() error {
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	data, ok := result["data"].([]interface{})
-	if !ok {
-		return fmt.Errorf("data is not an array")
-	}
-
-	for i, item := range data {
-		product := item.(map[string]interface{})
-		requiredFields := []string{"id", "code", "name", "description", "type", "currency"}
-		for _, field := range requiredFields {
-			if _, ok := product[field]; !ok {
-				return fmt.Errorf("product %d missing field %s", i, field)
-			}
-		}
-	}
-
-	return nil
-}
-
-func (tc *TestContext) productsIncludeAtLeast(product1, product2 string) error {
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	data, ok := result["data"].([]interface{})
-	if !ok {
-		return fmt.Errorf("data is not an array")
-	}
-
-	found := make(map[string]bool)
-	for _, item := range data {
-		product := item.(map[string]interface{})
-		if code, ok := product["code"].(string); ok {
-			if code == product1 || code == product2 {
-				found[code] = true
-			}
-		}
-	}
-
-	if !found[product1] {
-		return fmt.Errorf("product %s not found", product1)
-	}
-	if !found[product2] {
-		return fmt.Errorf("product %s not found", product2)
-	}
-
-	return nil
-}
-
-func (tc *TestContext) eachProductHasTypeEitherOr(type1, type2 string) error {
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	data, ok := result["data"].([]interface{})
-	if !ok {
-		return fmt.Errorf("data is not an array")
-	}
-
-	for i, item := range data {
-		product := item.(map[string]interface{})
-		if productType, ok := product["type"].(string); !ok || (productType != type1 && productType != type2) {
-			return fmt.Errorf("product %d type is neither %s nor %s", i, type1, type2)
-		}
 	}
 
 	return nil
@@ -1822,56 +1444,6 @@ func (tc *TestContext) responseContainsPlasticCardOrder(status, cardType string)
 	}
 	if t, ok := result["type"].(string); !ok || t != cardType {
 		return fmt.Errorf("expected type %s, got %v", cardType, result["type"])
-	}
-
-	return nil
-}
-
-func (tc *TestContext) responseIncludesEstimatedDate(days int) error {
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	if _, ok := result["estimatedDate"]; !ok {
-		return fmt.Errorf("missing estimatedDate")
-	}
-
-	return nil
-}
-
-func (tc *TestContext) cardHasPlasticCreatedFlag() error {
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	if plasticCreated, ok := result["plasticCreated"].(bool); !ok || !plasticCreated {
-		return fmt.Errorf("plasticCreated flag not set to true")
-	}
-
-	return nil
-}
-
-func (tc *TestContext) responseIncludesDeliveryAddress(lineNum int) error {
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	addr, ok := result["deliveryAddress"].(map[string]interface{})
-	if !ok {
-		return fmt.Errorf("missing deliveryAddress object")
-	}
-
-	requiredFields := []string{"firstName", "lastName", "city", "zipCode", "country"}
-	addressLineField := fmt.Sprintf("addressLine%d", lineNum)
-	requiredFields = append(requiredFields, addressLineField)
-
-	for _, field := range requiredFields {
-		if _, ok := addr[field]; !ok {
-			return fmt.Errorf("missing field %s in deliveryAddress", field)
-		}
 	}
 
 	return nil
@@ -1971,64 +1543,6 @@ func (tc *TestContext) dailyOverallLimitChanged(newLimit int) error {
 	return fmt.Errorf("dailyOverall limit not changed to %d", newLimit)
 }
 
-func (tc *TestContext) responseContainsCardTransaction(amount, status string) error {
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	if _, ok := result["transactionId"]; !ok {
-		return fmt.Errorf("missing transactionId")
-	}
-	if _, ok := result["cardId"]; !ok {
-		return fmt.Errorf("missing cardId")
-	}
-	if txAmount, ok := result["transactionAmount"].(string); !ok || txAmount != amount {
-		return fmt.Errorf("expected transactionAmount %s, got %v", amount, result["transactionAmount"])
-	}
-	if s, ok := result["status"].(string); !ok || s != status {
-		return fmt.Errorf("expected status %s, got %v", status, result["status"])
-	}
-
-	return nil
-}
-
-func (tc *TestContext) responseContainsFullTransaction() error {
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	// Check for at least core transaction fields
-	requiredFields := []string{"transactionId", "amount", "status"}
-	for _, field := range requiredFields {
-		if _, ok := result[field]; !ok {
-			return fmt.Errorf("missing field %s", field)
-		}
-	}
-
-	return nil
-}
-
-func (tc *TestContext) transactionIncludesDetails() error {
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	if _, ok := result["merchantName"]; !ok {
-		return fmt.Errorf("missing merchantName")
-	}
-	if _, ok := result["transactionDateTime"]; !ok {
-		return fmt.Errorf("missing transactionDateTime")
-	}
-	if _, ok := result["processingStatus"]; !ok {
-		return fmt.Errorf("missing processingStatus")
-	}
-
-	return nil
-}
-
 func (tc *TestContext) cardNotInListCardsQuery() error {
 	// Get the list of cards
 	headers := map[string]string{
@@ -2087,8 +1601,8 @@ func (tc *TestContext) managedUserWithWalletAddress() error {
 }
 
 func (tc *TestContext) authenticatedRequestsWithHMAC() error {
-	tc.appID = "test-app-id"
-	tc.appSecret = "test-app-secret"
+	tc.appID = "local-test-app-id"
+	tc.appSecret = "local-test-app-secret"
 	return nil
 }
 

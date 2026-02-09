@@ -8,7 +8,7 @@ import (
 )
 
 func startServices() error {
-    cmd := exec.Command("docker", "compose", "-f", "docker-compose.yml", "up", "-d")
+    cmd := exec.Command("docker", "compose", "-f", "docker-compose.yml", "up", "-d", "--build", "--force-recreate")
     cmd.Stdout = nil
     cmd.Stderr = nil
     return cmd.Run()

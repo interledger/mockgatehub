@@ -72,29 +72,24 @@ func Middleware(validCredentials map[string]string) func(next http.Handler) http
 			}
 			r.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
-			// Validate signature using ORIGINAL timestamp (do NOT normalize for signature check)
-			// Signature was generated with the timestamp as sent, so we must validate with the same timestamp
-			valid, err := ValidateSignatureWithAppID(r, secret, appID, timestamp, signature, string(bodyBytes))
-			if !valid {
-				// Log detailed signature validation failure including secrets
-				expectedSimpleSig := GenerateSignature(timestamp, r.Method, r.URL.Path, string(bodyBytes), secret)
-				fullURL := r.URL.Path
+			fullURL := reconstructURL(r)
+			expectedSig := GenerateSignature(timestamp, r.Method, fullURL, string(bodyBytes), secret)
+			if !bytes.Equal([]byte(signature), []byte(expectedSig)) {
+				pathOnlyURL := r.URL.Path
 				if r.URL.RawQuery != "" {
-					fullURL = r.URL.Path + "?" + r.URL.RawQuery
+					pathOnlyURL = r.URL.Path + "?" + r.URL.RawQuery
 				}
-				expectedGatehubSig := GenerateGatehubSignature(timestamp, r.Method, fullURL, string(bodyBytes), secret)
-
+				expectedPathSig := GenerateSignature(timestamp, r.Method, pathOnlyURL, string(bodyBytes), secret)
 				logger.Error("auth failure: signature mismatch",
 					zap.String("method", r.Method),
 					zap.String("path", r.URL.Path),
 					zap.String("app_id", appID),
 					zap.String("received_signature", signature),
-					zap.String("expected_signature_simple", expectedSimpleSig),
-					zap.String("expected_signature_gatehub", expectedGatehubSig),
+					zap.String("expected_signature_full", expectedSig),
+					zap.String("expected_signature_path_only", expectedPathSig),
 					zap.String("secret", secret),
 					zap.String("timestamp", timestamp),
 					zap.String("body", string(bodyBytes)),
-					zap.Error(err),
 				)
 				http.Error(w, `{"error": {"status_code": 401, "status": "Unauthorized"}}`, http.StatusUnauthorized)
 				return
@@ -119,29 +114,24 @@ func getRegisteredAppIDs(validCredentials map[string]string) []string {
 	return appIDs
 }
 
-// ValidateSignatureWithAppID validates signature with explicit parameters
-func ValidateSignatureWithAppID(r *http.Request, secret, appID, timestamp, signature, body string) (bool, error) {
-	// Generate expected signature using simple format
-	method := r.Method
-	path := r.URL.Path
-	expectedSig := GenerateSignature(timestamp, method, path, body, secret)
-
-	// Compare signatures (constant time)
-	if bytes.Equal([]byte(signature), []byte(expectedSig)) {
-		return true, nil
+func reconstructURL(r *http.Request) string {
+	scheme := r.Header.Get("X-Forwarded-Proto")
+	if scheme == "" {
+		if r.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
 	}
 
-	// Try Gatehub backend format: timestamp_ms|method|url|body
-	// This is used by the wallet backend
-	fullURL := r.URL.Path
+	host := r.Header.Get("X-Forwarded-Host")
+	if host == "" {
+		host = r.Host
+	}
+
+	fullURL := scheme + "://" + host + r.URL.Path
 	if r.URL.RawQuery != "" {
-		fullURL = r.URL.Path + "?" + r.URL.RawQuery
+		fullURL += "?" + r.URL.RawQuery
 	}
-	expectedSigGatehub := GenerateGatehubSignature(timestamp, method, fullURL, body, secret)
-
-	if bytes.Equal([]byte(signature), []byte(expectedSigGatehub)) {
-		return true, nil
-	}
-
-	return false, nil
+	return fullURL
 }
