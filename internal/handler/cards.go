@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"net/http"
 	"time"
 
@@ -15,9 +17,19 @@ import (
 	"go.uber.org/zap"
 )
 
-// generateMaskedPan generates a realistic masked PAN
+// generateMaskedPan generates a realistic masked PAN with numeric-only digits
 func generateMaskedPan() string {
-	return fmt.Sprintf("5123%s******%s", utils.GenerateUUID()[:2], utils.GenerateUUID()[:4])
+	return fmt.Sprintf("%s******%s", randomDigits(6), randomDigits(4))
+}
+
+// randomDigits returns a string of n cryptographically random decimal digits
+func randomDigits(n int) string {
+	digits := make([]byte, n)
+	for i := range digits {
+		num, _ := rand.Int(rand.Reader, big.NewInt(10))
+		digits[i] = '0' + byte(num.Int64())
+	}
+	return string(digits)
 }
 
 // CreateCustomer creates a card customer (generic endpoint)
