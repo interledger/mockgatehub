@@ -12,7 +12,7 @@ permissions:
   pull-requests: write
 
 jobs:
-  # Run all tests before releasing
+  # Run unit and integration tests before releasing
   test:
     name: Run Tests
     runs-on: ubuntu-latest
@@ -29,7 +29,7 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
-      - name: Run all tests (unit + e2e)
+      - name: Run unit and integration tests
         run: go test -v -race -coverprofile=coverage.out ./...
 
       - name: Upload coverage
@@ -40,10 +40,30 @@ jobs:
           files: ./coverage.out
           flags: unittests
 
+  # Run e2e tests (requires Docker)
+  e2e:
+    name: Run E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Run e2e tests
+        run: go test -tags e2e -v -count=1 ./testenv/
+
   # Semantic release to determine version and create changelog
   release:
     name: Semantic Release
-    needs: test
+    needs: [test, e2e]
     runs-on: ubuntu-latest
     outputs:
       new_release_published: ${{ steps.semantic.outputs.new_release_published }}

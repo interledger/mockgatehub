@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"testing"
 
 	"mockgatehub/internal/consts"
@@ -14,6 +15,25 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestGenerateMaskedPan verifies masked PAN format is numeric-only with correct structure
+func TestGenerateMaskedPan(t *testing.T) {
+	panPattern := regexp.MustCompile(`^\d{6}\*{6}\d{4}$`)
+
+	for i := 0; i < 100; i++ {
+		pan := generateMaskedPan()
+		assert.Regexp(t, panPattern, pan, "masked PAN should match dddddd******dddd format, got: %s", pan)
+	}
+}
+
+// TestRandomDigits verifies randomDigits returns only decimal digits of correct length
+func TestRandomDigits(t *testing.T) {
+	for _, n := range []int{1, 4, 6, 10} {
+		digits := randomDigits(n)
+		assert.Len(t, digits, n)
+		assert.Regexp(t, regexp.MustCompile(`^\d+$`), digits, "randomDigits(%d) should be all numeric, got: %s", n, digits)
+	}
+}
 
 // TestCreateTransactionExternalDeposit verifies external deposits are created and return correct status
 func TestCreateTransactionExternalDeposit(t *testing.T) {

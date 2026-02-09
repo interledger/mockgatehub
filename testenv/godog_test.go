@@ -1,3 +1,5 @@
+//go:build e2e
+
 package main
 
 import (
@@ -11,8 +13,8 @@ import (
 var opts = godog.Options{
 	Output: colors.Colored(os.Stdout),
 	Format: "progress",
-	Paths:  []string{"../docs/features"},
-	Tags:   "~@skip",
+	Paths:  []string{"../features"},
+	Tags:   "~@skip && ~@stubbed",
 }
 
 func TestFeatures(t *testing.T) {
@@ -93,9 +95,26 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the card status is changed to "([^"]*)"$`, tc.cardStatusChangedTo)
 	ctx.Step(`^the card status is changed back to "([^"]*)"$`, tc.cardStatusChangedBackTo)
 
+	// Card lifecycle setup steps
+	ctx.Step(`^a managed customer with a card exists$`, tc.managedCustomerWithCard)
+	ctx.Step(`^a managed customer with a locked card exists$`, tc.managedCustomerWithLockedCard)
+	ctx.Step(`^a managed customer with a card and transaction exists$`, tc.managedCustomerWithCardAndTransaction)
+	ctx.Step(`^a managed customer with a pending 3DS challenge exists$`, tc.managedCustomerWithPending3DS)
+
+	// Card token and transaction steps
+	ctx.Step(`^I POST (.+) with cardId and managed user UUID header$`, tc.postCardTokenWithManagedUser)
+	ctx.Step(`^the response contains a links array with at least one entry$`, tc.responseContainsLinksArray)
+	ctx.Step(`^I PUT (.+) with managed user UUID header and updated dailyOverall limit (\d+)$`, tc.putCardLimitsWithUpdate)
+	ctx.Step(`^I POST (.+) with cardId, amount "([^"]*)", currency "([^"]*)", and managed user UUID header$`, tc.postCardTransaction)
+	ctx.Step(`^the response contains a card transaction with transactionId and ghResponseCode "([^"]*)"$`, tc.responseContainsCardTransactionWithGH)
+	ctx.Step(`^the response contains the card transaction with transactionId and transactionAmount$`, tc.responseContainsCardTransactionDetails)
+	ctx.Step(`^the response is an array of pending 3DS confirmations$`, tc.responseIsArrayOfPending3DS)
+
 	// Additional card steps
 	ctx.Step(`^I DELETE (.+) with managed user UUID header$`, tc.deleteWithManagedUserHeader)
 	ctx.Step(`^I PUT (.+) with managed user UUID header$`, tc.putWithManagedUserHeader)
+	ctx.Step(`^I POST (.+) with managed user UUID header$`, tc.postWithManagedUserHeader)
+	ctx.Step(`^the response status is (\d+) with status "([^"]*)"$`, tc.responseStatusWithStatus)
 	ctx.Step(`^the response contains a token starting with "([^"]*)"$`, tc.responseContainsTokenStarting)
 	ctx.Step(`^the token contains a link to retrieve encrypted card data$`, tc.tokenContainsLink)
 	ctx.Step(`^the response is an array of pending (\d+)DS confirmations$`, tc.responseIsArrayOfPending3DSConfirmations)

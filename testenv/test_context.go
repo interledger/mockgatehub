@@ -30,6 +30,7 @@ type TestContext struct {
 	email            string
 	customerID       string
 	cardID           string
+	transactionID    string
 }
 
 func (tc *TestContext) Reset() {
@@ -57,6 +58,7 @@ func (tc *TestContext) replacePlaceholders(path string) string {
 	path = strings.ReplaceAll(path, "{customerId}", tc.customerID)
 	path = strings.ReplaceAll(path, "{cardId}", tc.cardID)
 	path = strings.ReplaceAll(path, "{cardID}", tc.cardID)
+	path = strings.ReplaceAll(path, "{transactionId}", tc.transactionID)
 	path = strings.ReplaceAll(path, "{address}", tc.walletAddress)
 	path = strings.ReplaceAll(path, "{iframeToken}", tc.iframeToken)
 	path = strings.ReplaceAll(path, "{token}", tc.kycToken)
@@ -343,8 +345,9 @@ func (tc *TestContext) existingManagedUserWithKYC(kycState string) error {
 		path := fmt.Sprintf("/id/v1/users/%s/hubs/gw", tc.userID)
 		_, _ = tc.request("POST", path, nil, nil)
 
-		// Submit KYC
+		// Submit KYC with user_id included
 		submitBody := map[string]string{
+			"user_id":    tc.userID,
 			"first_name": "John",
 			"last_name":  "Doe",
 			"dob":        "1990-01-01",
@@ -1402,14 +1405,30 @@ func (tc *TestContext) responsePaginated() error {
 		return err
 	}
 
-	if _, ok := result["pageNumber"]; !ok {
-		return fmt.Errorf("missing pageNumber")
+	// Check for nested pagination object (e.g. { "data": [...], "pagination": { ... } })
+	pagination, ok := result["pagination"].(map[string]interface{})
+	if !ok {
+		// Fallback to top-level fields
+		if _, ok := result["pageNumber"]; !ok {
+			return fmt.Errorf("missing pagination object and missing pageNumber")
+		}
+		if _, ok := result["pageSize"]; !ok {
+			return fmt.Errorf("missing pageSize")
+		}
+		if _, ok := result["totalPages"]; !ok {
+			return fmt.Errorf("missing totalPages")
+		}
+		return nil
 	}
-	if _, ok := result["pageSize"]; !ok {
-		return fmt.Errorf("missing pageSize")
+
+	if _, ok := pagination["pageNumber"]; !ok {
+		return fmt.Errorf("missing pageNumber in pagination")
 	}
-	if _, ok := result["totalPages"]; !ok {
-		return fmt.Errorf("missing totalPages")
+	if _, ok := pagination["pageSize"]; !ok {
+		return fmt.Errorf("missing pageSize in pagination")
+	}
+	if _, ok := pagination["totalPages"]; !ok {
+		return fmt.Errorf("missing totalPages in pagination")
 	}
 
 	return nil
@@ -1552,6 +1571,14 @@ func (tc *TestContext) putWithManagedUserHeader(path string) error {
 	return err
 }
 
+func (tc *TestContext) postWithManagedUserHeader(path string) error {
+	headers := map[string]string{
+		"x-gatehub-managed-user-uuid": tc.userID,
+	}
+	_, err := tc.request("POST", path, nil, headers)
+	return err
+}
+
 func (tc *TestContext) responseContainsTokenStarting(prefix string) error {
 	var result map[string]interface{}
 	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
@@ -1576,12 +1603,20 @@ func (tc *TestContext) tokenContainsLink() error {
 		return err
 	}
 
-	// Check for link or href fields
-	if _, ok := result["link"]; !ok && result["href"] == nil && result["url"] == nil {
-		return fmt.Errorf("no link, href, or url field in response")
+	// Check for links array
+	if links, ok := result["links"].([]interface{}); ok && len(links) > 0 {
+		return nil
 	}
 
-	return nil
+	// Fallback: check for link or href fields
+	if _, ok := result["link"]; ok {
+		return nil
+	}
+	if _, ok := result["href"]; ok {
+		return nil
+	}
+
+	return fmt.Errorf("no links array, link, or href field in response")
 }
 
 func (tc *TestContext) responseIsArrayOfPending3DSConfirmations(version int) error {
@@ -2173,6 +2208,284 @@ func (tc *TestContext) fieldsAreStringFormatted() error {
 func (tc *TestContext) transactionCanBeRetrievedFormatted(version int) error {
 	// Verify response has consistent formatting
 	return tc.fieldsAreStringFormatted()
+}
+
+// ============ NEW CARD LIFECYCLE STEPS ============
+
+func (tc *TestContext) managedCustomerWithCard() error {
+	// Ensure we have a user with KYC accepted
+	if tc.userID == "" {
+		if err := tc.existingManagedUserWithKYC("accepted"); err != nil {
+			return err
+		}
+	}
+
+	// Create a managed customer with a card via the API
+	body := map[string]interface{}{
+		"walletAddress": "https://ilp.link/test",
+		"nameOnCard":    "John Doe",
+		"account": map[string]interface{}{
+			"productCode": "PWSR_DEBP_2404",
+			"currency":    "EUR",
+			"card": map[string]interface{}{
+				"productCode": "PWSR_DEBP_2404",
+			},
+		},
+	}
+	headers := map[string]string{
+		"x-gatehub-managed-user-uuid": tc.userID,
+	}
+	_, err := tc.request("POST", "/cards/v1/customers/managed", body, headers)
+	if err != nil {
+		return fmt.Errorf("failed to create managed customer: %w", err)
+	}
+
+	if tc.lastResponse.StatusCode != 201 && tc.lastResponse.StatusCode != 200 {
+		return fmt.Errorf("failed to create managed customer, status: %d, body: %s", tc.lastResponse.StatusCode, string(tc.lastResponseBody))
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
+		return fmt.Errorf("failed to unmarshal response: %w, body: %s", err, string(tc.lastResponseBody))
+	}
+
+	// Extract customer ID and card ID from response
+	customers, ok := result["customers"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("missing customers in response: %s", string(tc.lastResponseBody))
+	}
+	if id, ok := customers["id"].(string); ok {
+		tc.customerID = id
+	}
+
+	accounts, ok := customers["accounts"].([]interface{})
+	if !ok || len(accounts) == 0 {
+		return fmt.Errorf("no accounts in response")
+	}
+	account, ok := accounts[0].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("account is not an object")
+	}
+	cards, ok := account["cards"].([]interface{})
+	if !ok || len(cards) == 0 {
+		return fmt.Errorf("no cards in response")
+	}
+	card, ok := cards[0].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("card is not an object")
+	}
+	if id, ok := card["id"].(string); ok {
+		tc.cardID = id
+	}
+
+	return nil
+}
+
+func (tc *TestContext) managedCustomerWithLockedCard() error {
+	// First create a customer with a card
+	if err := tc.managedCustomerWithCard(); err != nil {
+		return err
+	}
+
+	// Then lock the card
+	headers := map[string]string{
+		"x-gatehub-managed-user-uuid": tc.userID,
+	}
+	body := map[string]string{"note": "Lock for test"}
+	path := fmt.Sprintf("/cards/v1/cards/%s/lock?reasonCode=ClientRequestedLock", tc.cardID)
+	_, err := tc.request("PUT", path, body, headers)
+	if err != nil {
+		return fmt.Errorf("failed to lock card: %w", err)
+	}
+
+	if tc.lastResponse.StatusCode != 200 {
+		return fmt.Errorf("failed to lock card, status: %d, body: %s", tc.lastResponse.StatusCode, string(tc.lastResponseBody))
+	}
+
+	return nil
+}
+
+func (tc *TestContext) postCardTokenWithManagedUser(path string) error {
+	headers := map[string]string{
+		"x-gatehub-managed-user-uuid": tc.userID,
+	}
+	body := map[string]interface{}{
+		"cardId": tc.cardID,
+	}
+	_, err := tc.request("POST", path, body, headers)
+	return err
+}
+
+func (tc *TestContext) responseContainsLinksArray() error {
+	var result map[string]interface{}
+	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
+		return err
+	}
+
+	links, ok := result["links"].([]interface{})
+	if !ok || len(links) == 0 {
+		return fmt.Errorf("missing or empty links array in response: %s", string(tc.lastResponseBody))
+	}
+
+	return nil
+}
+
+func (tc *TestContext) putCardLimitsWithUpdate(path string, newDailyLimit int) error {
+	headers := map[string]string{
+		"x-gatehub-managed-user-uuid": tc.userID,
+	}
+	limits := []map[string]interface{}{
+		{"type": "dailyOverall", "limit": float64(newDailyLimit), "currency": "EUR", "isDisabled": false},
+		{"type": "perTransaction", "limit": 500.00, "currency": "EUR", "isDisabled": false},
+		{"type": "monthlyOverall", "limit": 5000.00, "currency": "EUR", "isDisabled": false},
+		{"type": "dailyAtm", "limit": 300.00, "currency": "EUR", "isDisabled": false},
+		{"type": "dailyEcomm", "limit": 800.00, "currency": "EUR", "isDisabled": false},
+	}
+	_, err := tc.request("PUT", path, limits, headers)
+	return err
+}
+
+func (tc *TestContext) postCardTransaction(path, amount, currency string) error {
+	headers := map[string]string{
+		"x-gatehub-managed-user-uuid": tc.userID,
+	}
+	merchantName := "Test Merchant"
+	body := map[string]interface{}{
+		"cardId":       tc.cardID,
+		"amount":       amount,
+		"currency":     currency,
+		"type":         0,
+		"merchantName": merchantName,
+	}
+	_, err := tc.request("POST", path, body, headers)
+	if err != nil {
+		return err
+	}
+
+	// Extract transactionId from response
+	var result map[string]interface{}
+	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
+		return err
+	}
+	if txID, ok := result["transactionId"].(string); ok {
+		tc.transactionID = txID
+	}
+
+	return nil
+}
+
+func (tc *TestContext) responseContainsCardTransactionWithGH(ghCode string) error {
+	var result map[string]interface{}
+	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
+		return err
+	}
+
+	if _, ok := result["transactionId"]; !ok {
+		return fmt.Errorf("missing transactionId in response: %s", string(tc.lastResponseBody))
+	}
+	if code, ok := result["ghResponseCode"].(string); !ok || code != ghCode {
+		return fmt.Errorf("expected ghResponseCode %s, got %v", ghCode, result["ghResponseCode"])
+	}
+
+	return nil
+}
+
+func (tc *TestContext) managedCustomerWithCardAndTransaction() error {
+	// Create customer with card
+	if err := tc.managedCustomerWithCard(); err != nil {
+		return err
+	}
+
+	// Create a transaction
+	headers := map[string]string{
+		"x-gatehub-managed-user-uuid": tc.userID,
+	}
+	merchantName := "Test Merchant"
+	body := map[string]interface{}{
+		"cardId":       tc.cardID,
+		"amount":       "25.00",
+		"currency":     "EUR",
+		"type":         0,
+		"merchantName": merchantName,
+	}
+	_, err := tc.request("POST", "/cards/v1/transactions", body, headers)
+	if err != nil {
+		return fmt.Errorf("failed to create transaction: %w", err)
+	}
+
+	// Extract transactionId
+	var result map[string]interface{}
+	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
+		return err
+	}
+	if txID, ok := result["transactionId"].(string); ok {
+		tc.transactionID = txID
+	}
+
+	return nil
+}
+
+func (tc *TestContext) responseContainsCardTransactionDetails() error {
+	var result map[string]interface{}
+	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
+		return err
+	}
+
+	if _, ok := result["transactionId"]; !ok {
+		return fmt.Errorf("missing transactionId")
+	}
+	if _, ok := result["transactionAmount"]; !ok {
+		return fmt.Errorf("missing transactionAmount")
+	}
+
+	return nil
+}
+
+func (tc *TestContext) managedCustomerWithPending3DS() error {
+	// Create customer with card
+	if err := tc.managedCustomerWithCard(); err != nil {
+		return err
+	}
+
+	// Create a 3DS challenge via the test endpoint
+	headers := map[string]string{
+		"x-gatehub-managed-user-uuid": tc.userID,
+	}
+	body := map[string]interface{}{
+		"cardId":           tc.cardID,
+		"userId":           tc.userID,
+		"merchantName":     "Test Merchant",
+		"purchaseAmount":   "150.00",
+		"purchaseCurrency": "EUR",
+	}
+	_, err := tc.request("POST", "/cards/v1/test/3ds/challenge", body, headers)
+	if err != nil {
+		return fmt.Errorf("failed to create 3DS challenge: %w", err)
+	}
+
+	// Extract transactionId from challenge response
+	var result map[string]interface{}
+	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
+		return err
+	}
+	if txID, ok := result["transactionId"].(string); ok {
+		tc.transactionID = txID
+	}
+
+	return nil
+}
+
+func (tc *TestContext) responseIsArrayOfPending3DS() error {
+	var result []map[string]interface{}
+	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
+		return fmt.Errorf("response is not an array: %w. Body: %s", err, string(tc.lastResponseBody))
+	}
+
+	if len(result) == 0 {
+		return fmt.Errorf("array is empty")
+	}
+
+	return nil
 }
 
 // Helper function to check if a string is in decimal format (X.XX)
