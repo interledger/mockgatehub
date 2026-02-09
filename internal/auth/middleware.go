@@ -15,6 +15,8 @@ var PublicEndpoints = map[string]bool{
 	"/health":        true,
 	"/":              true, // Root handler (iframe serving)
 	"/iframe/submit": true, // Iframe form submission
+	"/transaction/complete": true, // Iframe completion callback
+	"/api/user-currencies":  true, // Iframe currency lookup
 }
 
 // Middleware returns an HTTP middleware that validates HMAC signatures

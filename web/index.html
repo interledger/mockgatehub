@@ -217,6 +217,10 @@
 						status: 'success',
 						message: 'Transaction completed successfully'
 					}, '*');
+					window.parent.postMessage({
+						type: 'StripeDepositCompleted',
+						status: 'success'
+					}, '*');
 					console.log("postMessage sent");
 				} else {
 					console.warn("Not in iframe context or no parent");
