@@ -218,10 +218,14 @@ func (h *Handler) OverrideRiskLevel(w http.ResponseWriter, r *http.Request) {
 
 // KYCIframe serves the KYC onboarding iframe
 func (h *Handler) KYCIframe(w http.ResponseWriter, r *http.Request) {
-	token := r.URL.Query().Get("token")
+	// Accept both 'bearer' (new) and 'token' (legacy) parameters
+	token := r.URL.Query().Get("bearer")
+	if token == "" {
+		token = r.URL.Query().Get("token")
+	}
 	userID := r.URL.Query().Get("user_id")
 
-	logger.Info("serving kyc iframe", zap.String("token", token), zap.String("user_id", userID))
+	logger.Info("serving kyc iframe", zap.String("token", token), zap.String("user_id", userID), zap.String("url", r.URL.String()))
 
 	// Try multiple paths to find the template
 	possiblePaths := []string{
