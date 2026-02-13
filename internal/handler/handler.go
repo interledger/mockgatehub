@@ -83,18 +83,18 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 
 // RootHandler serves the main iframe page for deposit/onboarding
 func (h *Handler) RootHandler(w http.ResponseWriter, r *http.Request) {
-	logger.Info("root handler requested")
+	logger.Info("root handler requested", zap.String("url", r.URL.String()), zap.String("host", r.Host), zap.String("referer", r.Header.Get("Referer")))
 
 	paymentType := r.URL.Query().Get("paymentType")
 	bearer := r.URL.Query().Get("bearer")
 
 	if bearer == "" {
-		logger.Error("missing bearer token in root request")
+		logger.Error("missing bearer token in root request", zap.String("url", r.URL.String()))
 		http.Error(w, "Missing bearer token", http.StatusBadRequest)
 		return
 	}
 
-	logger.Info("serving iframe", zap.String("payment_type", paymentType))
+	logger.Info("serving iframe", zap.String("payment_type", paymentType), zap.String("bearer_prefix", bearer[:min(20, len(bearer))]))
 
 	// If no paymentType is provided, treat this as onboarding and serve the KYC iframe
 	if paymentType == "" || paymentType == "onboarding" {

@@ -12,9 +12,10 @@ import (
 
 // PublicEndpoints are endpoints that don't require authentication
 var PublicEndpoints = map[string]bool{
-	"/health":        true,
-	"/":              true, // Root handler (iframe serving)
-	"/iframe/submit": true, // Iframe form submission
+	"/health":               true,
+	"/":                     true, // Root handler (iframe serving)
+	"/iframe/onboarding":    true, // KYC onboarding iframe (loaded in browser)
+	"/iframe/submit":        true, // Iframe form submission
 	"/transaction/complete": true, // Iframe completion callback
 	"/api/user-currencies":  true, // Iframe currency lookup
 }
