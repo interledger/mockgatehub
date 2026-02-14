@@ -418,7 +418,7 @@ func (h *Handler) GetUserCurrencies(w http.ResponseWriter, r *http.Request) {
 		// Return default currencies if we can't determine user
 		logger.Debug("could not extract user from bearer, returning all currencies")
 		h.sendJSON(w, http.StatusOK, models.CurrenciesResponse{
-			Currencies: []string{"USD", "EUR", "CAD", "GBP", "JPY", "AUD", "CHF", "CNY", "INR", "AED", "PEB", "XRP"},
+			Currencies: consts.SandboxCurrencies,
 		})
 		return
 	}
@@ -426,10 +426,9 @@ func (h *Handler) GetUserCurrencies(w http.ResponseWriter, r *http.Request) {
 	logger.Info("getting currencies for user", zap.String("user_id", userUUID))
 
 	// Get currencies that have non-zero balances for this user
-	allCurrencies := []string{"USD", "EUR", "CAD", "GBP", "JPY", "AUD", "CHF", "CNY", "INR", "AED", "PEB", "XRP"}
 	userCurrencies := []string{}
 
-	for _, currency := range allCurrencies {
+	for _, currency := range consts.SandboxCurrencies {
 		balance, err := h.store.GetBalance(userUUID, currency)
 		if err == nil && balance > 0 {
 			userCurrencies = append(userCurrencies, currency)
@@ -440,7 +439,7 @@ func (h *Handler) GetUserCurrencies(w http.ResponseWriter, r *http.Request) {
 	if len(userCurrencies) == 0 {
 		logger.Info("no balances found for user, returning all currencies", zap.String("user_id", userUUID))
 		h.sendJSON(w, http.StatusOK, models.CurrenciesResponse{
-			Currencies: allCurrencies,
+			Currencies: consts.SandboxCurrencies,
 		})
 		return
 	}
