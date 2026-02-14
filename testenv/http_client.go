@@ -37,6 +37,7 @@ func (tc *TestContext) replacePlaceholders(path string) string {
 		"{cardId}":        tc.cardID,
 		"{cardID}":        tc.cardID,
 		"{transactionId}": tc.transactionID,
+		"{txId}":          tc.transactionID,
 		"{address}":       tc.walletAddress,
 		"{iframeToken}":   tc.iframeToken,
 		"{token}":         tc.kycToken,

@@ -175,4 +175,26 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^fields amount, total_amount, and fee are string formatted with two decimals$`, tc.fieldsAreStringFormatted)
 	ctx.Step(`^status is integer (\d+)$`, tc.statusIsInteger)
 	ctx.Step(`^the transaction can be retrieved via GET \/core\/v(\d+)\/transactions\/{id} with the same format$`, tc.transactionCanBeRetrievedFormatted)
+
+	// Fee configuration steps
+	ctx.Step(`^deposit fee is configured to ([\d.]+)%$`, tc.depositFeeConfigured)
+	ctx.Step(`^withdrawal fee is configured to ([\d.]+)%$`, tc.withdrawalFeeConfigured)
+	ctx.Step(`^I GET /admin/fees without authentication$`, tc.getAdminFeesWithoutAuth)
+	ctx.Step(`^I PUT /admin/fees without authentication and body (.+)$`, tc.putAdminFeesWithoutAuth)
+	ctx.Step(`^I PUT /admin/fees without any HMAC headers and body (.+)$`, tc.putAdminFeesWithoutAnyHMAC)
+	ctx.Step(`^the deposit fee percentage is ([\d.]+)$`, tc.depositFeePercentageIs)
+	ctx.Step(`^the withdrawal fee percentage is ([\d.]+)$`, tc.withdrawalFeePercentageIs)
+	ctx.Step(`^the transaction fee is "([^"]*)"$`, tc.transactionFeeIs)
+	ctx.Step(`^the transaction total_amount is "([^"]*)"$`, tc.transactionTotalAmountIs)
+	ctx.Step(`^the transaction amount is "([^"]*)"$`, tc.transactionAmountIs)
+	ctx.Step(`^I POST /core/v1/transactions with type (\d+), deposit_type "([^"]*)", amount ([\d.]+), currency "([^"]*)", and a valid vault_uuid$`, tc.postDepositWithFeeFields)
+	ctx.Step(`^I GET /core/v1/transactions/\{txId\}$`, tc.getTransactionByID)
+	ctx.Step(`^I create a withdrawal transaction for ([\d.]+ [A-Z]+)$`, func(amountCurrency string) error {
+		amount, currency, err := parseAmountCurrency(amountCurrency)
+		if err != nil {
+			return err
+		}
+		return tc.createWithdrawalTransaction(amount, currency)
+	})
+	ctx.Step(`^I POST /core/v1/transactions with user_id, amount ([\d.]+), currency "([^"]*)", type (\d+), and deposit_type "([^"]*)"$`, tc.postHostedTransferWithFeeFields)
 }

@@ -18,6 +18,7 @@ var PublicEndpoints = map[string]bool{
 	"/iframe/submit":        true, // Iframe form submission
 	"/transaction/complete": true, // Iframe completion callback
 	"/api/user-currencies":  true, // Iframe currency lookup
+	"/admin/fees":           true, // Admin fee configuration (test support)
 }
 
 // Middleware returns an HTTP middleware that validates HMAC signatures

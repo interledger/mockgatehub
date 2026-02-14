@@ -28,6 +28,7 @@ type Handler struct {
 	store          storage.Storage
 	webhookManager *webhook.Manager
 	tokenToUser    sync.Map // Maps bearer tokens to user UUIDs
+	feeConfig      *FeeConfig
 }
 
 // TransactionRequest represents a transaction request from the iframe
@@ -42,6 +43,7 @@ func NewHandler(store storage.Storage, webhookManager *webhook.Manager) *Handler
 	return &Handler{
 		store:          store,
 		webhookManager: webhookManager,
+		feeConfig:      NewFeeConfig(),
 	}
 }
 
@@ -362,8 +364,13 @@ func (h *Handler) processDeposit(w http.ResponseWriter, bearer string, txReq *Tr
 	// Parse amount as float
 	amountFloat, _ := strconv.ParseFloat(txReq.Amount, 64)
 	amountStr := fmt.Sprintf("%.2f", amountFloat)
-	feeStr := "0.00"            // No fees in sandbox
-	totalAmountStr := amountStr // Total = amount + fees
+
+	// Calculate deposit fee
+	feePercent := h.feeConfig.GetDepositFeePercent()
+	feeAmount := CalculateFee(amountFloat, feePercent)
+	feeStr := fmt.Sprintf("%.2f", feeAmount)
+	// For deposits, total_amount = amount (fee is charged separately by GateHub)
+	totalAmountStr := amountStr
 
 	txID := utils.GenerateUUID()
 

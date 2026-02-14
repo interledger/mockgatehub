@@ -284,8 +284,26 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 
 	// Format amounts as strings to match GateHub API
 	amountStr := fmt.Sprintf("%.2f", req.Amount)
-	feeStr := "0.00"            // Mock: no fees in sandbox
-	totalAmountStr := amountStr // Total = amount + fee
+
+	// Calculate fee based on transaction type:
+	// - External deposits: use deposit fee percentage
+	// - Withdrawals: use withdrawal fee percentage
+	// - Hosted transfers: always free
+	var feePercent float64
+	switch req.DepositType {
+	case consts.DepositTypeExternal:
+		feePercent = h.feeConfig.GetDepositFeePercent()
+	case "withdrawal":
+		feePercent = h.feeConfig.GetWithdrawalFeePercent()
+	}
+	feeAmount := CalculateFee(req.Amount, feePercent)
+	feeStr := fmt.Sprintf("%.2f", feeAmount)
+	// For deposits: total_amount = amount (fee is charged separately by GateHub)
+	// For withdrawals: total_amount = amount + fee (total deducted)
+	totalAmountStr := amountStr
+	if req.DepositType == "withdrawal" {
+		totalAmountStr = fmt.Sprintf("%.2f", req.Amount+feeAmount)
+	}
 
 	tx := &models.Transaction{
 		UserID:           req.UserID,
