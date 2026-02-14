@@ -229,7 +229,7 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 
 	if bearer == "" {
 		logger.Error("missing bearer token in transaction completion")
-		h.sendCORSError(w, http.StatusBadRequest, "Missing bearer token")
+		h.sendErrorWithCORS(w, http.StatusBadRequest, "Missing bearer token")
 		return
 	}
 
@@ -249,7 +249,7 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 	// Validate and error out if required fields are missing
 	if err := h.validateTransactionRequest(&txReq); err != nil {
 		logger.Error("invalid transaction request", zap.Error(err))
-		h.sendCORSError(w, http.StatusBadRequest, err.Error())
+		h.sendErrorWithCORS(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -262,7 +262,7 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	// Return success response
-	h.sendCORSJSON(w, http.StatusOK, map[string]string{
+	h.sendJSONWithCORS(w, http.StatusOK, map[string]string{
 		"status":  "success",
 		"message": "Transaction completed",
 	})
@@ -308,7 +308,7 @@ func (h *Handler) processDeposit(w http.ResponseWriter, bearer string, txReq *Tr
 
 	if userUUID == "" {
 		logger.Warn("could not extract user uuid from bearer token")
-		h.sendCORSError(w, http.StatusBadRequest, "Invalid bearer token")
+		h.sendErrorWithCORS(w, http.StatusBadRequest, "Invalid bearer token")
 		return
 	}
 
@@ -316,7 +316,7 @@ func (h *Handler) processDeposit(w http.ResponseWriter, bearer string, txReq *Tr
 	user, err := h.store.GetUser(userUUID)
 	if err != nil || user == nil {
 		logger.Error("user not found", zap.String("user_id", userUUID), zap.Error(err))
-		h.sendCORSError(w, http.StatusNotFound, "User not found")
+		h.sendErrorWithCORS(w, http.StatusNotFound, "User not found")
 		return
 	}
 
@@ -324,7 +324,7 @@ func (h *Handler) processDeposit(w http.ResponseWriter, bearer string, txReq *Tr
 	wallets, err := h.store.GetWalletsByUser(userUUID)
 	if err != nil {
 		logger.Error("failed to get wallets for user", zap.String("user_id", userUUID), zap.Error(err))
-		h.sendCORSError(w, http.StatusInternalServerError, "Failed to get wallets")
+		h.sendErrorWithCORS(w, http.StatusInternalServerError, "Failed to get wallets")
 		return
 	}
 
@@ -341,7 +341,7 @@ func (h *Handler) processDeposit(w http.ResponseWriter, bearer string, txReq *Tr
 		}
 		if err := h.store.CreateWallet(wallet); err != nil {
 			logger.Error("failed to auto-create wallet", zap.String("user_id", userUUID), zap.Error(err))
-			h.sendCORSError(w, http.StatusInternalServerError, "Failed to create wallet")
+			h.sendErrorWithCORS(w, http.StatusInternalServerError, "Failed to create wallet")
 			return
 		}
 		wallets = []*models.Wallet{wallet}
@@ -377,13 +377,13 @@ func (h *Handler) processDeposit(w http.ResponseWriter, bearer string, txReq *Tr
 
 	if err := h.store.CreateTransaction(tx); err != nil {
 		logger.Error("failed to create transaction", zap.String("transaction_id", txID), zap.Error(err))
-		h.sendCORSError(w, http.StatusInternalServerError, "Failed to create transaction")
+		h.sendErrorWithCORS(w, http.StatusInternalServerError, "Failed to create transaction")
 		return
 	}
 
 	if err := h.store.AddBalance(userUUID, txReq.Currency, amountFloat); err != nil {
 		logger.Error("failed to update balance for user", zap.String("user_id", userUUID), zap.Error(err))
-		h.sendCORSError(w, http.StatusInternalServerError, "Failed to update balance")
+		h.sendErrorWithCORS(w, http.StatusInternalServerError, "Failed to update balance")
 		return
 	}
 
@@ -401,26 +401,10 @@ func (h *Handler) processDeposit(w http.ResponseWriter, bearer string, txReq *Tr
 	logger.Info("sent deposit webhook", zap.String("user_id", userUUID), zap.String("amount", amountStr), zap.String("currency", txReq.Currency), zap.String("wallet_address", walletAddress))
 
 	// Return success response
-	h.sendCORSJSON(w, http.StatusOK, map[string]string{
+	h.sendJSONWithCORS(w, http.StatusOK, map[string]string{
 		"status":  "success",
 		"message": "Transaction completed",
 	})
-}
-
-// sendCORSError writes an error response with CORS headers
-func (h *Handler) sendCORSError(w http.ResponseWriter, status int, message string) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": message})
-}
-
-// sendCORSJSON writes a JSON response with CORS headers
-func (h *Handler) sendCORSJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
 }
 
 // extractUserFromBearer extracts the user UUID from a bearer token string
