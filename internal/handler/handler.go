@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -62,7 +63,7 @@ func (h *Handler) RequestLogger(next http.Handler) http.Handler {
 		// Collect all headers into a map for structured logging
 		headers := make(map[string]string, len(r.Header))
 		for k, v := range r.Header {
-			headers[k] = v[0]
+			headers[k] = strings.Join(v, ", ")
 		}
 
 		logger.Info("request incoming",

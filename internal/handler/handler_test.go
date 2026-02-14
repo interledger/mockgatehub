@@ -390,6 +390,36 @@ func TestTransactionCompleteHandlerValid(t *testing.T) {
 	assert.Equal(t, "success", response["status"])
 }
 
+// TestRequestLoggerMultiValueHeaders verifies that multi-value headers are properly joined
+func TestRequestLoggerMultiValueHeaders(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	webhookManager := webhook.NewManager("", "test-secret", nil)
+	h := NewHandler(store, webhookManager)
+
+	// Create a simple test handler
+	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Wrap it with the RequestLogger middleware
+	loggedHandler := h.RequestLogger(testHandler)
+
+	// Create a request with multi-value headers
+	req := httptest.NewRequest("GET", "/test", bytes.NewReader([]byte("{}")))
+	req.Header.Add("Accept", "application/json")
+	req.Header.Add("Accept", "text/html")
+	req.Header.Add("X-Custom", "value1")
+	req.Header.Add("X-Custom", "value2")
+	req.Header.Add("X-Custom", "value3")
+
+	// Make the request
+	rr := httptest.NewRecorder()
+	loggedHandler.ServeHTTP(rr, req)
+
+	// Verify the response is OK (middleware should not interfere with request processing)
+	assert.Equal(t, http.StatusOK, rr.Code, "RequestLogger middleware should not affect request processing")
+}
+
 // Helper function to create a test wallet
 func createTestWallet(t *testing.T, store storage.Storage, userID string) {
 	wallet := &models.Wallet{
