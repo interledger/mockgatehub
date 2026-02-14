@@ -60,6 +60,9 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^I POST (/[^ ]+)$`, tc.postEndpoint)
 	ctx.Step(`^the response contains a token for the KYC flow$`, tc.responseHasKYCToken)
 	ctx.Step(`^GET (.+) shows kyc_state "([^"]*)" and risk_level "([^"]*)"$`, tc.getShowsKYCState)
+	// Specific GET patterns must come before generic GET pattern below
+	ctx.Step(`^I GET /core/v1/wallets/\{walletAddress\}/balances$`, tc.getWalletBalance)
+	ctx.Step(`^I GET /wallets/\{walletAddress\}/balances$`, tc.getWalletBalance)
 	ctx.Step(`^I GET (/[^ ]+)$`, tc.getEndpoint)
 	ctx.Step(`^the response is HTML that mentions "([^"]*)" and "([^"]*)"$`, tc.responseIsHTMLMentioning)
 
@@ -102,6 +105,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^a managed user id produced by (.+)$`, tc.managedUserFromEndpoint)
 	ctx.Step(`^a wallets array is returned with at least one wallet$`, tc.walletsArrayReturned)
 	ctx.Step(`^the first wallet address starts with "([^"]*)"$`, tc.firstWalletStartsWith)
+	ctx.Step(`^the ([A-Z]+) balance is "([^"]*)"$`, tc.currencyBalanceIs)
 
 	// Rates steps
 	ctx.Step(`^MockGatehub is running and requests include valid HMAC headers$`, tc.mockgatehubRunningWithHeaders)

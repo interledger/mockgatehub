@@ -69,6 +69,8 @@ Feature: Fee configuration and application
     And the transaction amount is "100.00"
     When I GET /core/v1/transactions/{txId}
     Then the transaction fee is "0.00"
+    When I GET /core/v1/wallets/{walletAddress}/balances
+    Then the EUR balance is "100.00"
 
   Scenario: Deposit with 1.5% fee deducts fee from amount
     Given deposit fee is configured to 1.5%
@@ -81,6 +83,8 @@ Feature: Fee configuration and application
     When I GET /core/v1/transactions/{txId}
     Then the transaction fee is "1.50"
     And the transaction total_amount is "100.00"
+    When I GET /core/v1/wallets/{walletAddress}/balances
+    Then the EUR balance is "98.50"
 
   Scenario: Deposit fee is reflected in GetTransaction response
     Given deposit fee is configured to 2.5%
@@ -92,6 +96,8 @@ Feature: Fee configuration and application
     Then the transaction fee is "5.00"
     And the transaction amount is "200.00"
     And the transaction total_amount is "200.00"
+    When I GET /core/v1/wallets/{walletAddress}/balances
+    Then the EUR balance is "195.00"
 
   Scenario: Deposit via iframe with fee configured
     Given deposit fee is configured to 1.0%
@@ -126,6 +132,8 @@ Feature: Fee configuration and application
     Then the response status is 201
     And the transaction fee is "1.00"
     And fields amount, total_amount, and fee are string formatted with two decimals
+    When I GET /core/v1/wallets/{walletAddress}/balances
+    Then the EUR balance is "32.33"
 
   Scenario: Fee on small amount rounds down to zero
     Given deposit fee is configured to 0.1%
@@ -133,6 +141,8 @@ Feature: Fee configuration and application
     When I POST /core/v1/transactions with type 1, deposit_type "external", amount 0.01, currency "EUR", and a valid vault_uuid
     Then the response status is 201
     And the transaction fee is "0.00"
+    When I GET /core/v1/wallets/{walletAddress}/balances
+    Then the EUR balance is "0.01"
 
   Scenario: Fee configuration persists across requests
     When I PUT /admin/fees without authentication and body {"deposit_fee_percentage": 4.0}
@@ -148,3 +158,5 @@ Feature: Fee configuration and application
     When I POST /core/v1/transactions with user_id, amount 100.00, currency "EUR", type 2, and deposit_type "hosted"
     Then the transaction fee is "0.00"
     And the transaction total_amount is "100.00"
+    When I GET /core/v1/wallets/{walletAddress}/balances
+    Then the EUR balance is "100.00"
