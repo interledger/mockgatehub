@@ -298,12 +298,9 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 	}
 	feeAmount := CalculateFee(req.Amount, feePercent)
 	feeStr := fmt.Sprintf("%.2f", feeAmount)
-	// For deposits: total_amount = amount (fee is charged separately by GateHub)
-	// For withdrawals: total_amount = amount + fee (total deducted)
+	// In this mock implementation total_amount always equals the requested amount.
+	// Fees are reported separately via the Fee field and not included in total_amount.
 	totalAmountStr := amountStr
-	if req.DepositType == "withdrawal" {
-		totalAmountStr = fmt.Sprintf("%.2f", req.Amount+feeAmount)
-	}
 
 	tx := &models.Transaction{
 		UserID:           req.UserID,
