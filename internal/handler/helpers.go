@@ -39,6 +39,23 @@ func (h *Handler) sendError(w http.ResponseWriter, status int, message string) {
 	})
 }
 
+// setCORSHeaders adds CORS headers to the response writer
+func setCORSHeaders(w http.ResponseWriter) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+}
+
+// sendJSONWithCORS sends a JSON response with CORS headers
+func (h *Handler) sendJSONWithCORS(w http.ResponseWriter, status int, data interface{}) {
+	setCORSHeaders(w)
+	h.sendJSON(w, status, data)
+}
+
+// sendErrorWithCORS sends an error response with CORS headers
+func (h *Handler) sendErrorWithCORS(w http.ResponseWriter, status int, message string) {
+	setCORSHeaders(w)
+	h.sendError(w, status, message)
+}
+
 func (h *Handler) decodeJSON(r *http.Request, v interface{}) error {
 	// Read body for logging
 	body, err := io.ReadAll(r.Body)
