@@ -15,6 +15,9 @@ func (tc *TestContext) authenticatedRequestsWithHMAC() error {
 }
 
 func (tc *TestContext) postTransactionWithAuth(path, amount, currency, authToken string) error {
+	// Replace any placeholders in authToken (e.g., {iframeToken})
+	authToken = tc.replacePlaceholders(authToken)
+
 	body := map[string]interface{}{
 		"amount":   amount,
 		"currency": currency,
@@ -29,7 +32,12 @@ func (tc *TestContext) postTransactionWithAuth(path, amount, currency, authToken
 func (tc *TestContext) userBalanceIncreasesBy(wholeAmount, decimalAmount int) error {
 	// Simplified check - just verify the response indicates success
 	if tc.lastResponse.StatusCode != 200 {
-		return fmt.Errorf("expected status 200, got %d", tc.lastResponse.StatusCode)
+		// Include response body in error message for debugging
+		responseMsg := string(tc.lastResponseBody)
+		if len(responseMsg) > 200 {
+			responseMsg = responseMsg[:200] + "..."
+		}
+		return fmt.Errorf("expected status 200, got %d. Response: %s", tc.lastResponse.StatusCode, responseMsg)
 	}
 
 	var result map[string]interface{}
@@ -38,7 +46,7 @@ func (tc *TestContext) userBalanceIncreasesBy(wholeAmount, decimalAmount int) er
 	}
 
 	if status, ok := result["status"].(string); !ok || status != "success" {
-		return fmt.Errorf("expected success status")
+		return fmt.Errorf("expected success status, got: %v", result["status"])
 	}
 
 	return nil

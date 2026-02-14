@@ -7,8 +7,10 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"testing"
+	"time"
 
 	"mockgatehub/internal/consts"
+	"mockgatehub/internal/models"
 	"mockgatehub/internal/storage"
 	"mockgatehub/internal/webhook"
 
@@ -193,4 +195,211 @@ func TestCreateTransactionMultipleCurrencies(t *testing.T) {
 		balance, _ := store.GetBalance(consts.TestUser1ID, curr)
 		assert.Greater(t, balance, 0.0, "Balance should be positive for %s after deposit", curr)
 	}
+}
+
+// TestTransactionCompleteHandlerMissingAmount verifies that missing amount returns 400
+func TestTransactionCompleteHandlerMissingAmount(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	storage.SeedTestUsers(store)
+
+	webhookManager := webhook.NewManager("", "test-secret", nil)
+	handler := NewHandler(store, webhookManager)
+
+	// Create a wallet first
+	createTestWallet(t, store, consts.TestUser1ID)
+
+	// Request body missing amount field
+	body := map[string]interface{}{
+		"currency": "USD",
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/transaction/complete?paymentType=deposit&bearer=test-token", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	// Map token to user
+	handler.tokenToUser.Store("test-token", consts.TestUser1ID)
+
+	rr := httptest.NewRecorder()
+	handler.TransactionCompleteHandler(rr, req)
+
+	// Should fail with bad request - amount is required
+	assert.Equal(t, http.StatusBadRequest, rr.Code, "Expected 400 Bad Request when amount is missing")
+}
+
+// TestTransactionCompleteHandlerMissingCurrency verifies that missing currency returns 400
+func TestTransactionCompleteHandlerMissingCurrency(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	storage.SeedTestUsers(store)
+
+	webhookManager := webhook.NewManager("", "test-secret", nil)
+	handler := NewHandler(store, webhookManager)
+
+	// Create a wallet first
+	createTestWallet(t, store, consts.TestUser1ID)
+
+	// Request body missing currency field
+	body := map[string]interface{}{
+		"amount": "100.00",
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/transaction/complete?paymentType=deposit&bearer=test-token", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	// Map token to user
+	handler.tokenToUser.Store("test-token", consts.TestUser1ID)
+
+	rr := httptest.NewRecorder()
+	handler.TransactionCompleteHandler(rr, req)
+
+	// Should fail with bad request - currency is required
+	assert.Equal(t, http.StatusBadRequest, rr.Code, "Expected 400 Bad Request when currency is missing")
+}
+
+// TestTransactionCompleteHandlerEmptyBody verifies that empty body returns 400
+func TestTransactionCompleteHandlerEmptyBody(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	storage.SeedTestUsers(store)
+
+	webhookManager := webhook.NewManager("", "test-secret", nil)
+	handler := NewHandler(store, webhookManager)
+
+	// Create a wallet first
+	createTestWallet(t, store, consts.TestUser1ID)
+
+	// Empty body
+	req := httptest.NewRequest("POST", "/transaction/complete?paymentType=deposit&bearer=test-token", bytes.NewReader([]byte("")))
+	req.Header.Set("Content-Type", "application/json")
+
+	// Map token to user
+	handler.tokenToUser.Store("test-token", consts.TestUser1ID)
+
+	rr := httptest.NewRecorder()
+	handler.TransactionCompleteHandler(rr, req)
+
+	// Should fail with bad request - both amount and currency are missing
+	assert.Equal(t, http.StatusBadRequest, rr.Code, "Expected 400 Bad Request when body is empty")
+}
+
+// TestTransactionCompleteHandlerInvalidAmount verifies that non-numeric amount returns 400
+func TestTransactionCompleteHandlerInvalidAmount(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	storage.SeedTestUsers(store)
+
+	webhookManager := webhook.NewManager("", "test-secret", nil)
+	handler := NewHandler(store, webhookManager)
+
+	// Create a wallet first
+	createTestWallet(t, store, consts.TestUser1ID)
+
+	// Invalid amount (not a number)
+	body := map[string]interface{}{
+		"amount":   "not-a-number",
+		"currency": "USD",
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/transaction/complete?paymentType=deposit&bearer=test-token", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	// Map token to user
+	handler.tokenToUser.Store("test-token", consts.TestUser1ID)
+
+	rr := httptest.NewRecorder()
+	handler.TransactionCompleteHandler(rr, req)
+
+	// Should fail with bad request - amount is invalid
+	assert.Equal(t, http.StatusBadRequest, rr.Code, "Expected 400 Bad Request when amount is not numeric")
+}
+
+// TestTransactionCompleteHandlerInvalidCurrency verifies that unknown currency returns 400
+func TestTransactionCompleteHandlerInvalidCurrency(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	storage.SeedTestUsers(store)
+
+	webhookManager := webhook.NewManager("", "test-secret", nil)
+	handler := NewHandler(store, webhookManager)
+
+	// Create a wallet first
+	createTestWallet(t, store, consts.TestUser1ID)
+
+	// Invalid currency
+	body := map[string]interface{}{
+		"amount":   "100.00",
+		"currency": "UNKNOWN",
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/transaction/complete?paymentType=deposit&bearer=test-token", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	// Map token to user
+	handler.tokenToUser.Store("test-token", consts.TestUser1ID)
+
+	rr := httptest.NewRecorder()
+	handler.TransactionCompleteHandler(rr, req)
+
+	// Should fail with bad request - currency is unknown
+	assert.Equal(t, http.StatusBadRequest, rr.Code, "Expected 400 Bad Request when currency is unknown")
+}
+
+// TestTransactionCompleteHandlerValid verifies that valid request succeeds
+func TestTransactionCompleteHandlerValid(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	storage.SeedTestUsers(store)
+
+	webhookManager := webhook.NewManager("", "test-secret", nil)
+	handler := NewHandler(store, webhookManager)
+
+	// Create a wallet first
+	createTestWallet(t, store, consts.TestUser1ID)
+
+	// Valid request
+	body := map[string]interface{}{
+		"amount":   "100.00",
+		"currency": "USD",
+	}
+
+	bodyBytes, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("POST", "/transaction/complete?paymentType=deposit&bearer=test-token", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+
+	// Map token to user
+	handler.tokenToUser.Store("test-token", consts.TestUser1ID)
+
+	rr := httptest.NewRecorder()
+	handler.TransactionCompleteHandler(rr, req)
+
+	// Should succeed
+	assert.Equal(t, http.StatusOK, rr.Code, "Expected 200 OK for valid transaction complete request")
+
+	var response map[string]interface{}
+	err = json.NewDecoder(rr.Body).Decode(&response)
+	require.NoError(t, err)
+	assert.Equal(t, "success", response["status"])
+}
+
+// Helper function to create a test wallet
+func createTestWallet(t *testing.T, store storage.Storage, userID string) {
+	wallet := &models.Wallet{
+		UserID:    userID,
+		Name:      "Test Wallet",
+		Address:   "rN7n7otQDd6FczFgLdSqtcsAUxDkw6fzRH",
+		Type:      0,
+		Network:   30, // XRP Ledger
+		CreatedAt: time.Now(),
+	}
+	err := store.CreateWallet(wallet)
+	require.NoError(t, err)
 }

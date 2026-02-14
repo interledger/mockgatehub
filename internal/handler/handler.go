@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -28,6 +29,12 @@ type Handler struct {
 	tokenToUser    sync.Map // Maps bearer tokens to user UUIDs
 }
 
+// TransactionRequest represents a transaction request from the iframe
+type TransactionRequest struct {
+	Amount   string `json:"amount"`
+	Currency string `json:"currency"`
+}
+
 // NewHandler creates a new handler with dependencies
 func NewHandler(store storage.Storage, webhookManager *webhook.Manager) *Handler {
 	logger.Info("initializing http handlers")
@@ -37,40 +44,59 @@ func NewHandler(store storage.Storage, webhookManager *webhook.Manager) *Handler
 	}
 }
 
-// RequestLogger middleware logs all incoming requests
+// RequestLogger middleware logs all incoming requests with full details
 func (h *Handler) RequestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
+		// Read and re-buffer the body so downstream handlers can still read it
+		var bodyStr string
+		if r.Body != nil {
+			bodyBytes, err := io.ReadAll(r.Body)
+			if err == nil {
+				bodyStr = string(bodyBytes)
+				r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+			}
+		}
+
+		// Collect all headers into a map for structured logging
+		headers := make(map[string]string, len(r.Header))
+		for k, v := range r.Header {
+			headers[k] = v[0]
+		}
+
 		logger.Info("request incoming",
 			zap.String("method", r.Method),
 			zap.String("path", r.URL.Path),
+			zap.String("query", r.URL.RawQuery),
 			zap.String("remote_addr", r.RemoteAddr),
-			zap.String("user_agent", r.UserAgent()),
+			zap.Any("headers", headers),
+			zap.String("body", bodyStr),
 		)
 
-		// Log query parameters
-		if len(r.URL.Query()) > 0 {
-			logger.Debug("query parameters", zap.Any("params", r.URL.Query()))
-		}
-
-		// Log important headers
-		if contentType := r.Header.Get("Content-Type"); contentType != "" {
-			logger.Debug("content type", zap.String("content_type", contentType))
-		}
-		if auth := r.Header.Get("Authorization"); auth != "" {
-			logger.Debug("authorization header present")
-		}
-
-		next.ServeHTTP(w, r)
+		// Wrap ResponseWriter to capture status code
+		wrapped := &statusRecorder{ResponseWriter: w, statusCode: http.StatusOK}
+		next.ServeHTTP(wrapped, r)
 
 		duration := time.Since(start)
 		logger.Info("request completed",
 			zap.String("method", r.Method),
 			zap.String("path", r.URL.Path),
+			zap.Int("status", wrapped.statusCode),
 			zap.Duration("duration", duration),
 		)
 	})
+}
+
+// statusRecorder wraps http.ResponseWriter to capture the status code
+type statusRecorder struct {
+	http.ResponseWriter
+	statusCode int
+}
+
+func (sr *statusRecorder) WriteHeader(code int) {
+	sr.statusCode = code
+	sr.ResponseWriter.WriteHeader(code)
 }
 
 // HealthCheck handles the health check endpoint
@@ -189,135 +215,216 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 	logger.Info("transaction complete handler requested")
 
 	paymentType := r.URL.Query().Get("paymentType")
-	bearer := r.URL.Query().Get("bearer")
+
+	// Try to get bearer from Authorization header first (HTTP standard)
+	bearer := ""
+	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+		bearer = extractBearerFromAuthHeader(authHeader)
+	}
+
+	// Fall back to query parameter if not in Authorization header
+	if bearer == "" {
+		bearer = r.URL.Query().Get("bearer")
+	}
 
 	if bearer == "" {
 		logger.Error("missing bearer token in transaction completion")
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		w.Write([]byte(`{"error":"Missing bearer token"}`))
+		h.sendCORSError(w, http.StatusBadRequest, "Missing bearer token")
 		return
 	}
 
 	logger.Info("transaction completed", zap.String("payment_type", paymentType))
 
-	// Parse request body for transaction details (amount, currency, etc.)
-	type TransactionRequest struct {
-		Amount   string `json:"amount"`
-		Currency string `json:"currency"`
-	}
-
+	// Parse and validate request body for transaction details
 	var txReq TransactionRequest
-	// Default values if body is empty or parsing fails
-	txReq.Amount = "100.00"
-	txReq.Currency = "USD"
-
 	if r.Body != nil {
 		bodyBytes, err := io.ReadAll(r.Body)
 		if err == nil && len(bodyBytes) > 0 {
-			if err := json.Unmarshal(bodyBytes, &txReq); err == nil {
-				logger.Info("parsed transaction details", zap.String("amount", txReq.Amount), zap.String("currency", txReq.Currency))
-			} else {
-				logger.Warn("failed to parse request body, using defaults", zap.Error(err))
+			if err := json.Unmarshal(bodyBytes, &txReq); err != nil {
+				logger.Warn("failed to parse request body", zap.Error(err))
 			}
 		}
 	}
+
+	// Validate and error out if required fields are missing
+	if err := h.validateTransactionRequest(&txReq); err != nil {
+		logger.Error("invalid transaction request", zap.Error(err))
+		h.sendCORSError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	logger.Info("parsed transaction details", zap.String("amount", txReq.Amount), zap.String("currency", txReq.Currency))
 
 	// For deposit type, create a transaction and send a webhook to wallet-backend
 	if paymentType == "deposit" {
-		// Decode bearer to get user UUID
-		// In a real implementation, we would validate the JWT token
-		// For mock purposes, we extract the user UUID from a simple format
-		userUUID := h.extractUserFromBearer(bearer)
-
-		if userUUID != "" {
-			// Get user to find their wallet address
-			user, err := h.store.GetUser(userUUID)
-			if err == nil && user != nil {
-				// Get user's wallets to find the deposit address
-				wallets, err := h.store.GetWalletsByUser(userUUID)
-				if err == nil && len(wallets) > 0 {
-					// Use the first wallet's address
-					walletAddress := wallets[0].Address
-
-					// Get vault_uuid for the currency (from consts)
-					if txReq.Currency == "" {
-						txReq.Currency = "USD"
-					}
-
-					vaultUUID := consts.SandboxVaultIDs[txReq.Currency]
-					if vaultUUID == "" {
-						// Fallback to USD vault if currency not found
-						logger.Warn("unknown currency, using usd vault", zap.String("requested_currency", txReq.Currency))
-						txReq.Currency = "USD"
-						vaultUUID = consts.SandboxVaultIDs[txReq.Currency]
-					}
-
-					amountFloat, err := strconv.ParseFloat(txReq.Amount, 64)
-					if err != nil {
-						logger.Warn("invalid amount, defaulting to 100.00", zap.String("amount", txReq.Amount), zap.Error(err))
-						amountFloat = 100.00
-					}
-					amountStr := fmt.Sprintf("%.2f", amountFloat)
-					feeStr := "0.00"            // No fees in sandbox
-					totalAmountStr := amountStr // Total = amount + fees
-
-					txID := utils.GenerateUUID()
-
-					tx := &models.Transaction{
-						ID:               txID,
-						UserID:           userUUID,
-						Amount:           amountStr,
-						TotalAmount:      totalAmountStr,
-						Fee:              feeStr,
-						Currency:         txReq.Currency,
-						VaultUUID:        vaultUUID,
-						ReceivingAddress: walletAddress,
-						Type:             consts.TransactionTypeDeposit,
-						DepositType:      consts.DepositTypeExternal,
-						Status:           1, // 1 = completed
-					}
-
-					if err := h.store.CreateTransaction(tx); err != nil {
-						logger.Error("failed to create transaction", zap.String("transaction_id", txID), zap.Error(err))
-					}
-
-					if err := h.store.AddBalance(userUUID, txReq.Currency, amountFloat); err != nil {
-						logger.Error("failed to update balance for user", zap.String("user_id", userUUID), zap.Error(err))
-					}
-
-					// Send deposit webhook (matches GateHub webhook spec) with dynamic values
-					h.webhookManager.SendAsync("core.deposit.completed", userUUID, map[string]interface{}{
-						"tx_uuid":      txID,
-						"amount":       amountStr,      // From iframe form
-						"currency":     txReq.Currency, // From iframe form
-						"vault_uuid":   vaultUUID,      // Vault UUID for this currency
-						"address":      walletAddress,  // The wallet address that received the deposit
-						"deposit_type": "external",     // External deposit type (lowercase per spec)
-						"total_fees":   "0",            // Fees charged (matches GateHub spec)
-					})
-
-					logger.Info("sent deposit webhook", zap.String("user_id", userUUID), zap.String("amount", amountStr), zap.String("currency", txReq.Currency), zap.String("wallet_address", walletAddress))
-				} else {
-					logger.Error("no wallets found for user", zap.String("user_id", userUUID))
-				}
-			} else {
-				logger.Error("user not found", zap.String("user_id", userUUID), zap.Error(err))
-			}
-		} else {
-			logger.Warn("could not extract user uuid from bearer token")
-		}
+		h.processDeposit(w, bearer, &txReq)
+		return
 	}
 
 	// Return success response
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"success","message":"Transaction completed"}`))
+	h.sendCORSJSON(w, http.StatusOK, map[string]string{
+		"status":  "success",
+		"message": "Transaction completed",
+	})
 }
 
-// extractUserFromBearer extracts the user UUID from the bearer token
+// validateTransactionRequest checks that amount and currency are provided and valid
+func (h *Handler) validateTransactionRequest(txReq *TransactionRequest) error {
+	if txReq.Amount == "" {
+		return fmt.Errorf("amount is required")
+	}
+
+	if txReq.Currency == "" {
+		return fmt.Errorf("currency is required")
+	}
+
+	// Validate amount is numeric
+	if _, err := strconv.ParseFloat(txReq.Amount, 64); err != nil {
+		return fmt.Errorf("amount must be a valid number")
+	}
+
+	// Validate currency is supported
+	if !isSupportedCurrency(txReq.Currency) {
+		return fmt.Errorf("unsupported currency: %s", txReq.Currency)
+	}
+
+	return nil
+}
+
+// isSupportedCurrency checks if a currency is in the list of supported currencies
+func isSupportedCurrency(currency string) bool {
+	for _, c := range consts.SandboxCurrencies {
+		if c == currency {
+			return true
+		}
+	}
+	return false
+}
+
+// processDeposit handles the deposit transaction logic
+func (h *Handler) processDeposit(w http.ResponseWriter, bearer string, txReq *TransactionRequest) {
+	// Decode bearer to get user UUID
+	userUUID := h.extractUserFromBearer(bearer)
+
+	if userUUID == "" {
+		logger.Warn("could not extract user uuid from bearer token")
+		h.sendCORSError(w, http.StatusBadRequest, "Invalid bearer token")
+		return
+	}
+
+	// Get user to find their wallet address
+	user, err := h.store.GetUser(userUUID)
+	if err != nil || user == nil {
+		logger.Error("user not found", zap.String("user_id", userUUID), zap.Error(err))
+		h.sendCORSError(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	// Get user's wallets to find the deposit address
+	wallets, err := h.store.GetWalletsByUser(userUUID)
+	if err != nil {
+		logger.Error("failed to get wallets for user", zap.String("user_id", userUUID), zap.Error(err))
+		h.sendCORSError(w, http.StatusInternalServerError, "Failed to get wallets")
+		return
+	}
+
+	// If no wallets exist, create one automatically (consistent with GetUserWallets)
+	if len(wallets) == 0 {
+		logger.Info("no wallets found for user, creating one automatically", zap.String("user_id", userUUID))
+		address := utils.GenerateMockXRPLAddress()
+		wallet := &models.Wallet{
+			Address: address,
+			UserID:  userUUID,
+			Name:    "Default Wallet",
+			Type:    consts.WalletTypeStandard,
+			Network: consts.NetworkXRPLedger,
+		}
+		if err := h.store.CreateWallet(wallet); err != nil {
+			logger.Error("failed to auto-create wallet", zap.String("user_id", userUUID), zap.Error(err))
+			h.sendCORSError(w, http.StatusInternalServerError, "Failed to create wallet")
+			return
+		}
+		wallets = []*models.Wallet{wallet}
+	}
+
+	// Use the first wallet's address
+	walletAddress := wallets[0].Address
+
+	// Get vault_uuid for the currency
+	vaultUUID := consts.SandboxVaultIDs[txReq.Currency]
+
+	// Parse amount as float
+	amountFloat, _ := strconv.ParseFloat(txReq.Amount, 64)
+	amountStr := fmt.Sprintf("%.2f", amountFloat)
+	feeStr := "0.00"            // No fees in sandbox
+	totalAmountStr := amountStr // Total = amount + fees
+
+	txID := utils.GenerateUUID()
+
+	tx := &models.Transaction{
+		ID:               txID,
+		UserID:           userUUID,
+		Amount:           amountStr,
+		TotalAmount:      totalAmountStr,
+		Fee:              feeStr,
+		Currency:         txReq.Currency,
+		VaultUUID:        vaultUUID,
+		ReceivingAddress: walletAddress,
+		Type:             consts.TransactionTypeDeposit,
+		DepositType:      consts.DepositTypeExternal,
+		Status:           1, // 1 = completed
+	}
+
+	if err := h.store.CreateTransaction(tx); err != nil {
+		logger.Error("failed to create transaction", zap.String("transaction_id", txID), zap.Error(err))
+		h.sendCORSError(w, http.StatusInternalServerError, "Failed to create transaction")
+		return
+	}
+
+	if err := h.store.AddBalance(userUUID, txReq.Currency, amountFloat); err != nil {
+		logger.Error("failed to update balance for user", zap.String("user_id", userUUID), zap.Error(err))
+		h.sendCORSError(w, http.StatusInternalServerError, "Failed to update balance")
+		return
+	}
+
+	// Send deposit webhook (matches GateHub webhook spec) with dynamic values
+	h.webhookManager.SendAsync("core.deposit.completed", userUUID, map[string]interface{}{
+		"tx_uuid":      txID,
+		"amount":       amountStr,      // From iframe form
+		"currency":     txReq.Currency, // From iframe form
+		"vault_uuid":   vaultUUID,      // Vault UUID for this currency
+		"address":      walletAddress,  // The wallet address that received the deposit
+		"deposit_type": "external",     // External deposit type (lowercase per spec)
+		"total_fees":   "0",            // Fees charged (matches GateHub spec)
+	})
+
+	logger.Info("sent deposit webhook", zap.String("user_id", userUUID), zap.String("amount", amountStr), zap.String("currency", txReq.Currency), zap.String("wallet_address", walletAddress))
+
+	// Return success response
+	h.sendCORSJSON(w, http.StatusOK, map[string]string{
+		"status":  "success",
+		"message": "Transaction completed",
+	})
+}
+
+// sendCORSError writes an error response with CORS headers
+func (h *Handler) sendCORSError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(map[string]string{"error": message})
+}
+
+// sendCORSJSON writes a JSON response with CORS headers
+func (h *Handler) sendCORSJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Access-Control-Allow-Origin", "*")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(data)
+}
+
+// extractUserFromBearer extracts the user UUID from a bearer token string
+// It looks up the token in the stored token->user UUID mapping
 func (h *Handler) extractUserFromBearer(bearer string) string {
 	// Look up the user UUID from the token mapping
 	if userUUID, ok := h.tokenToUser.Load(bearer); ok {
@@ -326,8 +433,21 @@ func (h *Handler) extractUserFromBearer(bearer string) string {
 		}
 	}
 
-	logger.Debug("bearer token not found in mapping")
+	logger.Debug("bearer token not found in mapping", zap.String("token_prefix", bearer[:min(30, len(bearer))]))
 	return ""
+}
+
+// extractBearerFromAuthHeader extracts the bearer token from the Authorization header
+func extractBearerFromAuthHeader(authHeader string) string {
+	if len(authHeader) < 7 {
+		return ""
+	}
+
+	if authHeader[:7] != "Bearer " {
+		return ""
+	}
+
+	return authHeader[7:] // Return everything after "Bearer "
 }
 
 func min(a, b int) int {

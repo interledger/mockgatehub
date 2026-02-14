@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"os/exec"
 	"time"
 )
@@ -14,7 +15,28 @@ func startServices() error {
 	return cmd.Run()
 }
 
+// dumpLogs saves all container logs to testenv/lastlogs.txt for post-mortem analysis
+func dumpLogs() {
+	cmd := exec.Command("docker", "compose", "-f", "docker-compose.yml", "logs", "--no-color")
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to dump container logs: %v\n", err)
+		return
+	}
+	if err := os.WriteFile("lastlogs.txt", output, 0644); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to write lastlogs.txt: %v\n", err)
+	}
+}
+
 func cleanup() {
+	// Always dump logs before tearing down containers
+	dumpLogs()
+
+	if os.Getenv("KEEP_CONTAINERS") != "" {
+		fmt.Println("KEEP_CONTAINERS is set — skipping container teardown")
+		return
+	}
+
 	cmd := exec.Command("docker", "compose", "-f", "docker-compose.yml", "down", "-v")
 	cmd.Stdout = nil
 	cmd.Stderr = nil
@@ -34,11 +56,4 @@ func waitForServices() error {
 		time.Sleep(time.Second)
 	}
 	return fmt.Errorf("health check timed out after %d seconds", maxWaitSeconds)
-}
-
-func flushRedis() error {
-	cmd := exec.Command("docker", "exec", "mockgatehub-test-redis", "redis-cli", "-n", "0", "FLUSHDB")
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	return cmd.Run()
 }
