@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // ============ FEE CONFIGURATION STEPS ============
@@ -225,7 +226,7 @@ func mustJSON(v interface{}) string {
 
 // parseAmountCurrency parses "50.00 EUR" into amount float64 and currency string
 func parseAmountCurrency(s string) (float64, string, error) {
-	parts := splitAmountCurrency(s)
+	parts := strings.Fields(s)
 	if len(parts) != 2 {
 		return 0, "", fmt.Errorf("expected 'amount currency', got %q", s)
 	}
@@ -234,39 +235,4 @@ func parseAmountCurrency(s string) (float64, string, error) {
 		return 0, "", fmt.Errorf("invalid amount %q: %w", parts[0], err)
 	}
 	return amount, parts[1], nil
-}
-
-func splitAmountCurrency(s string) []string {
-	var parts []string
-	for _, p := range []string{" "} {
-		for _, part := range split(s, p) {
-			if part != "" {
-				parts = append(parts, part)
-			}
-		}
-	}
-	return parts
-}
-
-func split(s, sep string) []string {
-	result := make([]string, 0)
-	for s != "" {
-		idx := indexOf(s, sep)
-		if idx == -1 {
-			result = append(result, s)
-			break
-		}
-		result = append(result, s[:idx])
-		s = s[idx+len(sep):]
-	}
-	return result
-}
-
-func indexOf(s, substr string) int {
-	for i := 0; i+len(substr) <= len(s); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
 }
