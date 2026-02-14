@@ -182,11 +182,17 @@ func (h *Handler) RootHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Serialize consts for injection into the template as safe JavaScript
+	vaultJSON, _ := json.Marshal(consts.VaultUUIDToCurrency)
+	currenciesJSON, _ := json.Marshal(consts.SandboxCurrencies)
+
 	// Prepare data for template
-	data := map[string]string{
-		"PaymentType": paymentType,
-		"Bearer":      bearer,
-		"BearerShort": bearerShort,
+	data := map[string]interface{}{
+		"PaymentType":         paymentType,
+		"Bearer":              bearer,
+		"BearerShort":         bearerShort,
+		"VaultUUIDToCurrency": template.JS(vaultJSON),
+		"AvailableCurrencies": template.JS(currenciesJSON),
 	}
 
 	// Set headers
