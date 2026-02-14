@@ -24,7 +24,6 @@ unit-tests:
 
 e2e-tests:
 	@echo "Running feature e2e tests (godog)..."
-	@cd testenv && docker compose build --no-cache mockgatehub && docker compose up -d && cd ..
 	@go test -tags e2e -v -count=1 ./testenv/ -run TestFeatures
 
 # Run tests with coverage report
