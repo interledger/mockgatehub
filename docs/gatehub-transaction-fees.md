@@ -6,6 +6,39 @@ This document explains how transaction fees flow between GateHub, MockGateHub, a
 
 **Key Takeaway**: GateHub charges fees on deposits and withdrawals. The interledger-app backend correctly processes these fees (subtracting them from deposits, adding them to withdrawals). However, the **frontend currently hardcodes fee display as "0.00"** and tells users _"For a limited time, the Interledger Wallet will absorb all fees"_. In practice, MockGateHub also returns `fee: "0.00"`, so no fees are ever deducted in local development.
 
+### Fee Flow Architecture
+
+```mermaid
+flowchart TD
+    A["PUT /admin/fees<br/>{deposit_fee_percentage, withdrawal_fee_percentage}"]
+    A --> B["FeeConfig<br/>(Thread-safe)"]
+    
+    B --> C["TxType Resolution"]
+    
+    C -->|type=1<br/>deposit_type='external'| D["External Deposit"]
+    C -->|type=2<br/>deposit_type='hosted'| E["Hosted Transfer"]
+    C -->|type=3<br/>deposit_type='withdrawal'| F["Withdrawal"]
+    
+    D --> D1["fee = amount × deposit_fee% / 100<br/>total_amount = amount"]
+    E --> E1["fee = 0.00<br/>total_amount = amount"]
+    F --> F1["fee = amount × withdrawal_fee% / 100<br/>total_amount = amount + fee"]
+    
+    D1 --> G["Create & Store Transaction"]
+    E1 --> G
+    F1 --> G
+    
+    G --> H1["Webhook Response"]
+    G --> H2["GetTransaction Response"]
+    
+    H1 --> H1A["core.deposit.completed<br/>total_fees: '0'"]
+    H2 --> H2A["HTTP 200<br/>fee from config"]
+    
+    H1A --> I["interledger-app"]
+    H2A --> I
+    
+    I --> J["Fetch fee via GetTransaction<br/>Calculate: net = amount - fee"]
+```
+
 ## Fee Data Model
 
 ### GateHub API Transaction Response
@@ -169,113 +202,304 @@ if tx.ProviderFee != nil {
 
 So once a transaction is completed, the user can see the actual GateHub fee on the transaction detail page, even though the initiation screen showed `0.00`.
 
-## Current MockGateHub Implementation
+## MockGatehub Implementation
 
-### Transaction Fee (always zero)
+### Runtime-Configurable Fees
+
+MockGatehub now supports **runtime-configurable transaction fees** via the `/admin/fees` endpoint. This allows e2e tests to simulate non-zero fees without restarting the service.
+
+```go
+// internal/handler/fees.go — FeeConfig
+type FeeConfig struct {
+    mu                   sync.RWMutex
+    depositFeePercent    float64   // 0-100
+    withdrawalFeePercent float64   // 0-100
+}
+```
+
+**API:**
+- `GET /admin/fees` — Returns current fee percentages
+- `PUT /admin/fees` — Updates fee percentages (no authentication required)
+
+**Example:**
+```bash
+# Get current fees
+curl http://localhost:8080/admin/fees
+# {"deposit_fee_percentage": 1.5, "withdrawal_fee_percentage": 2.0}
+
+# Set deposit fee to 2.5%
+curl -X PUT http://localhost:8080/admin/fees \
+  -H "Content-Type: application/json" \
+  -d '{"deposit_fee_percentage": 2.5}'
+```
+
+### Fee Calculation
+
+Fees are calculated as a percentage and rounded to 2 decimal places:
+
+```go
+func CalculateFee(amount, percent float64) float64 {
+    raw := amount * percent / 100.0
+    return math.Round(raw*100) / 100
+}
+```
+
+Example: 2.5% fee on €100.00 = €2.50
+
+### Transaction Fee Assignment
+
+Fees are applied differently depending on transaction type:
+
+#### External Deposits (type=1, deposit_type="external")
+- Uses `depositFeePercent` from config
+- `amount`: The deposit amount (e.g., "100.00")
+- `fee`: Calculated fee (e.g., "1.50" for 1.5% of €100)
+- `total_amount`: Always equals `amount` (fee is metadata, not added)
 
 ```go
 // internal/handler/core.go — CreateTransaction
-feeStr := "0.00"            // Mock: no fees in sandbox
-totalAmountStr := amountStr  // Total = amount + fees
+feePercent := h.feeConfig.GetDepositFeePercent()
+feeAmount := CalculateFee(req.Amount, feePercent)
+feeStr := fmt.Sprintf("%.2f", feeAmount)
+totalAmountStr := amountStr  // Same as amount for deposits
+```
 
-// internal/handler/handler.go — CompleteTransaction (iframe)
-feeStr := "0.00"
-totalAmountStr := amountStr
+#### Withdrawals (deposit_type="withdrawal")
+- Uses `withdrawalFeePercent` from config
+- `amount`: The withdrawal amount (e.g., "50.00")
+- `fee`: Calculated fee (e.g., "1.00" for 2% of €50)
+- `total_amount`: `amount + fee` (total debited from balance)
+
+```go
+// E.g., withdraw €50 with 2% fee
+// amount: "50.00"
+// fee: "1.00"
+// total_amount: "51.00"
+if req.DepositType == "withdrawal" {
+    totalAmountStr = fmt.Sprintf("%.2f", req.Amount+feeAmount)
+}
+```
+
+#### Hosted Transfers (type=2, deposit_type="hosted")
+- Always zero fee regardless of config
+- `amount`: "100.00"
+- `fee`: "0.00"
+- `total_amount`: "100.00"
+
+### Iframe Deposits
+
+The `POST /transaction/complete` endpoint (iframe deposit) also applies deposit fees:
+
+```go
+// internal/handler/handler.go — processDeposit
+feePercent := h.feeConfig.GetDepositFeePercent()
+feeAmount := CalculateFee(amountFloat, feePercent)
+feeStr := fmt.Sprintf("%.2f", feeAmount)
+totalAmountStr := amountStr  // Fee is metadata for deposits
 ```
 
 ### GetTransaction Response
 
+The fee persists in transaction responses:
+
 ```go
-// internal/handler/core.go — GetTransaction
-// Returns the stored Transaction struct directly, including the fee field
+// Returns the stored Transaction struct with fee field
 tx, err := h.store.GetTransaction(txID)
 h.sendJSON(w, http.StatusOK, tx)
 ```
 
-The `models.Transaction` struct:
+The `models.Transaction` struct includes:
 
 ```go
 type Transaction struct {
     ID          string `json:"uuid"`
     Amount      string `json:"amount"`
     TotalAmount string `json:"total_amount"`
-    Fee         string `json:"fee"`           // ← the app reads this
+    Fee         string `json:"fee"`           // ← filled from config
     Status      int    `json:"status"`
     // ...
 }
 ```
 
+**Example transaction response with fees:**
+```json
+{
+  "uuid": "tx-123",
+  "amount": "100.00",
+  "total_amount": "100.00",
+  "fee": "1.50",
+  "status": 100,
+  "type": 1,
+  "deposit_type": "external"
+}
+```
+
 ### Webhook Payload
 
-The deposit webhook includes `total_fees` but the interledger-app **ignores** this field — it fetches the fee separately via `GetTransaction`:
+Deposit webhooks are emitted after transaction creation:
 
 ```go
 // From handler.go (iframe deposit)
-"total_fees": "0"
-
-// From core.go (API deposit) — no total_fees field at all
+h.webhookManager.SendAsync("core.deposit.completed", userUUID, map[string]interface{}{
+    "tx_uuid":      txID,
+    "amount":       amountStr,      // Original amount
+    "currency":     currency,
+    "address":      walletAddress,
+    "deposit_type": "external",
+    "total_fees":   "0",            // Always "0" in webhook (matches GateHub spec)
+})
 ```
 
-## What Needs to Change for Fee Support
+**Note:** The webhook `total_fees` is always "0" to match GateHub's sandbox behavior. The interledger-app fetches the actual fee via `GET /core/v1/transactions/{id}` (which will reflect the configured fee).
 
-### MockGateHub Changes
+### Defaults and Thread Safety
 
-To simulate realistic fees, MockGateHub would need to:
+Fees default to **0%** for backward compatibility:
+- New `FeeConfig` instances start with `depositFeePercent=0` and `withdrawalFeePercent=0`
+- All access is protected by `sync.RWMutex` for thread-safe concurrent updates
+- Changes via `/admin/fees` are immediately visible to subsequent transactions
 
-1. **Define fee rates** — either as constants in `internal/consts/` or as environment variables for flexibility:
-   - Deposit fee (e.g., 1.5% or flat €1.50)
-   - Withdrawal fee (e.g., flat €1.00)
-   - Possibly per-currency fee rates
+## Testing Fee Behavior
 
-2. **Calculate fees in transaction creation** — when creating a deposit/withdrawal transaction:
-   ```
-   fee = calculateFee(amount, currency, transactionType)
-   total_amount = amount + fee  (for deposits: total charged)
-   ```
+### BDD Feature Tests
 
-3. **Return fee in GetTransaction** — the `fee` field must be non-zero so the interledger-app can read it:
-   ```json
-   {
-     "fee": "1.50",
-     "amount": "100.00",
-     "total_amount": "101.50"
-   }
-   ```
+MockGatehub includes comprehensive BDD scenarios in `features/fee_configuration.feature`:
 
-4. **Optionally include in webhook** — though the app ignores `total_fees` in the webhook payload and prefers `GetTransaction`, maintaining consistency is good practice.
-
-### What Does NOT Need to Change
-
-- **Interledger-app backend** — already handles non-zero fees correctly (`net = amount - fee`)
-- **Transaction model** — `Fee`, `Amount`, `TotalAmount` fields already exist as strings
-- **GetTransaction endpoint** — already returns the full transaction including `fee`
-
-### Missing Response Fields
-
-The interledger-app's `external.Transaction` type expects fields that MockGateHub currently doesn't return:
-
-```go
-// Expected by interledger-app but missing from MockGateHub response:
-SendingWallet   Wallet `json:"sending_wallet"`
-ReceivingWallet Wallet `json:"receiving_wallet"`
-Vault           Vault  `json:"vault"`
+```gherkin
+Scenario: Deposit with 1.5% fee
+  Given deposit fee is configured to 1.5%
+  And a managed user with at least one wallet address
+  When I POST /core/v1/transactions with type 1, deposit_type "external", 
+       amount 100.00, currency "EUR", and a valid vault_uuid
+  Then the response status is 201
+  And the transaction fee is "1.50"
+  And the transaction total_amount is "100.00"
+  When I GET /core/v1/transactions/{txId}
+  Then the transaction fee is "1.50"
 ```
 
-These may need to be added if the app starts using them for fee-related logic or if their absence causes unmarshalling issues.
+Run all tests:
+```bash
+go test -tags e2e ./testenv/...
+```
+
+### Unit Test Coverage
+
+Fee functionality includes 23 unit tests covering:
+- FeeConfig defaults, setters, getters
+- CalculateFee() with various percentages and rounding
+- Admin endpoint validation (0-100% range)
+- Fee persistence across requests
+- Deposit fee application
+- Withdrawal fee application
+- Hosted transfer immunity from fees
+- Fee visibility in GetTransaction responses
+
+Run unit tests:
+```bash
+go test ./internal/handler/...
+```
+
+### Example Test Workflow
+
+```bash
+# 1. Set deposit fee to 2.5%
+curl -X PUT http://localhost:8080/admin/fees \
+  -H "Content-Type: application/json" \
+  -d '{"deposit_fee_percentage": 2.5}'
+
+# Response:
+# {"deposit_fee_percentage": 2.5, "withdrawal_fee_percentage": 0}
+
+# 2. Create a €100 deposit
+curl -X POST http://localhost:8080/core/v1/transactions \
+  -H "Content-Type: application/json" \
+  -H "x-gatehub-app-id: test-app" \
+  -H "x-gatehub-timestamp: $(date +%s)000" \
+  -H "x-gatehub-signature: ..." \
+  -d '{
+    "user_id": "user-123",
+    "amount": 100.00,
+    "currency": "EUR",
+    "type": 1,
+    "deposit_type": "external"
+  }'
+
+# Response includes:
+# {
+#   "uuid": "tx-456",
+#   "amount": "100.00",
+#   "fee": "2.50",
+#   "total_amount": "100.00",
+#   "status": 100
+# }
+
+# 3. Fetch transaction to verify fee persists
+curl http://localhost:8080/core/v1/transactions/tx-456
+
+# Response confirms fee:
+# {"fee": "2.50", ...}
+```
+
+## Interledger-App Integration
+
+### How the App Uses Fees
+
+1. **Webhook arrives** with deposit notification (no fee in webhook)
+2. **App calls** `GetFeeFromGatehubTrasaction` activity → fetches transaction from MockGatehub
+3. **MockGatehub returns** transaction with `fee` field (e.g., "2.50")
+4. **App calculates** credited amount: `100.00 - 2.50 = 97.50`
+5. **App stores** transaction with `provider_fee` = 250 (scaled)
+6. **App credits** user balance with net amount (97.50)
+
+### Setting Fees for Testing
+
+To test the interledger-app's fee handling in local development:
+
+```bash
+# In a test setup script, before running the app:
+curl -X PUT http://localhost:8080/admin/fees \
+  -H "Content-Type: application/json" \
+  -d '{"deposit_fee_percentage": 1.5, "withdrawal_fee_percentage": 2.0}'
+
+# Now all deposits will have 1.5% fee and withdrawals will have 2% fee
+# The app's balance logic will deduct fees from deposits automatically
+```
+
+## Known Limitations and Future Enhancements
+
+### Current Design
+- Fees are **percentage-based** (not flat amounts)
+- Fees are **uniform across all currencies** (not per-currency)
+- Fees are **volatile** (lost on service restart unless persisted)
+- No authentication required for `/admin/fees` (by design for testing)
+
+### Potential Enhancements
+1. **Flat fees**: Support fixed amounts (e.g., "€1.00") in addition to percentages
+2. **Per-currency rates**: Different fees for different currencies
+3. **Fee persistence**: Store fees in Redis/database
+4. **Protected endpoint**: Add authentication to `/admin/fees` in production mode
+5. **Fee history**: Log fee changes for audit trail
+6. **Transaction-specific overrides**: Allow per-transaction fee modifications
 
 ## Relationship Between `amount`, `total_amount`, and `fee`
 
-The GateHub transaction API uses this convention:
+MockGatehub follows the GateHub transaction API convention:
 
 | Field | Deposits | Withdrawals |
 |-------|----------|-------------|
 | `amount` | Gross deposit amount | Net withdrawal amount |
-| `fee` | Fee charged | Fee charged |
-| `total_amount` | `amount` (same) | `amount + fee` |
+| `fee` | Fee charged (from config) | Fee charged (from config) |
+| `total_amount` | `amount` (fee is metadata) | `amount + fee` (total to debit) |
+
+**Why deposits and withdrawals differ:**
+
+- **Deposits**: The vault receives the full `amount`, and the `fee` is applied at the GateHub provider level. MockGatehub mirrors this by storing the fee as metadata while the full amount goes to the balance.
+- **Withdrawals**: The user's balance is immediately debited for `amount + fee` to prevent overdrafts. The fee is deducted upfront.
 
 The interledger-app calculates the net user credit as:
-- **Deposits**: `credited = amount - fee`
-- **Withdrawals**: `debited = amount + fee` (reserved from balance)
+- **Deposits**: `credited = amount - fee` (from the InterledgerTransaction.ProviderFee field)
+- **Withdrawals**: `debited = amount + fee` (reserved from balance before transaction confirmation)
 
 ## Transaction Status Codes
 
