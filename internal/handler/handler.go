@@ -217,15 +217,14 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 
 	paymentType := r.URL.Query().Get("paymentType")
 
-	// Try to get bearer from Authorization header first (HTTP standard)
-	bearer := ""
-	if authHeader := r.Header.Get("Authorization"); authHeader != "" {
-		bearer = extractBearerFromAuthHeader(authHeader)
-	}
+	// Try to get bearer from query parameter first (consistent with GetUserCurrencies)
+	bearer := r.URL.Query().Get("bearer")
 
-	// Fall back to query parameter if not in Authorization header
+	// Fall back to Authorization header if not in query parameter
 	if bearer == "" {
-		bearer = r.URL.Query().Get("bearer")
+		if authHeader := r.Header.Get("Authorization"); authHeader != "" {
+			bearer = extractBearerFromAuthHeader(authHeader)
+		}
 	}
 
 	if bearer == "" {
