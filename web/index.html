@@ -117,20 +117,10 @@
 		const urlParams = new URLSearchParams(window.location.search);
 		const vaultUUID = urlParams.get('vault_uuid');
 		
-		// Vault UUID to currency mapping (matches backend consts)
-		const vaultUUIDToCurrency = {
-			"450d2156-132a-4d3f-88c5-74822547658d": "USD",
-			"a09a0a2c-1a3a-44c5-a1b9-603a6eea9341": "EUR",
-			"8c3e4d5f-6a7b-8c9d-0e1f-2a3b4c5d6e7f": "GBP",
-			"9d4f5e6a-7b8c-9d0e-1f2a-3b4c5d6e7f8a": "ZAR",
-			"0e5f6a7b-8c9d-0e1f-2a3b-4c5d6e7f8a9b": "MXN",
-			"1f6a7b8c-9d0e-1f2a-3b4c-5d6e7f8a9b0c": "SGD",
-			"2a7b8c9d-0e1f-2a3b-4c5d-6e7f8a9b0c1d": "CAD",
-			"3b8c9d0e-1f2a-3b4c-5d6e-7f8a9b0c1d2e": "EGG",
-			"4c9d0e1f-2a3b-4c5d-6e7f-8a9b0c1d2e3f": "PEB",
-			"5d0e1f2a-3b4c-5d6e-7f8a-9b0c1d2e3f4a": "PKR",
-			"6e1f2a3b-4c5d-6e7f-8a9b-0c1d2e3f4a5b": "XRP"
-		};
+		// Vault UUID to currency mapping (injected from backend consts)
+		const vaultUUIDToCurrency = {{.VaultUUIDToCurrency}};
+		// All sandbox currencies (injected from backend consts)
+		const availableCurrencies = {{.AvailableCurrencies}};
 		
 		// Infer currency from vault_uuid
 		let currencyFromVault = null;
@@ -161,8 +151,8 @@
 				return data.currencies || [];
 			} catch (error) {
 				console.error("Error fetching user currencies:", error);
-				// Return default currencies as fallback
-				return ["USD", "EUR", "CAD", "GBP", "JPY", "AUD", "CHF", "CNY", "INR", "AED", "PEB", "XRP"];
+				// Fallback to sandbox currencies injected from backend
+				return availableCurrencies;
 			}
 		}
 		
@@ -316,16 +306,17 @@
 				}
 			}).catch(error => {
 				console.error("Failed to fetch user currencies:", error);
-				// Fallback to default currencies
+				// Fallback to sandbox currencies
 				const currencySelect = document.getElementById("currency");
 				if (!currencySelect) return;
-				currencySelect.innerHTML = "<option>USD</option><option>EUR</option><option>CAD</option><option>GBP</option>";
+				currencySelect.innerHTML = availableCurrencies.map(c => "<option>" + c + "</option>").join("");
 			});
 			
 		} else if (paymentType === "withdraw") {
 			content.innerHTML = "<h2>Withdraw Funds</h2><p>Enter the amount and destination to withdraw funds from your wallet.</p><div style=\"margin: 20px 0;\"><label>Amount:</label><br><input type=\"number\" id=\"amount\" placeholder=\"0.00\" value=\"50\" style=\"padding: 8px; font-size: 16px; width: 100%;\"><br><br><label>Destination Address:</label><br><input type=\"text\" placeholder=\"Wallet address\" style=\"padding: 8px; font-size: 16px; width: 100%;\"><br></div>";
 		} else if (paymentType === "exchange") {
-			content.innerHTML = "<h2>Exchange Funds</h2><p>Exchange funds between different currencies.</p><div style=\"margin: 20px 0;\"><label>From Amount:</label><br><input type=\"number\" id=\"from_amount\" placeholder=\"0.00\" value=\"100\" style=\"padding: 8px; font-size: 16px; width: 100%;\"><br><br><label>From Currency:</label><br><select id=\"from_currency\" style=\"padding: 8px; font-size: 16px; width: 100%;\"><option>USD</option><option>EUR</option><option>CAD</option></select><br><br><label>To Currency:</label><br><select id=\"to_currency\" style=\"padding: 8px; font-size: 16px; width: 100%;\"><option>EUR</option><option>USD</option><option>CAD</option></select></div>";
+			const currencyOptions = availableCurrencies.map(c => "<option>" + c + "</option>").join("");
+			content.innerHTML = "<h2>Exchange Funds</h2><p>Exchange funds between different currencies.</p><div style=\"margin: 20px 0;\"><label>From Amount:</label><br><input type=\"number\" id=\"from_amount\" placeholder=\"0.00\" value=\"100\" style=\"padding: 8px; font-size: 16px; width: 100%;\"><br><br><label>From Currency:</label><br><select id=\"from_currency\" style=\"padding: 8px; font-size: 16px; width: 100%;\">"+currencyOptions+"</select><br><br><label>To Currency:</label><br><select id=\"to_currency\" style=\"padding: 8px; font-size: 16px; width: 100%;\">"+currencyOptions+"</select></div>";
 		} else {
 			content.innerHTML = "<h2>Account Setup</h2><p>Complete your account verification and setup your payment preferences.</p><div style=\"margin: 20px 0;\"><label>Full Name:</label><br><input type=\"text\" placeholder=\"John Doe\" style=\"padding: 8px; font-size: 16px; width: 100%;\"><br><br><label>Email:</label><br><input type=\"email\" placeholder=\"john@example.com\" style=\"padding: 8px; font-size: 16px; width: 100%;\"><br></div>";
 		}

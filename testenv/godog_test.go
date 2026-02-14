@@ -60,6 +60,9 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^I POST (/[^ ]+)$`, tc.postEndpoint)
 	ctx.Step(`^the response contains a token for the KYC flow$`, tc.responseHasKYCToken)
 	ctx.Step(`^GET (.+) shows kyc_state "([^"]*)" and risk_level "([^"]*)"$`, tc.getShowsKYCState)
+	// Specific GET patterns must come before generic GET pattern below
+	ctx.Step(`^I GET /core/v1/wallets/\{walletAddress\}/balances$`, tc.getWalletBalance)
+	ctx.Step(`^I GET /wallets/\{walletAddress\}/balances$`, tc.getWalletBalance)
 	ctx.Step(`^I GET (/[^ ]+)$`, tc.getEndpoint)
 	ctx.Step(`^the response is HTML that mentions "([^"]*)" and "([^"]*)"$`, tc.responseIsHTMLMentioning)
 
@@ -102,6 +105,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^a managed user id produced by (.+)$`, tc.managedUserFromEndpoint)
 	ctx.Step(`^a wallets array is returned with at least one wallet$`, tc.walletsArrayReturned)
 	ctx.Step(`^the first wallet address starts with "([^"]*)"$`, tc.firstWalletStartsWith)
+	ctx.Step(`^the ([A-Z]+) balance is "([^"]*)"$`, tc.currencyBalanceIs)
 
 	// Rates steps
 	ctx.Step(`^MockGatehub is running and requests include valid HMAC headers$`, tc.mockgatehubRunningWithHeaders)
@@ -175,4 +179,26 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^fields amount, total_amount, and fee are string formatted with two decimals$`, tc.fieldsAreStringFormatted)
 	ctx.Step(`^status is integer (\d+)$`, tc.statusIsInteger)
 	ctx.Step(`^the transaction can be retrieved via GET \/core\/v(\d+)\/transactions\/{id} with the same format$`, tc.transactionCanBeRetrievedFormatted)
+
+	// Fee configuration steps
+	ctx.Step(`^deposit fee is configured to ([\d.]+)%$`, tc.depositFeeConfigured)
+	ctx.Step(`^withdrawal fee is configured to ([\d.]+)%$`, tc.withdrawalFeeConfigured)
+	ctx.Step(`^I GET /admin/fees without authentication$`, tc.getAdminFeesWithoutAuth)
+	ctx.Step(`^I PUT /admin/fees without authentication and body (.+)$`, tc.putAdminFeesWithoutAuth)
+	ctx.Step(`^I PUT /admin/fees without any HMAC headers and body (.+)$`, tc.putAdminFeesWithoutAnyHMAC)
+	ctx.Step(`^the deposit fee percentage is ([\d.]+)$`, tc.depositFeePercentageIs)
+	ctx.Step(`^the withdrawal fee percentage is ([\d.]+)$`, tc.withdrawalFeePercentageIs)
+	ctx.Step(`^the transaction fee is "([^"]*)"$`, tc.transactionFeeIs)
+	ctx.Step(`^the transaction total_amount is "([^"]*)"$`, tc.transactionTotalAmountIs)
+	ctx.Step(`^the transaction amount is "([^"]*)"$`, tc.transactionAmountIs)
+	ctx.Step(`^I POST /core/v1/transactions with type (\d+), deposit_type "([^"]*)", amount ([\d.]+), currency "([^"]*)", and a valid vault_uuid$`, tc.postDepositWithFeeFields)
+	ctx.Step(`^I GET /core/v1/transactions/\{txId\}$`, tc.getTransactionByID)
+	ctx.Step(`^I create a withdrawal transaction for ([\d.]+ [A-Z]+)$`, func(amountCurrency string) error {
+		amount, currency, err := parseAmountCurrency(amountCurrency)
+		if err != nil {
+			return err
+		}
+		return tc.createWithdrawalTransaction(amount, currency)
+	})
+	ctx.Step(`^I POST /core/v1/transactions with user_id, amount ([\d.]+), currency "([^"]*)", type (\d+), and deposit_type "([^"]*)"$`, tc.postHostedTransferWithFeeFields)
 }

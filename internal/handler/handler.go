@@ -28,6 +28,7 @@ type Handler struct {
 	store          storage.Storage
 	webhookManager *webhook.Manager
 	tokenToUser    sync.Map // Maps bearer tokens to user UUIDs
+	feeConfig      *FeeConfig
 }
 
 // TransactionRequest represents a transaction request from the iframe
@@ -42,6 +43,7 @@ func NewHandler(store storage.Storage, webhookManager *webhook.Manager) *Handler
 	return &Handler{
 		store:          store,
 		webhookManager: webhookManager,
+		feeConfig:      NewFeeConfig(),
 	}
 }
 
@@ -182,11 +184,27 @@ func (h *Handler) RootHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Serialize consts for injection into the template as safe JavaScript
+	vaultJSON, err := json.Marshal(consts.VaultUUIDToCurrency)
+	if err != nil {
+		logger.Error("failed to marshal vault UUID mapping", zap.Error(err))
+		http.Error(w, "Template data preparation error", http.StatusInternalServerError)
+		return
+	}
+	currenciesJSON, err := json.Marshal(consts.SandboxCurrencies)
+	if err != nil {
+		logger.Error("failed to marshal currencies", zap.Error(err))
+		http.Error(w, "Template data preparation error", http.StatusInternalServerError)
+		return
+	}
+
 	// Prepare data for template
-	data := map[string]string{
-		"PaymentType": paymentType,
-		"Bearer":      bearer,
-		"BearerShort": bearerShort,
+	data := map[string]interface{}{
+		"PaymentType":         paymentType,
+		"Bearer":              bearer,
+		"BearerShort":         bearerShort,
+		"VaultUUIDToCurrency": template.JS(string(vaultJSON)),
+		"AvailableCurrencies": template.JS(string(currenciesJSON)),
 	}
 
 	// Set headers
@@ -356,8 +374,13 @@ func (h *Handler) processDeposit(w http.ResponseWriter, bearer string, txReq *Tr
 	// Parse amount as float
 	amountFloat, _ := strconv.ParseFloat(txReq.Amount, 64)
 	amountStr := fmt.Sprintf("%.2f", amountFloat)
-	feeStr := "0.00"            // No fees in sandbox
-	totalAmountStr := amountStr // Total = amount + fees
+
+	// Calculate deposit fee
+	feePercent := h.feeConfig.GetDepositFeePercent()
+	feeAmount := CalculateFee(amountFloat, feePercent)
+	feeStr := fmt.Sprintf("%.2f", feeAmount)
+	// For deposits, total_amount = amount (fee is charged separately by GateHub)
+	totalAmountStr := amountStr
 
 	txID := utils.GenerateUUID()
 

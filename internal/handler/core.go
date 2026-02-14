@@ -181,9 +181,9 @@ func (h *Handler) GetWalletBalance(w http.ResponseWriter, r *http.Request) {
 	for _, currency := range consts.SandboxCurrencies {
 		balance, _ := h.store.GetBalance(wallet.UserID, currency)
 		balances = append(balances, models.WalletBalanceResponse{
-			Available: fmt.Sprintf("%g", balance),
-			Pending:   "0",
-			Total:     fmt.Sprintf("%g", balance),
+			Available: fmt.Sprintf("%.2f", balance),
+			Pending:   "0.00",
+			Total:     fmt.Sprintf("%.2f", balance),
 			Vault: models.VaultSummary{
 				UUID:      consts.SandboxVaultIDs[currency],
 				Name:      fmt.Sprintf("Sandbox Vault %s", currency),
@@ -284,8 +284,26 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 
 	// Format amounts as strings to match GateHub API
 	amountStr := fmt.Sprintf("%.2f", req.Amount)
-	feeStr := "0.00"            // Mock: no fees in sandbox
-	totalAmountStr := amountStr // Total = amount + fee
+
+	// Calculate fee based on transaction type:
+	// - External deposits: use deposit fee percentage
+	// - Withdrawals: use withdrawal fee percentage
+	// - Hosted transfers: always free
+	var feePercent float64
+	switch req.DepositType {
+	case consts.DepositTypeExternal:
+		feePercent = h.feeConfig.GetDepositFeePercent()
+	case "withdrawal":
+		feePercent = h.feeConfig.GetWithdrawalFeePercent()
+	}
+	feeAmount := CalculateFee(req.Amount, feePercent)
+	feeStr := fmt.Sprintf("%.2f", feeAmount)
+	// For deposits: total_amount = amount (fee is charged separately by GateHub)
+	// For withdrawals: total_amount = amount + fee (total deducted)
+	totalAmountStr := amountStr
+	if req.DepositType == "withdrawal" {
+		totalAmountStr = fmt.Sprintf("%.2f", req.Amount+feeAmount)
+	}
 
 	tx := &models.Transaction{
 		UserID:           req.UserID,
@@ -318,6 +336,7 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 		userID := req.UserID
 		currency := req.Currency
 		amount := req.Amount
+		feeAmount := feeAmount // Capture fee amount from outer scope
 		depositType := req.DepositType
 		receivingAddr := req.ReceivingAddress
 		hasWebhook := h.webhookManager.HasURL()
@@ -341,12 +360,20 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			if err := h.store.AddBalance(userID, currency, amount); err != nil {
+			// For deposits, credit the net amount (amount - fee)
+			// For withdrawals, would debit total amount (amount + fee), but that's handled separately
+			netAmount := amount - feeAmount
+			if err := h.store.AddBalance(userID, currency, netAmount); err != nil {
 				logger.Error("failed to update balance for transaction", zap.String("transaction_id", txID), zap.Error(err))
 				return
 			}
 
-			logger.Info("transaction completed", zap.String("transaction_id", txID), zap.Float64("amount", amount), zap.String("currency", currency))
+			logger.Info("transaction completed",
+				zap.String("transaction_id", txID),
+				zap.Float64("amount", amount),
+				zap.Float64("fee", feeAmount),
+				zap.Float64("net_amount", netAmount),
+				zap.String("currency", currency))
 
 			if hasWebhook {
 				completedPayload := map[string]interface{}{

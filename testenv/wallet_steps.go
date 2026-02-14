@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ============ WALLET STEPS ============
@@ -83,4 +84,48 @@ func (tc *TestContext) managedUserWithWalletAddress() error {
 
 	tc.lastResponse = resp
 	return nil
+}
+
+func (tc *TestContext) getWalletBalance() error {
+	// Wait for async balance update to complete
+	// (deposits are processed asynchronously with 2s delay when webhook URL is configured)
+	fmt.Println("===== getWalletBalance: STARTING 3-SECOND WAIT =====")
+	time.Sleep(3 * time.Second)
+	fmt.Println("===== getWalletBalance: WAIT COMPLETE, MAKING REQUEST =====")
+
+	// Use placeholder pattern - will be replaced by replacePlaceholders
+	path := "/core/v1/wallets/{walletAddress}/balances"
+
+	resp, err := tc.request("GET", path, nil, nil)
+	if err != nil {
+		return err
+	}
+
+	tc.lastResponse = resp
+	return nil
+}
+
+func (tc *TestContext) currencyBalanceIs(currency, expectedBalance string) error {
+	// Parse the balance response (an array of balance objects)
+	var balances []map[string]interface{}
+	if err := json.Unmarshal(tc.lastResponseBody, &balances); err != nil {
+		return fmt.Errorf("failed to unmarshal balance response: %w. Response: %s", err, string(tc.lastResponseBody))
+	}
+
+	// Find the balance for the specified currency
+	for _, balance := range balances {
+		if vault, ok := balance["vault"].(map[string]interface{}); ok {
+			if assetCode, ok := vault["asset_code"].(string); ok && assetCode == currency {
+				// Found the currency, check the available balance
+				if available, ok := balance["available"].(string); ok {
+					if available != expectedBalance {
+						return fmt.Errorf("expected %s balance to be %s, got %s", currency, expectedBalance, available)
+					}
+					return nil
+				}
+			}
+		}
+	}
+
+	return fmt.Errorf("currency %s not found in balance response", currency)
 }
