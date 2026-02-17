@@ -68,7 +68,7 @@ func (h *Handler) RequestLogger(next http.Handler) http.Handler {
 			headers[k] = strings.Join(v, ", ")
 		}
 
-		logger.Info("request incoming",
+		logger.Debug("request incoming",
 			zap.String("method", r.Method),
 			zap.String("path", r.URL.Path),
 			zap.String("query", r.URL.RawQuery),
@@ -82,7 +82,7 @@ func (h *Handler) RequestLogger(next http.Handler) http.Handler {
 		next.ServeHTTP(wrapped, r)
 
 		duration := time.Since(start)
-		logger.Info("request completed",
+		logger.Debug("request completed",
 			zap.String("method", r.Method),
 			zap.String("path", r.URL.Path),
 			zap.Int("status", wrapped.statusCode),
