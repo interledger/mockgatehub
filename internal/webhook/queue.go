@@ -23,12 +23,16 @@ const (
 
 // Queue manages webhook job persistence in Redis
 type Queue struct {
-	client *redis.Client
+	client   *redis.Client
+	minDelay time.Duration
 }
 
 // NewQueue creates a new webhook queue
-func NewQueue(client *redis.Client) *Queue {
-	return &Queue{client: client}
+func NewQueue(client *redis.Client, minDelaySec int) *Queue {
+	return &Queue{
+		client:   client,
+		minDelay: time.Duration(minDelaySec) * time.Second,
+	}
 }
 
 // Enqueue adds a new webhook job to the queue
@@ -46,7 +50,7 @@ func (q *Queue) Enqueue(ctx context.Context, eventType, userID string, data any)
 		Attempts:  0,
 		Status:    JobStatusPending,
 		CreatedAt: time.Now(),
-		NotBefore: time.Now(), // Ready immediately
+		NotBefore: time.Now().Add(q.minDelay), // Apply minimum delay for race condition testing
 	}
 
 	// Serialize job to JSON

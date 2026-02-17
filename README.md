@@ -45,6 +45,7 @@ The service will be available at `http://localhost:8080`
 | `MOCKGATEHUB_VALID_CREDENTIALS` | `local-test-app-id:local-test-app-secret` | Comma-separated list of valid credentials in format `appId:secret,appId2:secret2` |
 | `WEBHOOK_URL` | - | Application webhook endpoint URL |
 | `WEBHOOK_SECRET` | - | Secret for signing webhooks |
+| `WEBHOOK_MIN_DELAY_SEC` | `2` | Minimum delay (in seconds) before webhooks become ready for delivery (for testing race conditions) |
 
 ### Pre-seeded Test Users
 
