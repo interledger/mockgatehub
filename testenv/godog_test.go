@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"testing"
 
@@ -201,4 +202,20 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 		return tc.createWithdrawalTransaction(amount, currency)
 	})
 	ctx.Step(`^I POST /core/v1/transactions with user_id, amount ([\d.]+), currency "([^"]*)", type (\d+), and deposit_type "([^"]*)"$`, tc.postHostedTransferWithFeeFields)
+
+	// User-specific fee configuration steps
+	ctx.Step(`^I GET /admin/users/\{userId\}/fees without authentication$`, func() error {
+		return tc.getUserFeesWithoutAuth(tc.userID)
+	})
+	ctx.Step(`^I PUT /admin/users/\{userId\}/fees without authentication and body (.+)$`, func(bodyJSON string) error {
+		return tc.setUserFeesWithoutAuth(tc.userID, bodyJSON)
+	})
+	ctx.Step(`^I DELETE /admin/users/\{userId\}/fees without authentication$`, func() error {
+		return tc.clearUserFeesWithoutAuth(tc.userID)
+	})
+	ctx.Step(`^the (deposit|withdrawal) fee source is "([^"]*)"$`, tc.userFeeSourceIs)
+	ctx.Step(`^user-specific deposit fee is set to ([\d.]+)%$`, func(percent float64) error {
+		bodyJSON := fmt.Sprintf(`{"deposit_fee_percentage": %.1f}`, percent)
+		return tc.setUserFeesWithoutAuth(tc.userID, bodyJSON)
+	})
 }

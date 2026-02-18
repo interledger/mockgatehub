@@ -160,3 +160,38 @@ Feature: Fee configuration and application
     And the transaction total_amount is "100.00"
     When I GET /core/v1/wallets/{walletAddress}/balances
     Then the EUR balance is "100.00"
+
+  # ── User-specific fee configuration ─────────────────────────────────
+
+  Scenario: Get user-specific fees without authentication
+    Given a managed user with at least one wallet address
+    When I GET /admin/users/{userId}/fees without authentication
+    Then the response status is 200
+    And the deposit fee percentage is 0
+    And the withdrawal fee percentage is 0
+    And the deposit fee source is "global"
+    And the withdrawal fee source is "global"
+
+  Scenario: Set user-specific deposit fee without authentication
+    Given a managed user with at least one wallet address
+    When I PUT /admin/users/{userId}/fees without authentication and body {"deposit_fee_percentage": 2.5}
+    Then the response status is 200
+    And the deposit fee percentage is 2.5
+    And the deposit fee source is "user"
+    And the withdrawal fee source is "global"
+
+  Scenario: Set user-specific withdrawal fee without authentication
+    Given a managed user with at least one wallet address
+    When I PUT /admin/users/{userId}/fees without authentication and body {"withdrawal_fee_percentage": 3.0}
+    Then the response status is 200
+    And the withdrawal fee percentage is 3.0
+    And the withdrawal fee source is "user"
+    And the deposit fee source is "global"
+
+  Scenario: Clear user-specific fees without authentication
+    Given a managed user with at least one wallet address
+    And user-specific deposit fee is set to 2.5%
+    When I DELETE /admin/users/{userId}/fees without authentication
+    Then the response status is 200
+    And the deposit fee source is "global"
+    And the withdrawal fee source is "global"
