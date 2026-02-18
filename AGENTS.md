@@ -1,31 +1,18 @@
-# MockGatehub - AI Agent Development Guide
+# MockGatehub — AI Agent Development Guide
 
-This document provides comprehensive guidance for AI coding agents working on the MockGatehub project.
+Comprehensive guidance for AI coding agents working on the MockGatehub project.
 
 ## Project Context
 
-MockGatehub is a lightweight Golang mock implementation of the Gatehub API, designed to support local development and testing of wallet applications that integrate with Gatehub.
-
-### Why MockGatehub Exists
-
-Wallet applications that integrate with Gatehub typically use it for:
-- User identity and KYC verification
-- Fiat currency custody (vaults)
-- Multi-currency deposits and withdrawals
-- Card services
-
-MockGatehub removes the dependency on real Gatehub credentials and services, enabling:
-- Fully local development without external dependencies
-- Automated testing without API rate limits
-- Predictable behavior for CI/CD pipelines
-- Rapid iteration without affecting real Gatehub sandbox data
+MockGatehub is a Go mock implementation of the GateHub API, designed to support local development and testing of wallet applications that integrate with GateHub. It removes the dependency on real credentials and services, enabling fully local development, automated testing without API rate limits, and predictable behavior for CI/CD pipelines.
 
 ### Critical Constraints
 
-1. **API Compliance**: MockGatehub must be a drop-in replacement. Applications expect exact Gatehub API compliance.
-2. **Sandbox Parity Only**: Focus on happy paths and sandbox environment behavior. Production Gatehub features are out of scope.
+1. **API Compliance**: MockGatehub must be a drop-in GateHub replacement. Applications expect exact API format compliance.
+2. **Sandbox Parity Only**: Focus on happy paths and sandbox behavior. Production GateHub features are out of scope.
 3. **Multi-Currency Required**: Support all 11 currencies (XRP, USD, EUR, GBP, ZAR, MXN, SGD, CAD, EGG, PEB, PKR).
-4. **Immutable Vault UUIDs**: Vault identifiers are hardcoded and must never change (application databases may store these).
+4. **Immutable Vault UUIDs**: Vault identifiers are hardcoded in `internal/consts/consts.go` and must never change (application databases store these).
+5. **Redis Required for Webhooks**: The webhook queue always needs Redis, even in in-memory storage mode.
 
 ## Architecture Overview
 
@@ -34,630 +21,429 @@ MockGatehub removes the dependency on real Gatehub credentials and services, ena
 - **Language**: Go 1.24+
 - **HTTP Router**: chi v5 (lightweight, idiomatic)
 - **Storage**: Dual backend (memory for tests, Redis for runtime)
+- **Webhook Queue**: Redis-backed sorted-set job queue with background worker
+- **Logging**: Zap structured logging
+- **Testing**: testify (unit), godog/Cucumber (BDD E2E)
 - **Containerization**: Docker multi-stage build
-- **Testing**: testify for assertions
+- **CI/CD**: GitHub Actions with semantic-release
 
 ### Directory Structure
 
 ```
 mockgatehub/
-├── cmd/mockgatehub/           # Application entry point
-│   └── main.go                # HTTP server setup, routing
-├── internal/                  # Private application code
-│   ├── auth/                  # HMAC signature generation/validation
-│   │   ├── signature.go
+├── cmd/mockgatehub/               # Application entry point
+│   ├── main.go                    # Server setup, routing, startup
+│   └── main_test.go               # Route registration tests
+├── internal/                      # Private application code
+│   ├── auth/                      # HMAC signature generation/validation
+│   │   ├── middleware.go          # HTTP auth middleware (public endpoint whitelist)
+│   │   ├── middleware_test.go
+│   │   ├── signature.go           # Signature generation and verification
 │   │   └── signature_test.go
-│   ├── models/                # Domain & API models
-│   │   ├── models.go         # User, Wallet, Transaction
-│   │   └── api.go            # Request/response DTOs
-│   ├── storage/               # Storage layer
-│   │   ├── interface.go      # Storage contract
-│   │   ├── memory.go         # In-memory implementation
+│   ├── config/                    # Centralized configuration
+│   │   └── config.go             # Environment variable loading with defaults
+│   ├── consts/                    # Constants
+│   │   └── consts.go             # Currencies, vault IDs, rates, statuses, events
+│   ├── handler/                   # HTTP request handlers
+│   │   ├── handler.go            # Handler struct, RequestLogger, health check, root/iframe handlers
+│   │   ├── handler_test.go       # Handler tests
+│   │   ├── helpers.go            # sendJSON, sendError, setCORSHeaders, decodeJSON
+│   │   ├── auth.go               # /auth/v1 endpoints (tokens, managed users)
+│   │   ├── identity.go           # /id/v1 endpoints (KYC flow, iframe)
+│   │   ├── core.go               # /core/v1 endpoints (wallets, transactions)
+│   │   ├── cards.go              # /cards/v1 endpoints (full card lifecycle)
+│   │   ├── fees.go               # Fee configuration and admin endpoints
+│   │   ├── fees_test.go          # Fee calculation and API tests
+│   │   └── rates.go              # /rates/v1 endpoints (rates, vaults)
+│   ├── logger/                    # Logging setup
+│   │   └── logger.go            # Zap dual-core logger (stdout + stderr)
+│   ├── models/                    # Domain & API models
+│   │   ├── models.go            # User, Wallet, Transaction
+│   │   ├── api.go               # Request/response DTOs
+│   │   ├── messages.go          # Complex response types (user profile, wallet balance)
+│   │   └── cards.go             # Card-related models (Customer, Card, Account, etc.)
+│   ├── storage/                   # Storage layer
+│   │   ├── interface.go         # Storage contract (~30 methods)
+│   │   ├── memory.go            # In-memory implementation (sync.RWMutex)
 │   │   ├── memory_test.go
-│   │   ├── redis.go          # Redis implementation
-│   │   └── seeder.go         # Test user seeding
-│   ├── handler/               # HTTP handlers
-│   │   ├── handler.go        # Handler struct & dependencies
-│   │   ├── auth.go           # /auth/v1 endpoints
-│   │   ├── auth_test.go
-│   │   ├── identity.go       # /id/v1 endpoints (KYC)
-│   │   ├── identity_test.go
-│   │   ├── core.go           # /core/v1 endpoints (wallets, txns)
-│   │   ├── core_test.go
-│   │   ├── rates.go          # /rates/v1 endpoints
-│   │   ├── rates_test.go
-│   │   ├── cards.go          # /cards/v1 endpoints (stubs)
-│   │   └── health.go         # Health check
-│   ├── webhook/               # Webhook delivery system
-│   │   ├── manager.go        # Async webhook sender
-│   │   ├── manager_test.go
-│   │   └── models.go         # Webhook event models
-│   ├── consts/                # Constants
-│   │   └── consts.go         # Currencies, vault IDs, rates
-│   ├── utils/                 # Utilities
-│   │   ├── utils.go          # UUID, address generation
-│   │   └── utils_test.go
-│   └── logger/                # Logging
-│       └── logger.go         # Simple logger setup
-├── testenv/                   # Isolated integration test environment
-│   ├── docker-compose.yml    # Test-only compose (ports 28080, 26380)
-│   ├── godog_test.go         # BDD-style E2E tests
-│   ├── .gitignore            # Ignore go.mod/go.sum
-│   └── README.md             # Test environment documentation
-├── web/                       # Static web assets
-│   └── kyc-iframe.html       # KYC iframe HTML (onboarding)
-├── Dockerfile                 # Multi-stage Docker build
-├── go.mod                     # Go module definition
-├── go.sum                     # Dependency checksums
-├── README.md                  # User documentation
-├── AGENTS.md                  # This file
-└── PROJECT_PLAN.md            # Implementation roadmap
-
+│   │   ├── redis.go             # Redis implementation (JSON + atomic ops)
+│   │   ├── redis_test.go
+│   │   └── seeder.go            # Pre-seeds test users with balances
+│   ├── utils/                     # Utilities
+│   │   └── utils.go             # UUID, mock XRPL address, transaction hash
+│   └── webhook/                   # Webhook delivery system
+│       ├── manager.go            # Webhook manager (enqueue, send, sign)
+│       ├── manager_test.go
+│       ├── queue.go              # Redis sorted-set backed job queue
+│       ├── worker.go             # Background worker (polls every 5s)
+│       └── job.go                # Job struct and serialization
+├── features/                      # Gherkin BDD feature files (8 files)
+│   ├── auth_user_kyc.feature
+│   ├── cards.feature
+│   ├── fee_configuration.feature
+│   ├── rates_and_vaults.feature
+│   ├── service_health.feature
+│   ├── signature_authentication.feature
+│   ├── transactions.feature
+│   └── wallets_and_balances.feature
+├── test/integration/              # Go integration tests
+│   └── integration_test.go
+├── testenv/                       # E2E test environment
+│   ├── docker-compose.yml        # Redis (26380) + MockGatehub (25151)
+│   ├── godog_test.go             # Godog BDD runner (//go:build e2e)
+│   ├── *_steps.go                # Step definitions for each feature area
+│   ├── helpers.go                # Test helpers
+│   ├── http_client.go            # Signed HTTP client for tests
+│   ├── services.go               # Docker service management
+│   ├── test_context.go           # Shared test state
+│   ├── types.go                  # Test constants
+│   └── README.md                 # Test environment documentation
+├── web/                           # Static web assets
+│   ├── index.html                # Deposit/withdraw iframe
+│   └── kyc-iframe.html           # KYC onboarding iframe
+├── docs/                          # GateHub API reference docs
+├── Dockerfile                     # Multi-stage Docker build
+├── Makefile                       # Build, test, lint, clean targets
+├── .releaserc.json               # Semantic-release configuration
+├── go.mod                         # Go module (chi, redis, godog, zap, testify, uuid)
+├── README.md                      # User-facing project documentation
+└── AGENTS.md                      # This file
 ```
 
 ### Design Principles
 
-1. **Dependency Injection**: Handler receives storage & webhook manager via constructor
+1. **Dependency Injection**: Handler receives storage and webhook manager via constructor
 2. **Interface-Based Storage**: Enables swapping memory/Redis without code changes
-3. **Table-Driven Tests**: Use testify's suite pattern for comprehensive coverage
-4. **Idiomatic Go**: Follow standard project layout, effective Go patterns
-5. **Minimal Dependencies**: Only essential libraries (chi, redis, uuid, testify)
+3. **Table-Driven Tests**: Use testify assertions with comprehensive coverage
+4. **Idiomatic Go**: Standard project layout, effective Go patterns
+5. **Minimal Dependencies**: chi, redis, uuid, testify, zap, godog
 
-## Core Functionality
+## Core Systems
 
-### 1. Storage Layer
+### 1. Configuration (`internal/config/`)
 
-**Interface** (`internal/storage/interface.go`):
-```go
-type Storage interface {
-    // Users
-    CreateUser(user *models.User) error
-    GetUser(id string) (*models.User, error)
-    GetUserByEmail(email string) (*models.User, error)
-    UpdateUser(user *models.User) error
-    
-    // Wallets
-    CreateWallet(wallet *models.Wallet) error
-    GetWallet(address string) (*models.Wallet, error)
-    GetWalletsByUser(userID string) ([]*models.Wallet, error)
-    
-    // Transactions
-    CreateTransaction(tx *models.Transaction) error
-    GetTransaction(id string) (*models.Transaction, error)
-    
-    // Balances
-    GetBalance(userID, currency string) (float64, error)
-    AddBalance(userID, currency string, amount float64) error
-    DeductBalance(userID, currency string, amount float64) error
-}
-```
+All environment variables are centralized in `config.Load()`:
 
-**Memory Implementation**:
-- Uses `sync.RWMutex` for thread safety
-- Maps for users (by ID, by email), wallets (by address), transactions (by ID)
-- Separate map for balances: `map[string]map[string]float64` (userID -> currency -> amount)
+| Env Var | Default | Notes |
+|---------|---------|-------|
+| `MOCKGATEHUB_PORT` | `8080` | HTTP server port |
+| `LOG_LEVEL` | `info` | Zap log level |
+| `MOCKGATEHUB_REDIS_URL` | `""` | Enables Redis storage if set |
+| `MOCKGATEHUB_REDIS_DB` | `0` | Redis database number |
+| `WEBHOOK_URL` | `""` | Webhook delivery target |
+| `WEBHOOK_SECRET` | `mock-secret` | Webhook HMAC signing secret |
+| `WEBHOOK_MIN_DELAY_SEC` | `0.05` → clamped ≥ `2` | Minimum delay before webhook delivery |
+| `MOCKGATEHUB_ENFORCE_AUTHENTICATION` | `true` | Enable/disable HMAC middleware |
+| `MOCKGATEHUB_VALID_CREDENTIALS` | `local-test-app-id:local-test-app-secret` | Format: `appId:secret,appId2:secret2` |
 
-**Redis Implementation**:
-- Keys: `user:{id}`, `user:email:{email}`, `wallet:{address}`, `tx:{id}`, `balance:{userID}:{currency}`
-- JSON serialization for complex objects
-- Atomic operations for balance updates (INCRBYFLOAT)
+### 2. Storage Layer (`internal/storage/`)
 
-**Seeder**:
-Pre-creates two test users with balances:
-- `testuser1@mockgatehub.local`: 10,000 USD
-- `testuser2@mockgatehub.local`: 10,000 EUR
+**Interface** (`interface.go`) defines ~30 methods covering:
+- Users: CRUD operations
+- Card Customers: CRUD + lookup by source ID
+- Card Accounts: CRUD
+- Customer Delivery Addresses: create + list
+- Cards: CRUD + list by customer/account + limits
+- Card Transactions: CRUD + index by card
+- Wallets: CRUD + list by user
+- Transactions: CRUD + status update
+- Balances: get/add/deduct per user per currency
+- 3DS Challenges: CRUD + list pending
 
-### 2. Authentication (HMAC Signatures)
+**Memory** (`memory.go`): `sync.RWMutex` for thread safety, maps for all entities.
 
-**Format**:
-```
-signature = HMAC-SHA256(timestamp_ms|method|full_url|body, secret)
-```
+**Redis** (`redis.go`): JSON serialization, `INCRBYFLOAT` for atomic balance updates. Keys follow patterns like `user:{id}`, `wallet:{address}`, `balance:{userID}:{currency}`.
 
-**Request Headers**:
-- `x-gatehub-app-id`: Application identifier
-- `x-gatehub-timestamp`: Unix timestamp (seconds)
-- `x-gatehub-signature`: Hex-encoded HMAC signature
+**Seeder** (`seeder.go`): Pre-creates two test users:
+- User 1: `00000000-0000-0000-0000-000000000001`, `testuser1@mockgatehub.local`, 10,000 USD, KYC `action_required`
+- User 2: `00000000-0000-0000-0000-000000000002`, `testuser2@mockgatehub.local`, 10,000 EUR, KYC `action_required`
 
-**Implementation Notes**:
-- Generate: Used for outgoing webhooks
-- Validate: Used for incoming requests (optional enforcement)
-- Test with known inputs/outputs for deterministic verification
+### 3. Authentication (`internal/auth/`)
 
-### 3. Multi-Currency System
+**Signature Format**: `HMAC-SHA256(timestamp|method|full_url|body, secret)`, hex-encoded. Empty segments are stripped.
 
-**Supported Currencies**:
-```go
-XRP, USD, EUR, GBP, ZAR, MXN, SGD, CAD, EGG, PEB, PKR
-```
+**Webhook Signatures**: Different algorithm — `HMAC-SHA256(json_body, hex_decoded_secret)` via `GenerateGateHubWebhookSignature`.
 
-**Vault UUIDs** (Immutable):
-```go
-USD: "450d2156-132a-4d3f-88c5-74822547658d"
-EUR: "a09a0a2c-1a3a-44c5-a1b9-603a6eea9341"
-// ... (see consts/consts.go)
-```
+**Middleware** (`middleware.go`): Applied globally. Skips public endpoints:
+- `/health`, `/`, `/iframe/onboarding`, `/iframe/submit`, `/transaction/complete`, `/api/user-currencies`, `/admin/fees`
 
-**Balance Behavior**:
-- `GET /wallets/{address}/balance` must return ALL currencies
-- Even if balance is 0.00, include the currency in response
-- Format: `[{"currency": "USD", "vault_uuid": "...", "balance": 10000.00}, ...]`
+Validates `x-gatehub-app-id`, `x-gatehub-timestamp`, `x-gatehub-signature` headers. Reconstructs full URL using `X-Forwarded-Proto`/`X-Forwarded-Host` for proxy environments.
 
-**Exchange Rates**:
-Hardcoded rates vs USD. Example:
-```go
-EUR: 1.08  // 1 EUR = 1.08 USD
-GBP: 1.27  // 1 GBP = 1.27 USD
-```
+### 4. Webhook System (`internal/webhook/`)
 
-### 4. KYC (Know Your Customer) Flow
+**Architecture**: Redis-backed job queue with a background worker.
 
-**Endpoints & Flow**:
-1. `POST /id/v1/users/{userID}/hubs/{gatewayID}` – Initiates KYC, sets user to `action_required`.
-2. `GET /?paymentType=onboarding&bearer={token}[&user_id={uuid}]` – Serves the KYC iframe HTML. `bearer` is required; `user_id` is optional and can be inferred from the token mapping.
-3. `POST /iframe/submit` – Iframe form submission (multipart or urlencoded). Server updates user to `accepted`, triggers webhook.
-4. `PUT /hubs/{gatewayID}/users/{userID}` – Update KYC state (internal helper).
+- **Queue** (`queue.go`): Redis sorted set (`webhooks:queue`) + per-job hash (`webhooks:job:{id}`). Jobs are scored by `NotBefore` timestamp.
+- **Worker** (`worker.go`): Polls every 5 seconds, processes batches of 10 ready jobs.
+- **Manager** (`manager.go`): `SendAsync(eventType, userID, data, offsetDelaySeconds)` enqueues jobs. `send()` performs HTTP delivery with HMAC signing.
+- **Job** (`job.go`): Tracks ID, event type, user ID, data, attempts, status, timestamps.
 
-**Approval Logic (Sandbox Emulation)**:
-- Approval happens after user submission (not immediate). Final state is `"accepted"` with default `risk_level: "low"` unless overridden by form.
-- Webhook `id.verification.accepted` is emitted asynchronously.
+**Retry policy**: 10 max attempts, 30-second fixed backoff between retries.
 
-**KYC Iframe** (`web/kyc-iframe.html`):
-- Uses `FormData` to submit as `multipart/form-data` to `/iframe/submit`.
-- Posts a GateHub-compatible message to the parent window on success:
-    - `{ type: 'OnboardingCompleted', value: JSON.stringify({ applicantStatus: 'submitted' }) }`
-- Sends `{ type: 'OnboardingError', value: { message } }` on failure.
-- Contains a gentle fallback: soft parent reload after 2s if the parent ignores the message.
-
-**Token → User Mapping**:
-- `/auth/v1/tokens` stores a mapping of bearer token → managed user UUID. The iframe can omit `user_id`; the submit handler attempts to resolve it from the provided token.
-
-**Form Parsing**:
-- Handlers attempt `ParseMultipartForm` first, and fall back to `ParseForm`. Access values via `r.FormValue()` after successful parsing.
-
-### 5. Wallet Operations
-
-**Create Wallet**:
-- `POST /core/v1/wallets`
-- Input: `{user_id, name, type, network}`
-- Generate mock XRPL address (format: `r` + 33 alphanumeric chars)
-- Store wallet with address
-- Return wallet object
-
-**Get Balance**:
-- `GET /wallets/{address}/balance`
-- Lookup wallet → Get user_id
-- Iterate all 11 currencies
-- Return array of `{currency, vault_uuid, balance}`
-
-### 6. Transaction Handling
-
-**Types**:
-1. **DEPOSIT (type=1)**: External deposit
-   - `deposit_type: "external"`
-   - Add balance immediately
-   - Send webhook: `core.deposit.completed`
-
-2. **HOSTED (type=2)**: Internal transfer
-   - `deposit_type: "hosted"`
-   - Add balance immediately
-   - No webhook (internal operation)
-
-**Implementation**:
-```go
-func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
-    // Parse request
-    // Validate currency, amount
-    // Create transaction record
-    // Update balance
-    // If type=1 (external), send webhook asynchronously
-    // Return transaction object
-}
-```
-
-### 7. Webhook System
-
-**Manager** (`internal/webhook/manager.go`):
-```go
-type Manager struct {
-    webhookURL    string
-    webhookSecret string
-    httpClient    *http.Client
-}
-
-func (m *Manager) SendAsync(event WebhookEvent) {
-    go m.sendWithRetry(event)
-}
-```
-
-**Event Types**:
-- `id.verification.accepted`
-- `core.deposit.completed`
-
-**Event Format**:
+**Payload format**:
 ```json
 {
-  "event_type": "id.verification.accepted",
-  "user_uuid": "user-id",
-  "timestamp": "2026-01-20T10:00:00Z",
-  "data": {
-    "message": "User verification accepted"
-  }
+  "uuid": "...",
+  "timestamp": "1768920404045",
+  "event_type": "core.deposit.completed",
+  "user_uuid": "...",
+  "environment": "sandbox",
+  "data": { ... }
 }
 ```
 
-**Delivery**:
-- Async (goroutine)
-- 3 retry attempts
-- Exponential backoff: 1s, 2s, 4s
-- Sign with HMAC (x-gatehub-signature header)
+### 5. Handler Structure (`internal/handler/`)
 
-## Testing Strategy
-
-### Coverage Goal: 80%+
-
-### Unit Tests
-
-**Storage Tests** (`internal/storage/memory_test.go`):
 ```go
-func TestMemoryStorage_CreateUser(t *testing.T) {
-    store := NewMemoryStorage()
-    user := &models.User{Email: "test@example.com"}
-    err := store.CreateUser(user)
-    assert.NoError(t, err)
-    assert.NotEmpty(t, user.ID)
+type Handler struct {
+    store          storage.Storage
+    webhookManager *webhook.Manager
+    tokenToUser    sync.Map     // Maps bearer tokens → user UUIDs
+    feeConfig      *FeeConfig   // Thread-safe fee percentages
 }
 ```
 
-**Handler Tests** (`internal/handler/*_test.go`):
-- Use `httptest.NewRecorder()` for response capture
-- Table-driven tests for multiple scenarios
-- Test both success and error cases
+Constructor: `NewHandler(store, webhookManager)` — initializes with `NewFeeConfig()` (0% defaults).
 
-Example:
-```go
-func TestCreateWallet(t *testing.T) {
-    tests := []struct {
-        name       string
-        body       string
-        wantStatus int
-        wantErr    bool
-    }{
-        {"valid wallet", `{"user_id":"123","name":"My Wallet"}`, 201, false},
-        {"missing user_id", `{"name":"My Wallet"}`, 400, true},
-    }
-    
-    for _, tt := range tests {
-        t.Run(tt.name, func(t *testing.T) {
-            // Test logic
-        })
-    }
-}
-```
+**Handler files**:
+- `handler.go` — Handler struct, RequestLogger, HealthCheck, RootHandler, TransactionCompleteHandler, processDeposit, processWithdrawal, GetUserCurrencies
+- `helpers.go` — sendJSON, sendError, setCORSHeaders, sendJSONWithCORS, sendErrorWithCORS, decodeJSON
+- `auth.go` — CreateToken, CreateManagedUser, GetManagedUser, UpdateManagedUserEmail
+- `identity.go` — GetUser, StartKYC, UpdateKYCState, OverrideRiskLevel, KYCIframe, KYCIframeSubmit
+- `core.go` — CreateWallet, GetUserWallets, GetWallet, GetWalletBalance, CreateTransaction, GetTransaction
+- `cards.go` — Full card lifecycle (~20 handlers)
+- `fees.go` — FeeConfig, GetFees, SetFees, CalculateFee
+- `rates.go` — GetCurrentRates, GetVaults
 
-**Webhook Tests** (`internal/webhook/manager_test.go`):
-- Use `httptest.NewServer()` to mock webhook receiver
-- Verify signature generation
-- Test retry logic with failing server
+### 6. Fee System (`internal/handler/fees.go`)
 
-### Integration Test
+Thread-safe `FeeConfig` with `depositFeePercent` and `withdrawalFeePercent` (default 0%). Admin API at `GET/PUT /admin/fees` for runtime configuration. Validates 0–100 range.
 
-Full workflow test (`internal/handler/integration_test.go`):
-1. Create user → Verify storage
-2. Start KYC → Submit iframe → Verify `accepted` state and webhook
-3. Create wallet → Verify address format
-4. Create deposit → Verify balance update
-5. Get balance → Verify all 11 currencies present
+Fee logic: `CalculateFee(amount, percent) = round(amount * percent / 100, 2)`
+- Deposits: net credited = amount - fee
+- Withdrawals: total deducted = amount + fee
+- Hosted transfers: always 0% fee
 
-## Common Patterns
+### 7. Transaction Lifecycle
 
-### Error Handling
+1. `POST /core/v1/transactions` creates transaction in `pending` (status `1`)
+2. If webhook URL configured: sends pending webhook immediately, then after ~2s goroutine delay marks `completed` (status `100`), credits balance, sends completed webhook
+3. If no webhook URL: completes synchronously
 
-```go
-func (h *Handler) CreateWallet(w http.ResponseWriter, r *http.Request) {
-    var req CreateWalletRequest
-    if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-        h.sendError(w, http.StatusBadRequest, "Invalid request body")
-        return
-    }
-    
-    // Validation
-    if req.UserID == "" {
-        h.sendError(w, http.StatusBadRequest, "user_id is required")
-        return
-    }
-    
-    // Business logic
-    wallet, err := h.createWallet(&req)
-    if err != nil {
-        logger.Error.Printf("Failed to create wallet: %v", err)
-        h.sendError(w, http.StatusInternalServerError, "Internal server error")
-        return
-    }
-    
-    h.sendJSON(w, http.StatusCreated, wallet)
-}
-```
+**Transaction types**: `0`=Withdrawal, `1`=Deposit, `2`=Hosted
 
-### JSON Response Helpers
+**Transaction statuses**: `1`=Pending, `100`=Completed, `3`=Failed
 
-```go
-func (h *Handler) sendJSON(w http.ResponseWriter, status int, data interface{}) {
-    w.Header().Set("Content-Type", "application/json")
-    w.WriteHeader(status)
-    json.NewEncoder(w).Encode(data)
-}
+### 8. KYC Flow
 
-func (h *Handler) sendError(w http.ResponseWriter, status int, message string) {
-    h.sendJSON(w, status, map[string]string{"error": message})
-}
-```
+1. `POST /id/v1/users/{userID}/hubs/{gatewayID}` — sets user to `action_required`
+2. `GET /iframe/onboarding?bearer={token}[&user_id={uuid}]` — serves `web/kyc-iframe.html`
+3. `POST /iframe/submit` — parses multipart or URL-encoded form, updates user to `accepted`, sends `id.verification.accepted` webhook with 2s offset delay
+4. Iframe posts `{ type: 'OnboardingCompleted', value: JSON.stringify({ applicantStatus: 'submitted' }) }` to parent window
 
-### Async Operations
+Token → user mapping: `/auth/v1/tokens` stores bearer → user UUID. The iframe submit handler resolves `user_id` from this mapping if not provided in the form.
 
-```go
-// Launch webhook delivery in background
-go func() {
-    if err := h.webhookManager.Send(event); err != nil {
-        logger.Error.Printf("Webhook delivery failed: %v", err)
-    }
-}()
-```
+### 9. Constants (`internal/consts/consts.go`)
 
-## Logging Guidelines
+**Webhook events**: `id.verification.accepted`, `id.verification.rejected`, `id.verification.action_required`, `core.deposit.completed`, `cards.card.created`, `cards.transaction.event`, `cards.3ds.auth_3ds_confirmation`
 
-**Important**: It's safe to log sensitive values (app IDs, bearer tokens, amounts, etc.) in MockGatehub because:
-- This is a development/testing mock service, not a production system
-- Applications running against it are also in local test environments
-- Verbose logging helps with debugging integrations and identifying issues
-- No real credentials or production data flows through this service
+**Card statuses**: `Active`, `Blocked`, `TemporaryBlocked`, `Replaced`, `SoftDelete`, `AccountBlocked`, `InCreation`
 
-**Logging Standards**:
-- Use zap structured logging via `logger.Info()`, `logger.Warn()`, `logger.Error()`, `logger.Debug()`
-- Include contextual fields: `zap.String("key", value)`, `zap.Error(err)`, `zap.Int("value", num)`, etc.
-- Log all significant operations: user creation, wallet operations, deposits, KYC state changes
-- Include identifiers (user IDs, wallet addresses, transaction IDs) for traceability
-- Use human-readable log levels:
-  - `Info`: Normal operations (user created, deposit received)
-  - `Warn`: Non-fatal issues (invalid input, fallback behavior)
-  - `Error`: Operations that failed (database error, webhook failed)
-  - `Debug`: Detailed diagnostic info (token resolution, balance calculations)
+## Testing
 
-**Example**:
-```go
-logger.Info("deposit created successfully", 
-    zap.String("user_id", userID),
-    zap.String("amount", amountStr),
-    zap.String("currency", currency),
-    zap.String("wallet_address", address),
-)
-```
+### Test Structure
 
-## Configuration
+| Location | Type | Description |
+|----------|------|-------------|
+| `internal/*/` | Unit | Package-level tests (handler, auth, storage, webhook, fees) |
+| `test/integration/` | Integration | Full user journey, API compliance, multi-currency |
+| `testenv/` | E2E (BDD) | Godog/Cucumber tests driven by `features/*.feature` |
 
-**Environment Variables**:
+### Running Tests
+
 ```bash
-MOCKGATEHUB_PORT=8080                          # HTTP port
-MOCKGATEHUB_REDIS_URL=redis://localhost:6379  # Redis connection
-MOCKGATEHUB_REDIS_DB=1                         # Redis database number
-WEBHOOK_URL=http://your-app:3003/gatehub-webhooks
-WEBHOOK_SECRET=your-secret-here
+# All tests (unit + integration)
+make unit-tests
+
+# BDD E2E tests (builds Docker, runs against containers)
+make e2e-tests
+
+# Both
+make test
+
+# Coverage
+make coverage
 ```
 
-**Docker Compose Integration**:
-Configure in your `docker-compose.yml`:
-- Service name: `mockgatehub`
-- Port mapping: `8080:8080`
-- Environment variables as shown above
-- Optionally depends on Redis for persistent storage
+### E2E Test Environment
+
+`testenv/docker-compose.yml` runs:
+- Redis on port `26380`
+- MockGatehub on port `25151` (built from Dockerfile, auth enforced)
+
+Tests use `//go:build e2e` tag. Each feature area has a `*_steps.go` file implementing step definitions.
+
+### Feature Files (~55 scenarios across 8 files)
+
+- `service_health.feature` — health endpoint
+- `auth_user_kyc.feature` — user creation, KYC flow
+- `wallets_and_balances.feature` — wallet provisioning
+- `transactions.feature` — deposits, hosted transfers, formatting
+- `rates_and_vaults.feature` — exchange rates, vault listing
+- `cards.feature` — full card lifecycle (~17 scenarios)
+- `signature_authentication.feature` — HMAC validation (~12 scenarios)
+- `fee_configuration.feature` — fee setup and application (~16 scenarios)
+
+## CI/CD
+
+### GitHub Actions Workflows
+
+**PR Validation** (`pr-validation.yml`):
+- Validates PR title (Conventional Commits)
+- Runs unit and E2E tests
+- Docker build (no push) with GHA cache
+
+**Release** (`release.yml`), runs on push to `main`:
+- All tests (unit + E2E)
+- semantic-release to determine version and create tag
+- Docker build and push to `ghcr.io/interledger/mockgatehub` (linux/amd64 + linux/arm64)
+
+### Semantic Versioning
+
+- `feat` → minor release
+- `fix`, `perf`, `docs`, `refactor`, `build`, `ci` → patch release
+- `chore`, `test` → no release
+- Tag format: `v${version}`
+- Config: `.releaserc.json`
 
 ## Development Workflow
 
-### 1. Making Changes
+### Making Changes
 
 ```bash
-go mod tidy                    # Update dependencies
-go test ./...                  # Run all tests (unit + e2e)
-go build ./cmd/mockgatehub     # Build binary
-```
-
-### 2. Running Locally
-
-```bash
-# In-memory mode (for quick testing)
-./mockgatehub
-
-# With Redis (production-like)
-MOCKGATEHUB_REDIS_URL=redis://localhost:6379 \
-MOCKGATEHUB_REDIS_DB=1 \
-./mockgatehub
-```
-
-### 3. Docker Build & Test
-
-```bash
-# Build fresh image
-docker build -t local-mockgatehub .
-
-# Test in isolated environment
-go test ./testenv/...
-
-# Deploy with Docker Compose
-docker compose up -d mockgatehub
-docker compose logs -f mockgatehub
-```
-
-### 4. Full Integration Testing
-
-```bash
-# Option 1: Run all tests (unit + e2e)
+go mod tidy
 go test ./...
-
-# Option 2: With your application stack
-docker compose up -d  # Starts your app services with mockgatehub
-# Test via your application UI or API
+go build ./cmd/mockgatehub
 ```
+
+### Docker Build & Test
+
+```bash
+docker build -t local-mockgatehub .
+make e2e-tests
+```
+
+## Logging
+
+It's safe to log sensitive values in MockGatehub — this is a development/testing mock, not a production system.
+
+Use zap structured logging:
+```go
+logger.Info("deposit created",
+    zap.String("user_id", userID),
+    zap.String("amount", amountStr),
+    zap.String("currency", currency),
+)
+```
+
+Log levels:
+- `Info` — normal operations (user created, deposit received)
+- `Warn` — non-fatal issues (invalid input, fallback behavior)
+- `Error` — failed operations (database error, webhook failure)
+- `Debug` — detailed diagnostics (token resolution, balance calculations)
+
+## When Adding New Endpoints
+
+1. Define models in `internal/models/api.go` or `internal/models/cards.go`
+2. Implement handler in `internal/handler/{domain}.go`
+3. Register route in `cmd/mockgatehub/main.go` `setupRoutes()`
+4. Write unit tests in `internal/handler/{domain}_test.go`
+5. Add BDD scenarios in `features/{domain}.feature` and step definitions in `testenv/{domain}_steps.go`
+6. Update `README.md` API section
+
+## When Modifying Storage
+
+1. Update `internal/storage/interface.go`
+2. Implement in **both** `memory.go` AND `redis.go`
+3. Add tests covering new functionality
+4. Update seeder if affecting test user creation
+
+## When Changing Constants
+
+1. Update `internal/consts/consts.go`
+2. **NEVER** change existing vault UUIDs
+3. Update all test files with hardcoded values
+4. Update README.md tables
+
+## Testing Checklist
+
+- [ ] All tests pass: `make test`
+- [ ] Coverage acceptable: `make coverage` (aim for ≥80%)
+- [ ] Docker build succeeds: `docker build -t local-mockgatehub .`
+- [ ] Application works with MockGatehub
+
+## Key Files Reference
+
+**Must review before coding**:
+1. `internal/consts/consts.go` — all constants
+2. `internal/storage/interface.go` — storage contract
+3. `internal/models/models.go` — domain models
+4. `cmd/mockgatehub/main.go` — routing configuration
+
+**Frequently modified**:
+1. `internal/handler/*.go` — API endpoint implementations
+2. `internal/storage/memory.go` — in-memory storage logic
+3. `internal/webhook/manager.go` — webhook delivery
 
 ## Troubleshooting
 
-### "no Go files in ..."
-- Ensure all `.go` files have `package` declaration
-- Check directory structure matches expected layout
+**Tests failing with Redis**: Ensure Redis is running and DB is clean (`redis-cli -n 1 FLUSHDB`)
 
-### "undefined: Storage"
-- Import paths must use the full module name from `go.mod`
-- Run `go mod tidy` to resolve dependencies
+**Docker build fails**: Verify `go.mod` and `go.sum` are present, check for syntax errors (`go build ./...`)
 
-### Tests failing with Redis
-- Ensure Redis is running: `redis-cli ping`
-- Check Redis DB is empty: `redis-cli -n 1 FLUSHDB`
-- Use in-memory storage for unit tests
+**Webhooks not arriving**: Check `WEBHOOK_URL`, verify app backend is running, check Docker logs
 
-### Docker build fails
-- Check Dockerfile paths match actual structure
-- Ensure `go.mod` and `go.sum` are present
-- Verify no syntax errors: `go build ./...`
+**E2E tests fail**: Ensure Docker is running, port 25151 and 26380 are free
 
-### Webhooks not arriving
-- Check `WEBHOOK_URL` environment variable
-- Verify your application backend is running and accessible
-- Check logs: `docker compose logs mockgatehub`
+### Check a user balance (Interledger App stack)
 
-### Check a user balance from the command line (Interledger App)
-
-When MockGatehub is running behind the Interledger App stack, you can verify whether a deposit actually hit the provider by:
-
-1. Resolve the Kratos identity ID from the user email.
-2. Resolve the wallet ID from the backend DB.
-3. Resolve the Gatehub wallet address (`provider_id`) from linked accounts.
-4. Query MockGatehub balances for that wallet address.
+When MockGatehub runs behind the Interledger App stack:
 
 ```bash
 # 1) Find Kratos identity ID by email
 docker compose -f local/docker-compose.yaml exec -T postgres \
     psql -U postgres -d kratos -c \
-    "SELECT i.id FROM identities i\
-     JOIN identity_credentials ic ON ic.identity_id = i.id\
-     JOIN identity_credential_identifiers ici ON ici.identity_credential_id = ic.id\
+    "SELECT i.id FROM identities i \
+     JOIN identity_credentials ic ON ic.identity_id = i.id \
+     JOIN identity_credential_identifiers ici ON ici.identity_credential_id = ic.id \
      WHERE ici.identifier='716461-sender-p2p@example.com';"
 
-# 2) Find wallet_id in backend DB using the identity ID
+# 2) Find wallet_id using identity ID
 docker compose -f local/docker-compose.yaml exec -T postgres \
     psql -U postgres -d backend -c \
     "SELECT wallet_id FROM user_wallets WHERE user_id='IDENTITY_ID';"
 
-# 3) Find Gatehub linked account and provider_id (wallet address)
+# 3) Find GateHub wallet address (provider_id)
 docker compose -f local/docker-compose.yaml exec -T postgres \
     psql -U postgres -d backend -c \
-    "SELECT id, provider_id, send_currency, receive_currency\
+    "SELECT id, provider_id, send_currency, receive_currency \
      FROM linked_accounts WHERE wallet_id='WALLET_ID' AND provider='gatehub';"
 
-# 4) Query MockGatehub balances for the provider wallet address
+# 4) Query MockGatehub balances
 curl -sk https://mockgatehub.interledger.test/core/v1/wallets/PROVIDER_ID/balances | jq
 ```
 
-If the provider balance shows the deposit amount but the Interledger UI does not, the backend workflow likely rejected the currency (Gatehub workflows are EUR-only by default).
+## Critical Notes for AI Agents
 
-## AI Agent Best Practices
-
-### When Adding New Endpoints
-
-1. **Define Models**: Add request/response DTOs to `internal/models/api.go`
-2. **Implement Handler**: Add method to `internal/handler/{domain}.go`
-3. **Add Route**: Register in `cmd/mockgatehub/main.go` setupRoutes
-4. **Write Tests**: Create table-driven test in `{domain}_test.go`
-5. **Update Docs**: Add endpoint to README.md API section
-
-### When Modifying Storage
-
-1. **Update Interface**: Change `internal/storage/interface.go`
-2. **Update Both Implementations**: memory.go AND redis.go
-3. **Add Tests**: Cover new functionality in both `memory_test.go` and integration tests
-4. **Check Seeder**: Update if affecting test user creation
-
-### When Changing Constants
-
-1. **Update consts.go**: Modify `internal/consts/consts.go`
-2. **Verify Immutables**: Never change existing vault UUIDs
-3. **Update Tests**: Search for hardcoded values in test files
-4. **Update Docs**: Reflect changes in README.md tables
-
-### Testing Checklist
-
-- [ ] All tests pass: `go test ./...` (includes unit + e2e)
-- [ ] Coverage acceptable: `go test -cover ./...` (aim for 80%+)
-- [ ] Docker build succeeds
-- [ ] Full stack starts: `docker compose up`
-- [ ] Application works with MockGatehub
-- [ ] Test environment isolated: No port conflicts with main environment
-
-### Critical: Maintain testenv/
-
-**The `testenv/` directory is NOT optional**. Future agents MUST maintain it when making changes:
-
-1. **When adding new endpoints**: Update BDD feature files and test scenarios with corresponding test cases
-2. **When changing API responses**: Verify tests still pass - update assertions if needed
-3. **When modifying authentication**: Ensure test headers are still valid
-4. **When adding new features**: Add comprehensive test coverage in feature files and test scenarios
-
-**testenv/ provides**:
-- Isolated integration testing (no conflicts with `docker/local`)
-- Fast feedback loop for full-stack changes
-- Regression prevention for critical user journeys
-- CI/CD validation readiness
-
-**Running tests**:
-```bash
-go test ./...  # Runs all tests including e2e
-```
-
-**Expected outcome**: All tests pass (unit tests + e2e scenarios for Health, User, Auth, KYC, Wallet, Balance, Rates, Vaults, Transaction)
-
-**If tests fail after your changes**:
-1. Check what changed in API responses
-2. Update test assertions in the feature files and test scenarios
-3. Ensure backward compatibility (applications depend on exact Gatehub API response format)
-4. If breaking change is necessary, document it clearly in the changelog
-
-## Key Files Reference
-
-**Must Review Before Coding**:
-1. `internal/consts/consts.go` - All constants (currencies, vault IDs, rates)
-2. `internal/storage/interface.go` - Storage contract
-3. `internal/models/models.go` - Domain models
-4. `cmd/mockgatehub/main.go` - Routing configuration
-
-**Frequently Modified**:
-1. `internal/handler/*.go` - API endpoint implementations
-2. `internal/storage/memory.go` - In-memory storage logic
-3. `internal/webhook/manager.go` - Webhook delivery
-
-**Rarely Touch**:
-1. `internal/logger/logger.go` - Basic logging setup
-2. `internal/utils/utils.go` - Utility functions
-3. `Dockerfile` - Container build configuration
-
-## Success Metrics
-
-Your changes should maintain or improve:
-- **Test Coverage**: ≥80%
-- **API Compliance**: Applications run without modification
-- **Docker Build Time**: Keep under 2 minutes
-- **Response Time**: All endpoints < 100ms (local)
-- **Memory Usage**: < 100MB for in-memory mode
-
-## Questions? Issues?
-
-When encountering ambiguity:
-1. Check existing implementation in similar endpoints
-2. Refer to Gatehub sandbox API documentation (if accessible)
-3. Test against your application's expected behavior
-4. Default to simplest solution that maintains API compatibility
-
-Remember: MockGatehub is a development tool. Prioritize simplicity, testability, and API compatibility over feature completeness.
+1. **ALWAYS run all tests after changes**: `make test`
+2. **Maintain API compatibility**: Applications rely on exact GateHub response format
+3. **Never modify vault UUIDs or currency codes**: These are immutable
+4. **Test both storage backends**: Changes must work with memory AND Redis
+5. **Update AGENTS.md if you discover outdated guidance**: Keep instructions fresh
+6. **Use zap structured logging**: Always include context fields for debugging
+7. **Webhook queue requires Redis**: Even in in-memory storage mode
 
 ---
 
-**Last Updated**: January 21, 2026  
-**Maintainers**: Interledger Foundation  
-**Repository**: https://github.com/interledger/mockgatehub
+**Last Updated**: February 2026
+**Maintainers**: Interledger Foundation
