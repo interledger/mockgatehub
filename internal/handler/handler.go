@@ -522,6 +522,10 @@ func (h *Handler) processWithdrawal(w http.ResponseWriter, bearer string, txReq 
 		return
 	}
 
+	// Note that deduct can potentially fail and then we would have to handle it somehow. For simplicity, we assume
+	// it succeeds here. In a real implementation, you would want to handle potential errors and possibly roll back
+	// the transaction creation if balance deduction fails.
+
 	// Deduct balance (including fee) from user
 	if err := h.store.DeductBalance(userUUID, txReq.Currency, totalAmount); err != nil {
 		logger.Error("failed to deduct balance for withdrawal", zap.String("user_id", userUUID), zap.Error(err))

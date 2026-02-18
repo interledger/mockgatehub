@@ -51,7 +51,7 @@ The service will be available at `http://localhost:8080`
 | `MOCKGATEHUB_VALID_CREDENTIALS` | `local-test-app-id:local-test-app-secret` | Comma-separated `appId:secret` pairs |
 | `WEBHOOK_URL` | — | Application webhook endpoint URL |
 | `WEBHOOK_SECRET` | `mock-secret` | Secret for signing outgoing webhooks |
-| `WEBHOOK_MIN_DELAY_SEC` | `0.05` (clamped to ≥ `2`) | Minimum seconds before webhooks become eligible for delivery |
+| `WEBHOOK_MIN_DELAY_SEC` | `0.05` | Minimum seconds before webhooks become eligible for delivery |
 
 > **Note**: The webhook queue always requires Redis, even when using in-memory storage for application data.
 
