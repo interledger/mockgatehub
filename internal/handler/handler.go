@@ -382,7 +382,7 @@ func (h *Handler) processDeposit(w http.ResponseWriter, bearer string, txReq *Tr
 	amountStr := fmt.Sprintf("%.2f", amountFloat)
 
 	// Calculate deposit fee
-	feePercent := h.feeConfig.GetDepositFeePercent()
+	feePercent, _ := h.feeConfig.GetDepositFeeForUser(userUUID)
 	feeAmount := CalculateFee(amountFloat, feePercent)
 	feeStr := fmt.Sprintf("%.2f", feeAmount)
 	// For deposits, total_amount = amount (fee is charged separately by GateHub)
@@ -480,7 +480,7 @@ func (h *Handler) processWithdrawal(w http.ResponseWriter, bearer string, txReq 
 	amountStr := fmt.Sprintf("%.2f", amountFloat)
 
 	// Calculate withdrawal fee
-	feePercent := h.feeConfig.GetWithdrawalFeePercent()
+	feePercent, _ := h.feeConfig.GetWithdrawalFeeForUser(userUUID)
 	feeAmount := CalculateFee(amountFloat, feePercent)
 	feeStr := fmt.Sprintf("%.2f", feeAmount)
 

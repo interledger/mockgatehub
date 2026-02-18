@@ -197,6 +197,9 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 	r.Post("/iframe/submit", h.KYCIframeSubmit)
 	r.Get("/admin/fees", h.GetFees)
 	r.Put("/admin/fees", h.SetFees)
+	r.Get("/admin/users/{userID}/fees", h.GetUserFees)
+	r.Put("/admin/users/{userID}/fees", h.SetUserFees)
+	r.Delete("/admin/users/{userID}/fees", h.ClearUserFees)
 	r.Route("/core/v1", func(r chi.Router) {
 		logger.Info("REGISTERING /core/v1 ROUTES")
 		r.Get("/users/{userID}", h.GetUserWallets)
