@@ -13,7 +13,7 @@ type Config struct {
 	RedisDB               int
 	WebhookURL            string
 	WebhookSecret         string
-	WebhookMinDelaySec    int
+	WebhookMinDelaySec    float64
 	UseRedis              bool
 	EnforceAuthentication bool
 	ValidCredentials      map[string]string // appID -> secret
@@ -28,7 +28,7 @@ func Load() *Config {
 		RedisDB:               getEnvInt("MOCKGATEHUB_REDIS_DB", 0),
 		WebhookURL:            getEnv("WEBHOOK_URL", ""),
 		WebhookSecret:         getEnv("WEBHOOK_SECRET", "mock-secret"),
-		WebhookMinDelaySec:    getEnvInt("WEBHOOK_MIN_DELAY_SEC", 2),
+		WebhookMinDelaySec:    getEnvFloat("WEBHOOK_MIN_DELAY_SEC", 0.05),
 		EnforceAuthentication: getEnvBool("MOCKGATEHUB_ENFORCE_AUTHENTICATION", true),
 		ValidCredentials:      parseCredentials(getEnv("MOCKGATEHUB_VALID_CREDENTIALS", "local-test-app-id:local-test-app-secret")),
 	}
@@ -59,6 +59,16 @@ func getEnvInt(key string, defaultVal int) int {
 	if val := os.Getenv(key); val != "" {
 		if intVal, err := strconv.Atoi(val); err == nil {
 			return intVal
+		}
+	}
+	return defaultVal
+}
+
+// getEnvFloat gets float64 environment variable with fallback
+func getEnvFloat(key string, defaultVal float64) float64 {
+	if val := os.Getenv(key); val != "" {
+		if floatVal, err := strconv.ParseFloat(val, 64); err == nil {
+			return floatVal
 		}
 	}
 	return defaultVal

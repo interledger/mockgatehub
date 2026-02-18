@@ -66,10 +66,11 @@ const (
 	RiskLevelHigh   = "high"
 )
 
-// Transaction types
+// Transaction types (matches GateHub API)
 const (
-	TransactionTypeDeposit = 1
-	TransactionTypeHosted  = 2
+	TransactionTypeWithdrawal = 0
+	TransactionTypeDeposit    = 1
+	TransactionTypeHosted     = 2
 )
 
 // Transaction status values (matches GateHub API)
@@ -81,8 +82,9 @@ const (
 
 // Deposit types
 const (
-	DepositTypeExternal = "external"
-	DepositTypeHosted   = "hosted"
+	DepositTypeExternal   = "external"
+	DepositTypeHosted     = "hosted"
+	DepositTypeWithdrawal = "withdrawal"
 )
 
 // Wallet types
