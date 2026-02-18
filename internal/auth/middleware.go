@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"strings"
 
 	"mockgatehub/internal/logger"
 
@@ -21,12 +22,50 @@ var PublicEndpoints = map[string]bool{
 	"/admin/fees":           true, // Admin fee configuration (test support)
 }
 
+// PublicEndpointPatterns are path patterns (with placeholders) that don't require authentication
+var PublicEndpointPatterns = []string{
+	"/admin/users/*/fees", // User-specific fee configuration (test support)
+}
+
+// matchesPublicPattern checks if a path matches any of the public endpoint patterns
+func matchesPublicPattern(path string) bool {
+	for _, pattern := range PublicEndpointPatterns {
+		if matchPattern(pattern, path) {
+			return true
+		}
+	}
+	return false
+}
+
+// matchPattern checks if a path matches a pattern where * is a wildcard for a single path segment
+func matchPattern(pattern, path string) bool {
+	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")
+	pathParts := strings.Split(strings.Trim(path, "/"), "/")
+
+	if len(patternParts) != len(pathParts) {
+		return false
+	}
+
+	for i := range patternParts {
+		if patternParts[i] != "*" && patternParts[i] != pathParts[i] {
+			return false
+		}
+	}
+	return true
+}
+
 // Middleware returns an HTTP middleware that validates HMAC signatures
 func Middleware(validCredentials map[string]string) func(next http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Skip authentication for public endpoints
+			// Skip authentication for public endpoints (exact match)
 			if PublicEndpoints[r.URL.Path] {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Skip authentication for public endpoint patterns
+			if matchesPublicPattern(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
