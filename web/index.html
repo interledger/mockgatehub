@@ -209,9 +209,9 @@
 							uuid: data.transaction_id || data.uuid || 'mock-tx-' + Date.now(),
 							status: 'success',
 							message: 'Withdrawal completed successfully'
-						}, '*');					} else {
+						}, '*');
+					} else {
 						// Deposit completion (backwards compatible)
-						window.parent.postMessage({
 							type: 'deposit-complete',
 							paymentType: paymentType,
 							status: 'success',
