@@ -236,3 +236,58 @@ func parseAmountCurrency(s string) (float64, string, error) {
 	}
 	return amount, parts[1], nil
 }
+
+// ============ USER-SPECIFIC FEE CONFIGURATION STEPS ============
+
+// getUserFeesWithoutAuth does a GET /admin/users/{userID}/fees without HMAC headers
+func (tc *TestContext) getUserFeesWithoutAuth(userID string) error {
+	savedSecret := tc.appSecret
+	tc.appSecret = ""
+	_, err := tc.requestRaw("GET", fmt.Sprintf("/admin/users/%s/fees", userID), "", "", nil)
+	tc.appSecret = savedSecret
+	return err
+}
+
+// setUserFeesWithoutAuth does a PUT /admin/users/{userID}/fees without HMAC headers
+func (tc *TestContext) setUserFeesWithoutAuth(userID, bodyJSON string) error {
+	savedSecret := tc.appSecret
+	tc.appSecret = ""
+	_, err := tc.requestRaw("PUT", fmt.Sprintf("/admin/users/%s/fees", userID), bodyJSON, "application/json", nil)
+	tc.appSecret = savedSecret
+	return err
+}
+
+// clearUserFeesWithoutAuth does a DELETE /admin/users/{userID}/fees without HMAC headers
+func (tc *TestContext) clearUserFeesWithoutAuth(userID string) error {
+	savedSecret := tc.appSecret
+	tc.appSecret = ""
+	_, err := tc.requestRaw("DELETE", fmt.Sprintf("/admin/users/%s/fees", userID), "", "", nil)
+	tc.appSecret = savedSecret
+	return err
+}
+
+// userFeeSourceIs checks that the fee source field in the response matches
+func (tc *TestContext) userFeeSourceIs(feeType, expectedSource string) error {
+	var result map[string]interface{}
+	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
+		return err
+	}
+	
+	var sourceField string
+	if feeType == "deposit" {
+		sourceField = "deposit_fee_source"
+	} else if feeType == "withdrawal" {
+		sourceField = "withdrawal_fee_source"
+	} else {
+		return fmt.Errorf("invalid fee type %q, must be 'deposit' or 'withdrawal'", feeType)
+	}
+	
+	actual, ok := result[sourceField].(string)
+	if !ok {
+		return fmt.Errorf("%s not found or not a string in response: %s", sourceField, string(tc.lastResponseBody))
+	}
+	if actual != expectedSource {
+		return fmt.Errorf("expected %s %q, got %q", sourceField, expectedSource, actual)
+	}
+	return nil
+}
