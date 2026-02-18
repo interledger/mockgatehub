@@ -279,6 +279,12 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// For withdrawal type, create a withdrawal transaction and send a webhook
+	if paymentType == "withdraw" || paymentType == "withdrawal" {
+		h.processWithdrawal(w, bearer, &txReq)
+		return
+	}
+
 	// Return success response
 	h.sendJSONWithCORS(w, http.StatusOK, map[string]string{
 		"status":  "success",
@@ -419,7 +425,7 @@ func (h *Handler) processDeposit(w http.ResponseWriter, bearer string, txReq *Tr
 		"address":      walletAddress,  // The wallet address that received the deposit
 		"deposit_type": "external",     // External deposit type (lowercase per spec)
 		"total_fees":   "0",            // Fees charged (matches GateHub spec)
-	})
+	}, 0)
 
 	logger.Info("sent deposit webhook", zap.String("user_id", userUUID), zap.String("amount", amountStr), zap.String("currency", txReq.Currency), zap.String("wallet_address", walletAddress))
 
@@ -430,7 +436,113 @@ func (h *Handler) processDeposit(w http.ResponseWriter, bearer string, txReq *Tr
 	})
 }
 
-// extractUserFromBearer extracts the user UUID from a bearer token string
+// processWithdrawal handles the withdrawal transaction logic
+func (h *Handler) processWithdrawal(w http.ResponseWriter, bearer string, txReq *TransactionRequest) {
+	// Decode bearer to get user UUID
+	userUUID := h.extractUserFromBearer(bearer)
+
+	if userUUID == "" {
+		logger.Warn("could not extract user uuid from bearer token")
+		h.sendErrorWithCORS(w, http.StatusBadRequest, "Invalid bearer token")
+		return
+	}
+
+	// Get user to find their wallet address
+	user, err := h.store.GetUser(userUUID)
+	if err != nil || user == nil {
+		logger.Error("user not found", zap.String("user_id", userUUID), zap.Error(err))
+		h.sendErrorWithCORS(w, http.StatusNotFound, "User not found")
+		return
+	}
+
+	// Get user's wallets to find the withdrawal source
+	wallets, err := h.store.GetWalletsByUser(userUUID)
+	if err != nil {
+		logger.Error("failed to get wallets for user", zap.String("user_id", userUUID), zap.Error(err))
+		h.sendErrorWithCORS(w, http.StatusInternalServerError, "Failed to get wallets")
+		return
+	}
+
+	if len(wallets) == 0 {
+		logger.Error("no wallets found for user", zap.String("user_id", userUUID))
+		h.sendErrorWithCORS(w, http.StatusBadRequest, "User has no wallets")
+		return
+	}
+
+	// Use the first wallet's address
+	walletAddress := wallets[0].Address
+
+	// Get vault_uuid for the currency
+	vaultUUID := consts.SandboxVaultIDs[txReq.Currency]
+
+	// Parse amount as float
+	amountFloat, _ := strconv.ParseFloat(txReq.Amount, 64)
+	amountStr := fmt.Sprintf("%.2f", amountFloat)
+
+	// Calculate withdrawal fee
+	feePercent := h.feeConfig.GetWithdrawalFeePercent()
+	feeAmount := CalculateFee(amountFloat, feePercent)
+	feeStr := fmt.Sprintf("%.2f", feeAmount)
+
+	// For withdrawals, the amount is deducted (total_amount includes the fee deducted)
+	totalAmount := amountFloat + feeAmount // Total deducted from user's balance
+	totalAmountStr := fmt.Sprintf("%.2f", totalAmount)
+
+	// Check if user has sufficient balance
+	currentBalance, _ := h.store.GetBalance(userUUID, txReq.Currency)
+	if currentBalance < totalAmount {
+		logger.Warn("insufficient balance for withdrawal",
+			zap.String("user_id", userUUID),
+			zap.String("currency", txReq.Currency),
+			zap.Float64("requested_total", totalAmount),
+			zap.Float64("current_balance", currentBalance))
+		h.sendErrorWithCORS(w, http.StatusBadRequest, fmt.Sprintf("Insufficient balance. Required: %.2f, Available: %.2f", totalAmount, currentBalance))
+		return
+	}
+
+	txID := utils.GenerateUUID()
+
+	tx := &models.Transaction{
+		ID:               txID,
+		UserID:           userUUID,
+		Amount:           amountStr,
+		TotalAmount:      totalAmountStr,
+		Fee:              feeStr,
+		Currency:         txReq.Currency,
+		VaultUUID:        vaultUUID,
+		ReceivingAddress: walletAddress,
+		Type:             consts.TransactionTypeWithdrawal, // Type 0 = withdrawal
+		DepositType:      consts.DepositTypeWithdrawal,
+		Status:           consts.TransactionStatusCompleted,
+	}
+
+	if err := h.store.CreateTransaction(tx); err != nil {
+		logger.Error("failed to create withdrawal transaction", zap.String("transaction_id", txID), zap.Error(err))
+		h.sendErrorWithCORS(w, http.StatusInternalServerError, "Failed to create transaction")
+		return
+	}
+
+	// Deduct balance (including fee) from user
+	if err := h.store.DeductBalance(userUUID, txReq.Currency, totalAmount); err != nil {
+		logger.Error("failed to deduct balance for withdrawal", zap.String("user_id", userUUID), zap.Error(err))
+		h.sendErrorWithCORS(w, http.StatusInternalServerError, "Failed to deduct balance")
+		return
+	}
+
+	// NOTE: Unlike deposits, withdrawals do NOT send webhooks to the backend
+	// The withdrawal flow is: iframe -> postMessage -> frontend -> CreateGatehubWithdrawal RPC -> backend workflow
+	// Real GateHub does not send withdrawal webhooks either
+	logger.Info("withdrawal completed", zap.String("user_id", userUUID), zap.String("transaction_id", txID), zap.String("amount", amountStr), zap.String("currency", txReq.Currency))
+
+	// Return success response with transaction ID for iframe
+	h.sendJSONWithCORS(w, http.StatusOK, map[string]string{
+		"status":         "success",
+		"message":        "Withdrawal completed",
+		"transaction_id": txID, // Frontend needs this for CreateGatehubWithdrawal
+		"uuid":           txID, // Alias for compatibility
+	})
+}
+
 // It looks up the token in the stored token->user UUID mapping
 func (h *Handler) extractUserFromBearer(bearer string) string {
 	// Look up the user UUID from the token mapping

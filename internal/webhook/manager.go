@@ -50,17 +50,19 @@ func NewManager(webhookURL, webhookSecret string, queue *Queue) *Manager {
 	}
 }
 
-// SendAsync enqueues a webhook job for asynchronous delivery
-func (m *Manager) SendAsync(eventType, userID string, data any) {
+// SendAsync enqueues a webhook job for asynchronous delivery.
+// offsetDelaySeconds adds extra seconds on top of the queue's minimum delay
+// before the job becomes eligible for delivery.
+func (m *Manager) SendAsync(eventType, userID string, data any, offsetDelaySeconds float64) {
 	if m.webhookURL == "" {
 		logger.Info("skipping webhook send - no url configured", zap.String("event", eventType), zap.String("user", userID))
 		return
 	}
 
-	logger.Info("enqueueing webhook", zap.String("event", eventType), zap.String("user", userID))
+	logger.Info("enqueueing webhook", zap.String("event", eventType), zap.String("user", userID), zap.Float64("offset_delay_seconds", offsetDelaySeconds))
 
 	ctx := context.Background()
-	jobID, err := m.queue.Enqueue(ctx, eventType, userID, data)
+	jobID, err := m.queue.Enqueue(ctx, eventType, userID, data, offsetDelaySeconds)
 	if err != nil {
 		logger.Error("failed to enqueue webhook", zap.Error(err))
 		return

@@ -170,7 +170,7 @@ func (h *Handler) UpdateKYCState(w http.ResponseWriter, r *http.Request) {
 		go h.webhookManager.SendAsync(eventType, userID, map[string]interface{}{
 			"state":      req.State,
 			"risk_level": req.RiskLevel,
-		})
+		}, 0)
 	}
 
 	h.sendJSON(w, http.StatusOK, user)
@@ -361,7 +361,7 @@ func (h *Handler) KYCIframeSubmit(w http.ResponseWriter, r *http.Request) {
 
 	go h.webhookManager.SendAsync(consts.WebhookEventKYCAccepted, userID, map[string]interface{}{
 		"message": "User verification accepted",
-	})
+	}, 2.0)
 
 	h.sendJSON(w, http.StatusOK, map[string]string{
 		"status":  consts.KYCStateAccepted,

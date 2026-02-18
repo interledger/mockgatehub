@@ -350,7 +350,7 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 			"deposit_type":   depositType,
 			"status":         "pending",
 		}
-		h.webhookManager.SendAsync(consts.WebhookEventDepositCompleted, userID, pendingPayload)
+		h.webhookManager.SendAsync(consts.WebhookEventDepositCompleted, userID, pendingPayload, 0)
 
 		complete := func() {
 			if hasWebhook {
@@ -385,7 +385,7 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 					"deposit_type":   depositType,
 					"status":         "completed",
 				}
-				h.webhookManager.SendAsync(consts.WebhookEventDepositCompleted, userID, completedPayload)
+				h.webhookManager.SendAsync(consts.WebhookEventDepositCompleted, userID, completedPayload, 0)
 			}
 		}
 
@@ -421,7 +421,32 @@ func (h *Handler) GetTransaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.sendJSON(w, http.StatusOK, tx)
+	// Transform to match GateHub API format with nested objects
+	response := map[string]interface{}{
+		"uuid":         tx.ID,
+		"user_id":      tx.UserID,
+		"amount":       tx.Amount,
+		"total_amount": tx.TotalAmount,
+		"fee":          tx.Fee,
+		"currency":     tx.Currency,
+		"type":         tx.Type,
+		"deposit_type": tx.DepositType,
+		"status":       tx.Status,
+		"created_at":   tx.CreatedAt.Format("2006-01-02T15:04:05Z"),
+		"vault": map[string]interface{}{
+			"uuid":       tx.VaultUUID,
+			"asset_code": tx.Currency,
+			"name":       tx.Currency + " Vault",
+		},
+		"sending_wallet": map[string]interface{}{
+			"address": tx.ReceivingAddress, // For withdrawals, this is the sending wallet
+		},
+		"receiving_wallet": map[string]interface{}{
+			"address": tx.ReceivingAddress,
+		},
+	}
+
+	h.sendJSON(w, http.StatusOK, response)
 }
 
 // GetUserCurrencies returns the list of currencies the user has accounts for

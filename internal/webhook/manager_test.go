@@ -19,5 +19,5 @@ func TestSendAsync_NoURL(t *testing.T) {
 	manager := NewManager("", "secret", nil)
 
 	// Should not panic when queue is nil and URL is empty
-	manager.SendAsync("test.event", "user-123", map[string]interface{}{})
+	manager.SendAsync("test.event", "user-123", map[string]interface{}{}, 0)
 }

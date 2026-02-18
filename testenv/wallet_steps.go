@@ -89,9 +89,7 @@ func (tc *TestContext) managedUserWithWalletAddress() error {
 func (tc *TestContext) getWalletBalance() error {
 	// Wait for async balance update to complete
 	// (deposits are processed asynchronously with 2s delay when webhook URL is configured)
-	fmt.Println("===== getWalletBalance: STARTING 3-SECOND WAIT =====")
 	time.Sleep(3 * time.Second)
-	fmt.Println("===== getWalletBalance: WAIT COMPLETE, MAKING REQUEST =====")
 
 	// Use placeholder pattern - will be replaced by replacePlaceholders
 	path := "/core/v1/wallets/{walletAddress}/balances"

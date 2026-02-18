@@ -31,23 +31,26 @@ type Queue struct {
 // The minDelaySec parameter specifies the minimum delay (in seconds) before
 // enqueued webhook jobs become eligible for delivery. Values less than 0
 // are invalid and should be validated by the caller (enforced in config.Load).
-func NewQueue(client *redis.Client, minDelaySec int) *Queue {
+func NewQueue(client *redis.Client, minDelaySec float64) *Queue {
 	// Defensive validation: clamp to 0 if accidental negative value slips through
 	if minDelaySec < 0 {
 		minDelaySec = 0
 	}
 	return &Queue{
 		client:   client,
-		minDelay: time.Duration(minDelaySec) * time.Second,
+		minDelay: time.Duration(minDelaySec * float64(time.Second)),
 	}
 }
 
-// Enqueue adds a new webhook job to the queue
-func (q *Queue) Enqueue(ctx context.Context, eventType, userID string, data any) (string, error) {
+// Enqueue adds a new webhook job to the queue.
+// offsetDelaySeconds adds extra seconds on top of the queue's minimum delay.
+func (q *Queue) Enqueue(ctx context.Context, eventType, userID string, data any, offsetDelaySeconds float64) (string, error) {
 	jobID := utils.GenerateUUID()
 
 	// Convert data to map
 	dataMap := coerceToMap(data)
+
+	offset := time.Duration(offsetDelaySeconds * float64(time.Second))
 
 	job := &Job{
 		ID:        jobID,
@@ -57,7 +60,7 @@ func (q *Queue) Enqueue(ctx context.Context, eventType, userID string, data any)
 		Attempts:  0,
 		Status:    JobStatusPending,
 		CreatedAt: time.Now(),
-		NotBefore: time.Now().Add(q.minDelay), // Apply minimum delay for race condition testing
+		NotBefore: time.Now().Add(q.minDelay + offset), // Apply minimum delay + offset
 	}
 
 	// Serialize job to JSON
