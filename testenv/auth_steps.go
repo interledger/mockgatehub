@@ -10,6 +10,18 @@ import (
 
 func (tc *TestContext) cleanMockGatehub() error {
 	tc.Reset()
+	// Reset fees to 0% for each scenario to ensure test isolation
+	body := map[string]interface{}{
+		"deposit_fee_percentage":    0.0,
+		"withdrawal_fee_percentage": 0.0,
+	}
+	savedSecret := tc.appSecret
+	tc.appSecret = ""
+	_, err := tc.requestRaw("PUT", "/admin/fees", mustJSON(body), "application/json", nil)
+	tc.appSecret = savedSecret
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
