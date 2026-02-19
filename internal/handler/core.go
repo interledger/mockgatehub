@@ -292,9 +292,9 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 	var feePercent float64
 	switch req.DepositType {
 	case consts.DepositTypeExternal:
-		feePercent = h.feeConfig.GetDepositFeePercent()
+		feePercent, _ = h.feeConfig.GetDepositFeeForUser(req.UserID)
 	case "withdrawal":
-		feePercent = h.feeConfig.GetWithdrawalFeePercent()
+		feePercent, _ = h.feeConfig.GetWithdrawalFeeForUser(req.UserID)
 	}
 	feeAmount := CalculateFee(req.Amount, feePercent)
 	feeStr := fmt.Sprintf("%.2f", feeAmount)

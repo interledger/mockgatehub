@@ -169,14 +169,25 @@ func (h *Handler) RootHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Otherwise, serve the generic payment iframe (deposit/withdrawal/exchange)
+	// Otherwise, serve the payment iframe (deposit/withdrawal/exchange)
 	bearerShort := bearer
 	if len(bearer) > 20 {
 		bearerShort = bearer[:20] + "..."
 	}
 
+	// Select the appropriate template based on payment type
+	var templateFile string
+	switch paymentType {
+	case "deposit":
+		templateFile = "deposit.html"
+	case "withdrawal":
+		templateFile = "withdrawal.html"
+	default:
+		templateFile = "index.html"
+	}
+
 	// Load template from web folder
-	templatePath := filepath.Join("web", "index.html")
+	templatePath := filepath.Join("web", templateFile)
 	tmpl, err := template.ParseFiles(templatePath)
 	if err != nil {
 		logger.Error("failed to parse template", zap.Error(err))
@@ -382,7 +393,7 @@ func (h *Handler) processDeposit(w http.ResponseWriter, bearer string, txReq *Tr
 	amountStr := fmt.Sprintf("%.2f", amountFloat)
 
 	// Calculate deposit fee
-	feePercent := h.feeConfig.GetDepositFeePercent()
+	feePercent, _ := h.feeConfig.GetDepositFeeForUser(userUUID)
 	feeAmount := CalculateFee(amountFloat, feePercent)
 	feeStr := fmt.Sprintf("%.2f", feeAmount)
 	// For deposits, total_amount = amount (fee is charged separately by GateHub)
@@ -480,7 +491,7 @@ func (h *Handler) processWithdrawal(w http.ResponseWriter, bearer string, txReq 
 	amountStr := fmt.Sprintf("%.2f", amountFloat)
 
 	// Calculate withdrawal fee
-	feePercent := h.feeConfig.GetWithdrawalFeePercent()
+	feePercent, _ := h.feeConfig.GetWithdrawalFeeForUser(userUUID)
 	feeAmount := CalculateFee(amountFloat, feePercent)
 	feeStr := fmt.Sprintf("%.2f", feeAmount)
 
