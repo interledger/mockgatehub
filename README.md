@@ -1,5 +1,7 @@
 # MockGatehub
 
+EXPERIMENTAL
+
 A lightweight Go mock of the GateHub API for local development and testing of wallet applications that integrate with GateHub.
 
 Official GateHub documentation can be found [here](https://docs.gatehub.net/api-documentation/c3OPAp5dM191CDAdwyYS).
@@ -13,8 +15,8 @@ MockGatehub provides a drop-in replacement for GateHub's sandbox environment, en
 - Test multi-currency operations (11 supported currencies)
 - Verify KYC flows with a realistic iframe and server-side approval
 - Test webhook delivery mechanisms
-- Test card issuance, transactions, and 3DS challenge flows
-- Configure transaction fees for deposit/withdrawal testing
+- UNSTABLE - Test card issuance, transactions, and 3DS challenge flows
+- UNSTABLE - Configure transaction fees for deposit/withdrawal testing
 
 ## Features
 
