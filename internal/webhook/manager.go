@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"mockgatehub/internal/auth"
@@ -97,8 +98,25 @@ func (m *Manager) HasURL() bool {
 // ResolveCallbackURL determines where to send callbacks.
 // Organization config takes priority, then falls back to global WEBHOOK_URL.
 // Exported so handler code can reuse the same resolution logic.
+// ResolveCallbackURL returns the callback URL, preferring org config over global WEBHOOK_URL.
 func (m *Manager) ResolveCallbackURL() string {
 	return m.resolveCallbackURL()
+}
+
+// ResolveOrgBaseURL returns the organization's apiBaseUrl strictly from org config.
+// Returns empty string if no org config or no apiBaseUrl is set (no fallback to WEBHOOK_URL).
+func (m *Manager) ResolveOrgBaseURL() string {
+	if m.store != nil && m.defaultOrganizationID != "" {
+		org, err := m.store.GetOrganization(m.defaultOrganizationID)
+		if err == nil && org.APIBaseURL != "" {
+			logger.Debug("resolved org base URL from organization config",
+				zap.String("org_id", m.defaultOrganizationID),
+				zap.String("api_base_url", org.APIBaseURL),
+			)
+			return strings.TrimRight(org.APIBaseURL, "/")
+		}
+	}
+	return ""
 }
 
 // resolveCallbackURL determines where to send callbacks.
@@ -124,10 +142,13 @@ func (m *Manager) send(eventType, userID string, data any) error {
 		return m.execute2FACallbackTest(data)
 	}
 
-	callbackURL := m.resolveCallbackURL()
+	// Use the global WEBHOOK_URL for regular webhook delivery.
+	// The org apiBaseUrl is a base URL (no path) meant for 2FA callbacks;
+	// WEBHOOK_URL is the full URL including the webhook handler path.
+	callbackURL := m.webhookURL
 	if callbackURL == "" {
-		logger.Warn("no callback URL configured")
-		return fmt.Errorf("no callback URL available")
+		logger.Warn("no webhook URL configured")
+		return fmt.Errorf("no webhook URL available")
 	}
 
 	normalized := normalizeVerificationPayload(eventType, data)
@@ -356,7 +377,8 @@ func (m *Manager) test2FATOTPWorkflow(org *models.Organization, userID string) e
 }
 
 func (m *Manager) post2FACallback(org *models.Organization, userID string, payload map[string]interface{}) (*http.Response, error) {
-	endpoint := fmt.Sprintf("%s/v1/users/managed/%s/2fa", org.APIBaseURL, userID)
+	normalizedBase := strings.TrimRight(org.APIBaseURL, "/")
+	endpoint := fmt.Sprintf("%s/v1/users/managed/%s/2fa", normalizedBase, userID)
 
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -370,6 +392,5 @@ func (m *Manager) post2FACallback(org *models.Organization, userID string, paylo
 
 	req.Header.Set("Content-Type", "application/json")
 
-	client := &http.Client{Timeout: 5 * time.Second}
-	return client.Do(req)
+	return m.httpClient.Do(req)
 }

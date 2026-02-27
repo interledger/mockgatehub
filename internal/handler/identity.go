@@ -9,7 +9,6 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"mockgatehub/internal/consts"
 	"mockgatehub/internal/logger"
@@ -364,7 +363,8 @@ func (h *Handler) KYCIframeSubmit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		endpoint := fmt.Sprintf("%s/v1/users/managed/%s/2fa", callbackURL, userID)
+		normalizedCallbackURL := strings.TrimRight(callbackURL, "/")
+		endpoint := fmt.Sprintf("%s/v1/users/managed/%s/2fa", normalizedCallbackURL, userID)
 		success, err := h.call2FAVerify(endpoint, totpCode)
 		if err != nil {
 			logger.Error("2FA verification callback failed",
@@ -411,12 +411,13 @@ func (h *Handler) KYCIframeSubmit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// resolve2FACallbackURL gets the apiBaseUrl from the default organization config.
+// resolve2FACallbackURL gets the apiBaseUrl strictly from organization config.
+// Returns empty string if no org-specific apiBaseUrl is configured (no fallback to WEBHOOK_URL).
 func (h *Handler) resolve2FACallbackURL() string {
 	if h.webhookManager == nil {
 		return ""
 	}
-	return h.webhookManager.ResolveCallbackURL()
+	return h.webhookManager.ResolveOrgBaseURL()
 }
 
 // call2FAVerify calls the integrator's 2FA endpoint and returns (success, error).
@@ -430,8 +431,7 @@ func (h *Handler) call2FAVerify(endpoint, code string) (bool, error) {
 		return false, fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Post(endpoint, "application/json", bytes.NewReader(body))
+	resp, err := h.httpClient.Post(endpoint, "application/json", bytes.NewReader(body))
 	if err != nil {
 		return false, fmt.Errorf("callback request failed: %w", err)
 	}

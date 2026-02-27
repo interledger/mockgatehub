@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"mockgatehub/internal/consts"
@@ -65,7 +67,10 @@ func SeedTestUsersWithOrgID(store Storage, defaultOrgID string) error {
 		UpdatedAt: now,
 	}
 	if err := store.CreateOrganization(defaultOrg); err != nil {
-		// Organization might already exist, ignore error
+		// Only ignore "already exists" errors; propagate real failures (e.g., Redis connectivity)
+		if !strings.Contains(err.Error(), "already exists") {
+			return fmt.Errorf("failed to create default organization: %w", err)
+		}
 	}
 
 	return nil

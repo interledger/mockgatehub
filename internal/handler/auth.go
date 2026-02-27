@@ -3,6 +3,7 @@ package handler
 import (
 	"net/http"
 	"net/url"
+	"strings"
 
 	"mockgatehub/internal/consts"
 	"mockgatehub/internal/logger"
@@ -187,8 +188,8 @@ func (h *Handler) UpdateOrganizationConfiguration(w http.ResponseWriter, r *http
 		return
 	}
 
-	// Update organization
-	org.APIBaseURL = req.APIBaseURL
+	// Update organization (normalize trailing slash to prevent double-slash in constructed URLs)
+	org.APIBaseURL = strings.TrimRight(req.APIBaseURL, "/")
 	org.TwoFAType = req.TwoFAType
 
 	if err := h.store.UpdateOrganization(org); err != nil {

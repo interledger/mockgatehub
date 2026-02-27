@@ -664,7 +664,9 @@ func (s *MemoryStorage) CreateOrganization(org *models.Organization) error {
 		return fmt.Errorf("organization already exists")
 	}
 
-	s.organizations[org.ID] = org
+	// Store a defensive copy to prevent external mutation
+	orgCopy := *org
+	s.organizations[org.ID] = &orgCopy
 	return nil
 }
 
@@ -678,6 +680,8 @@ func (s *MemoryStorage) UpdateOrganization(org *models.Organization) error {
 	}
 
 	org.UpdatedAt = time.Now()
-	s.organizations[org.ID] = org
+	// Store a defensive copy to prevent external mutation
+	orgCopy := *org
+	s.organizations[org.ID] = &orgCopy
 	return nil
 }
