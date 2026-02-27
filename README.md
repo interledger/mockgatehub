@@ -51,9 +51,10 @@ The service will be available at `http://localhost:8080`
 | `MOCKGATEHUB_REDIS_DB` | `0` | Redis database number |
 | `MOCKGATEHUB_ENFORCE_AUTHENTICATION` | `true` | Enable HMAC signature validation |
 | `MOCKGATEHUB_VALID_CREDENTIALS` | `local-test-app-id:local-test-app-secret` | Comma-separated `appId:secret` pairs |
-| `WEBHOOK_URL` | — | Application webhook endpoint URL |
+| `WEBHOOK_URL` | — | Application webhook endpoint URL (fallback if no org config) |
 | `WEBHOOK_SECRET` | `mock-secret` | Secret for signing outgoing webhooks |
 | `WEBHOOK_MIN_DELAY_SEC` | `0.05` | Minimum seconds before webhooks become eligible for delivery |
+| `DEFAULT_ORGANIZATION_ID` | `default-org` | Organization ID for callback routing |
 
 > **Note**: The webhook queue always requires Redis, even when using in-memory storage for application data.
 
@@ -85,6 +86,7 @@ Two test users are automatically created at startup:
 | `POST` | `/users/managed` | Create managed user |
 | `GET` | `/users/managed` | Get managed user by email |
 | `PUT` | `/users/managed/email` | Update user email |
+| `PATCH` | `/users/organization/{orgID}` | Update organization configuration |
 
 ### Identity / KYC (`/id/v1/`)
 
@@ -212,6 +214,22 @@ MockGatehub delivers webhooks via a Redis-backed job queue with configurable min
 4. **Parent notification** — iframe posts `{ type: 'OnboardingCompleted', value: '{"applicantStatus":"submitted"}' }` to the parent window
 
 The `bearer` token is required. The `user_id` form field is optional — if omitted, it is resolved from the token-to-user mapping created via `/auth/v1/tokens`.
+
+### Optional 2FA TOTP Verification
+
+The KYC iframe includes an optional **"Trigger 2FA TOTP verification"** checkbox. When checked:
+
+1. User enters a TOTP code in the revealed input field
+2. On form submit, MockGateHub calls the integrator's 2FA endpoint before completing KYC:
+   ```
+   POST {org.apiBaseUrl}/v1/users/managed/{userId}/2fa
+   {"action": "VERIFY", "code": "{entered_code}"}
+   ```
+3. If integrator returns `{"success": true}` → KYC proceeds normally
+4. If integrator returns `{"success": false}` or non-2xx → form submission fails with error
+5. If no organization `apiBaseUrl` is configured → form submission fails with clear error
+
+This requires the organization configuration to be set via `PATCH /auth/v1/users/organization/{orgID}` with a valid `apiBaseUrl`.
 
 ## Transaction Lifecycle
 

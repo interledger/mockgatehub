@@ -76,7 +76,7 @@ func TestCalculateFee_LargeAmount(t *testing.T) {
 
 func newTestHandler() *Handler {
 	store := storage.NewMemoryStorage()
-	wm := webhook.NewManager("", "test-secret", nil)
+	wm := webhook.NewManager("", "test-secret", nil, nil, "")
 	return NewHandler(store, wm)
 }
 
@@ -204,7 +204,7 @@ func TestSetFees_PersistsAcrossGets(t *testing.T) {
 func newTestHandlerWithSeededUsers() *Handler {
 	store := storage.NewMemoryStorage()
 	storage.SeedTestUsers(store)
-	wm := webhook.NewManager("", "test-secret", nil)
+	wm := webhook.NewManager("", "test-secret", nil, nil, "")
 	return NewHandler(store, wm)
 }
 

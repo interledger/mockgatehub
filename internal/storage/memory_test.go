@@ -288,3 +288,58 @@ func TestMemoryStorage_TransactionStatusTypes(t *testing.T) {
 		})
 	}
 }
+
+// Organization tests
+
+func TestMemoryStorage_OrganizationCRUD(t *testing.T) {
+	store := NewMemoryStorage()
+
+	org := &models.Organization{
+		ID:         "test-org",
+		APIBaseURL: "https://api.example.com",
+		TwoFAType:  "sms",
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+
+	// Test Create
+	err := store.CreateOrganization(org)
+	require.NoError(t, err)
+
+	// Test duplicate create
+	err = store.CreateOrganization(org)
+	require.Error(t, err)
+
+	// Test Get
+	retrieved, err := store.GetOrganization("test-org")
+	require.NoError(t, err)
+	assert.Equal(t, org.ID, retrieved.ID)
+	assert.Equal(t, org.APIBaseURL, retrieved.APIBaseURL)
+	assert.Equal(t, org.TwoFAType, retrieved.TwoFAType)
+
+	// Test Get returns a copy (mutation safety)
+	retrieved.APIBaseURL = "https://mutated.example.com"
+	original, err := store.GetOrganization("test-org")
+	require.NoError(t, err)
+	assert.Equal(t, "https://api.example.com", original.APIBaseURL)
+
+	// Test Update
+	org.TwoFAType = "totp"
+	org.APIBaseURL = "https://api.newurl.com"
+	err = store.UpdateOrganization(org)
+	require.NoError(t, err)
+
+	retrieved, err = store.GetOrganization("test-org")
+	require.NoError(t, err)
+	assert.Equal(t, "totp", retrieved.TwoFAType)
+	assert.Equal(t, "https://api.newurl.com", retrieved.APIBaseURL)
+
+	// Test Get non-existent
+	_, err = store.GetOrganization("nonexistent")
+	require.Error(t, err)
+
+	// Test Update non-existent
+	nonExistent := &models.Organization{ID: "nonexistent"}
+	err = store.UpdateOrganization(nonExistent)
+	require.Error(t, err)
+}

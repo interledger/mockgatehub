@@ -22,3 +22,16 @@ Feature: Managed user authentication and KYC
   Scenario: KYC iframe is served for onboarding
     When I GET /iframe/onboarding?token={token}&user_id={userId}
     Then the response is HTML that mentions "KYC Verification" and "MockGatehub"
+
+  Scenario: KYC submission without 2FA proceeds normally
+    Given an existing managed user
+    When I POST /id/v1/users/{userId}/hubs/gw
+    And I submit the KYC form for user {userId} without 2FA
+    Then the response status is 200
+    And GET /id/v1/users/{userId} shows kyc_state "accepted" and risk_level "low"
+
+  Scenario: KYC submission with 2FA TOTP but no org callback URL
+    Given an existing managed user
+    When I POST /id/v1/users/{userId}/hubs/gw
+    And I submit the KYC form for user {userId} with 2FA and code "123456"
+    Then the response status is 400

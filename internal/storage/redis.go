@@ -831,6 +831,64 @@ func (s *RedisStorage) UpdateThreeDSChallenge(challenge *models.ThreeDSChallenge
 	return nil
 }
 
+// Organization operations
+
+func (s *RedisStorage) GetOrganization(orgID string) (*models.Organization, error) {
+	key := s.organizationKey(orgID)
+	data, err := s.client.Get(s.ctx, key).Bytes()
+	if err == redis.Nil {
+		return nil, fmt.Errorf("organization not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get organization: %w", err)
+	}
+
+	var org models.Organization
+	if err := json.Unmarshal(data, &org); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal organization: %w", err)
+	}
+	return &org, nil
+}
+
+func (s *RedisStorage) CreateOrganization(org *models.Organization) error {
+	key := s.organizationKey(org.ID)
+
+	exists, err := s.client.Exists(s.ctx, key).Result()
+	if err != nil {
+		return fmt.Errorf("failed to check organization existence: %w", err)
+	}
+	if exists > 0 {
+		return fmt.Errorf("organization already exists")
+	}
+
+	data, err := json.Marshal(org)
+	if err != nil {
+		return fmt.Errorf("failed to marshal organization: %w", err)
+	}
+
+	return s.client.Set(s.ctx, key, data, 0).Err()
+}
+
+func (s *RedisStorage) UpdateOrganization(org *models.Organization) error {
+	key := s.organizationKey(org.ID)
+
+	exists, err := s.client.Exists(s.ctx, key).Result()
+	if err != nil {
+		return fmt.Errorf("failed to check organization existence: %w", err)
+	}
+	if exists == 0 {
+		return fmt.Errorf("organization not found")
+	}
+
+	org.UpdatedAt = time.Now()
+	data, err := json.Marshal(org)
+	if err != nil {
+		return fmt.Errorf("failed to marshal organization: %w", err)
+	}
+
+	return s.client.Set(s.ctx, key, data, 0).Err()
+}
+
 // Key helpers
 
 func (s *RedisStorage) userKey(id string) string {
@@ -911,4 +969,8 @@ func (s *RedisStorage) threeDSChallengeKey(txID string) string {
 
 func (s *RedisStorage) userThreeDSChallengesKey(userID string) string {
 	return fmt.Sprintf("user:%s:3ds:challenges", userID)
+}
+
+func (s *RedisStorage) organizationKey(orgID string) string {
+	return fmt.Sprintf("organization:%s", orgID)
 }

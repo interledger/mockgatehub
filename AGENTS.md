@@ -81,6 +81,7 @@ mockgatehub/
 │   ├── auth_user_kyc.feature
 │   ├── cards.feature
 │   ├── fee_configuration.feature
+│   ├── organization_configuration.feature
 │   ├── rates_and_vaults.feature
 │   ├── service_health.feature
 │   ├── signature_authentication.feature
@@ -135,6 +136,7 @@ All environment variables are centralized in `config.Load()`:
 | `WEBHOOK_MIN_DELAY_SEC` | `0.05` → clamped ≥ `2` | Minimum delay before webhook delivery |
 | `MOCKGATEHUB_ENFORCE_AUTHENTICATION` | `true` | Enable/disable HMAC middleware |
 | `MOCKGATEHUB_VALID_CREDENTIALS` | `local-test-app-id:local-test-app-secret` | Format: `appId:secret,appId2:secret2` |
+| `DEFAULT_ORGANIZATION_ID` | `default-org` | Organization ID for callback routing |
 
 ### 2. Storage Layer (`internal/storage/`)
 
@@ -149,6 +151,7 @@ All environment variables are centralized in `config.Load()`:
 - Transactions: CRUD + status update
 - Balances: get/add/deduct per user per currency
 - 3DS Challenges: CRUD + list pending
+- Organizations: CRUD for organization configuration
 
 **Memory** (`memory.go`): `sync.RWMutex` for thread safety, maps for all entities.
 
@@ -171,12 +174,19 @@ Validates `x-gatehub-app-id`, `x-gatehub-timestamp`, `x-gatehub-signature` heade
 
 ### 4. Webhook System (`internal/webhook/`)
 
-**Architecture**: Redis-backed job queue with a background worker.
+**Architecture**: Redis-backed job queue with a background worker and organization-aware callback routing.
 
 - **Queue** (`queue.go`): Redis sorted set (`webhooks:queue`) + per-job hash (`webhooks:job:{id}`). Jobs are scored by `NotBefore` timestamp.
 - **Worker** (`worker.go`): Polls every 5 seconds, processes batches of 10 ready jobs.
-- **Manager** (`manager.go`): `SendAsync(eventType, userID, data, offsetDelaySeconds)` enqueues jobs. `send()` performs HTTP delivery with HMAC signing.
+- **Manager** (`manager.go`): `SendAsync(eventType, userID, data, offsetDelaySeconds)` enqueues jobs. `send()` performs HTTP delivery with HMAC signing. Supports organization-aware callback routing and 2FA callback test workflows.
 - **Job** (`job.go`): Tracks ID, event type, user ID, data, attempts, status, timestamps.
+
+**Callback Routing**: The webhook manager resolves the callback URL per event:
+1. Looks up the organization config using `DEFAULT_ORGANIZATION_ID`
+2. If the organization has an `apiBaseUrl`, routes callbacks there
+3. Falls back to the global `WEBHOOK_URL` environment variable
+
+**2FA Callback Test**: When an organization config is updated via `PATCH /auth/v1/users/organization/{orgID}`, a test job is enqueued with a 3-second delay. The worker executes INITIATE and VERIFY callbacks to the organization's `apiBaseUrl` to verify connectivity.
 
 **Retry policy**: 10 max attempts, 30-second fixed backoff between retries.
 
@@ -293,6 +303,7 @@ Tests use `//go:build e2e` tag. Each feature area has a `*_steps.go` file implem
 - `cards.feature` — full card lifecycle (~17 scenarios)
 - `signature_authentication.feature` — HMAC validation (~12 scenarios)
 - `fee_configuration.feature` — fee setup and application (~16 scenarios)
+- `organization_configuration.feature` — organization config update (~6 scenarios)
 
 ## CI/CD
 

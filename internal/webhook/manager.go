@@ -10,6 +10,8 @@ import (
 
 	"mockgatehub/internal/auth"
 	"mockgatehub/internal/logger"
+	"mockgatehub/internal/models"
+	"mockgatehub/internal/storage"
 	"mockgatehub/internal/utils"
 
 	"go.uber.org/zap"
@@ -17,10 +19,12 @@ import (
 
 // Manager handles webhook delivery
 type Manager struct {
-	webhookURL    string
-	webhookSecret string
-	httpClient    *http.Client
-	queue         *Queue // Redis-backed job queue
+	webhookURL            string
+	webhookSecret         string
+	httpClient            *http.Client
+	queue                 *Queue // Redis-backed job queue
+	store                 storage.Storage
+	defaultOrganizationID string
 }
 
 // WebhookPayload represents the webhook request body (matches wallet-backend IWebhookData)
@@ -34,10 +38,11 @@ type WebhookPayload struct {
 }
 
 // NewManager creates a new webhook manager
-func NewManager(webhookURL, webhookSecret string, queue *Queue) *Manager {
+func NewManager(webhookURL, webhookSecret string, queue *Queue, store storage.Storage, defaultOrgID string) *Manager {
 	logger.Info("initializing webhook manager",
 		zap.String("url", webhookURL),
 		zap.Int("secret_length", len(webhookSecret)),
+		zap.String("default_org_id", defaultOrgID),
 	)
 
 	return &Manager{
@@ -46,7 +51,9 @@ func NewManager(webhookURL, webhookSecret string, queue *Queue) *Manager {
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
-		queue: queue,
+		queue:                 queue,
+		store:                 store,
+		defaultOrganizationID: defaultOrgID,
 	}
 }
 
@@ -54,12 +61,23 @@ func NewManager(webhookURL, webhookSecret string, queue *Queue) *Manager {
 // offsetDelaySeconds adds extra seconds on top of the queue's minimum delay
 // before the job becomes eligible for delivery.
 func (m *Manager) SendAsync(eventType, userID string, data any, offsetDelaySeconds float64) {
-	if m.webhookURL == "" {
-		logger.Info("skipping webhook send - no url configured", zap.String("event", eventType), zap.String("user", userID))
-		return
+	// Internal events (like 2FA callback tests) are always enqueued regardless of URL config
+	isInternal := len(eventType) > 9 && eventType[:9] == "internal."
+	if !isInternal {
+		// For regular webhooks, check that a callback URL is configured
+		callbackURL := m.resolveCallbackURL()
+		if callbackURL == "" {
+			logger.Info("skipping webhook send - no url configured", zap.String("event", eventType), zap.String("user", userID))
+			return
+		}
 	}
 
 	logger.Info("enqueueing webhook", zap.String("event", eventType), zap.String("user", userID), zap.Float64("offset_delay_seconds", offsetDelaySeconds))
+
+	if m.queue == nil {
+		logger.Warn("webhook queue not available, skipping enqueue", zap.String("event", eventType))
+		return
+	}
 
 	ctx := context.Background()
 	jobID, err := m.queue.Enqueue(ctx, eventType, userID, data, offsetDelaySeconds)
@@ -71,16 +89,47 @@ func (m *Manager) SendAsync(eventType, userID string, data any, offsetDelaySecon
 	logger.Info("webhook enqueued successfully", zap.String("job_id", jobID))
 }
 
-// HasURL reports whether a webhook URL is configured.
+// HasURL reports whether a webhook URL is configured (either via org config or global).
 func (m *Manager) HasURL() bool {
-	return m != nil && m.webhookURL != ""
+	return m != nil && m.resolveCallbackURL() != ""
 }
 
-// send is now public (called by worker) and performs a single send attempt
-// Worker handles retry logic via queue rescheduling
+// ResolveCallbackURL determines where to send callbacks.
+// Organization config takes priority, then falls back to global WEBHOOK_URL.
+// Exported so handler code can reuse the same resolution logic.
+func (m *Manager) ResolveCallbackURL() string {
+	return m.resolveCallbackURL()
+}
+
+// resolveCallbackURL determines where to send callbacks.
+// Organization config takes priority, then falls back to global WEBHOOK_URL.
+func (m *Manager) resolveCallbackURL() string {
+	if m.store != nil && m.defaultOrganizationID != "" {
+		org, err := m.store.GetOrganization(m.defaultOrganizationID)
+		if err == nil && org.APIBaseURL != "" {
+			logger.Debug("resolved callback URL from organization",
+				zap.String("org_id", m.defaultOrganizationID),
+				zap.String("api_base_url", org.APIBaseURL),
+			)
+			return org.APIBaseURL
+		}
+	}
+	return m.webhookURL
+}
 
 // Send performs the actual HTTP webhook request (called by worker)
 func (m *Manager) send(eventType, userID string, data any) error {
+	// Special handling for 2FA callback test
+	if eventType == "internal.2fa_callback_test" {
+		return m.execute2FACallbackTest(data)
+	}
+
+	callbackURL := m.resolveCallbackURL()
+	if callbackURL == "" {
+		logger.Warn("no callback URL configured")
+		return fmt.Errorf("no callback URL available")
+	}
+
 	normalized := normalizeVerificationPayload(eventType, data)
 
 	// Build payload - testnet wallet-backend expects timestamp as milliseconds string
@@ -100,7 +149,7 @@ func (m *Manager) send(eventType, userID string, data any) error {
 	}
 
 	// Create request
-	req, err := http.NewRequest("POST", m.webhookURL, bytes.NewReader(body))
+	req, err := http.NewRequest("POST", callbackURL, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -114,7 +163,7 @@ func (m *Manager) send(eventType, userID string, data any) error {
 	req.Header.Set("X-GH-Webhook-Signature", signature)
 
 	logger.Info("sending webhook request",
-		zap.String("url", m.webhookURL),
+		zap.String("url", callbackURL),
 		zap.String("event_type", eventType),
 		zap.String("user_id", userID),
 		zap.String("signature", signature),
@@ -191,4 +240,136 @@ func coerceToMap(data any) map[string]interface{} {
 	}
 
 	return converted
+}
+
+// execute2FACallbackTest handles the internal 2FA callback test job
+func (m *Manager) execute2FACallbackTest(data any) error {
+	dataMap := coerceToMap(data)
+	orgID, _ := dataMap["organization_id"].(string)
+	testUserID, _ := dataMap["test_user_id"].(string)
+
+	if m.store == nil {
+		return fmt.Errorf("store not available for 2FA callback test")
+	}
+
+	org, err := m.store.GetOrganization(orgID)
+	if err != nil {
+		logger.Error("organization not found for 2fa test", zap.String("org_id", orgID), zap.Error(err))
+		return err
+	}
+
+	if org.APIBaseURL == "" {
+		logger.Warn("organization has no apiBaseUrl, skipping 2FA callback test", zap.String("org_id", orgID))
+		return nil
+	}
+
+	logger.Info("executing 2FA callback test",
+		zap.String("org_id", orgID),
+		zap.String("type2fa", org.TwoFAType),
+		zap.String("api_base_url", org.APIBaseURL),
+	)
+
+	switch org.TwoFAType {
+	case "sms":
+		return m.test2FASMSWorkflow(org, testUserID)
+	case "totp":
+		return m.test2FATOTPWorkflow(org, testUserID)
+	default:
+		return fmt.Errorf("unknown 2fa type: %s", org.TwoFAType)
+	}
+}
+
+func (m *Manager) test2FASMSWorkflow(org *models.Organization, userID string) error {
+	// Step 1: Send INITIATE callback
+	initiatePayload := map[string]interface{}{
+		"action": "INITIATE",
+	}
+
+	resp, err := m.post2FACallback(org, userID, initiatePayload)
+	if err != nil {
+		logger.Error("2FA INITIATE callback failed",
+			zap.String("org_id", org.ID),
+			zap.String("user_id", userID),
+			zap.Error(err),
+		)
+		return err
+	}
+	resp.Body.Close()
+
+	logger.Info("2FA INITIATE callback succeeded",
+		zap.String("org_id", org.ID),
+		zap.String("user_id", userID),
+		zap.Int("status_code", resp.StatusCode),
+	)
+
+	// Step 2: Send VERIFY callback (simulating user entering code)
+	verifyPayload := map[string]interface{}{
+		"action": "VERIFY",
+		"code":   "123456",
+	}
+
+	resp, err = m.post2FACallback(org, userID, verifyPayload)
+	if err != nil {
+		logger.Error("2FA VERIFY callback failed",
+			zap.String("org_id", org.ID),
+			zap.String("user_id", userID),
+			zap.Error(err),
+		)
+		return err
+	}
+	resp.Body.Close()
+
+	logger.Info("2FA VERIFY callback succeeded",
+		zap.String("org_id", org.ID),
+		zap.String("user_id", userID),
+		zap.Int("status_code", resp.StatusCode),
+	)
+
+	return nil
+}
+
+func (m *Manager) test2FATOTPWorkflow(org *models.Organization, userID string) error {
+	// TOTP only has verification (no INITIATE)
+	verifyPayload := map[string]interface{}{
+		"action": "VERIFY",
+		"code":   "123456",
+	}
+
+	resp, err := m.post2FACallback(org, userID, verifyPayload)
+	if err != nil {
+		logger.Error("2FA TOTP callback failed",
+			zap.String("org_id", org.ID),
+			zap.String("user_id", userID),
+			zap.Error(err),
+		)
+		return err
+	}
+	resp.Body.Close()
+
+	logger.Info("2FA TOTP callback succeeded",
+		zap.String("org_id", org.ID),
+		zap.String("user_id", userID),
+		zap.Int("status_code", resp.StatusCode),
+	)
+
+	return nil
+}
+
+func (m *Manager) post2FACallback(org *models.Organization, userID string, payload map[string]interface{}) (*http.Response, error) {
+	endpoint := fmt.Sprintf("%s/v1/users/managed/%s/2fa", org.APIBaseURL, userID)
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal 2FA payload: %w", err)
+	}
+
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create 2FA request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	return client.Do(req)
 }

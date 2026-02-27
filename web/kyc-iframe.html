@@ -17,6 +17,11 @@
         .status.success { background: #e6f4ea; color: #1b5e20; display: block; }
         .status.error { background: #fdecea; color: #b71c1c; display: block; }
         .hint { color: #666; font-size: 13px; margin-top: -6px; margin-bottom: 10px; }
+        fieldset { border: 1px solid #ddd; border-radius: 6px; padding: 14px 16px 10px; margin-bottom: 15px; }
+        fieldset legend { font-weight: 600; font-size: 14px; color: #333; padding: 0 6px; }
+        fieldset .checkbox-label { display: flex; align-items: center; gap: 8px; font-weight: 400; margin-bottom: 8px; cursor: pointer; }
+        fieldset .checkbox-label input[type="checkbox"] { width: auto; margin: 0; }
+        input:disabled { background: #f0f0f0; color: #999; cursor: not-allowed; }
     </style>
 </head>
 <body>
@@ -59,6 +64,20 @@
                 </select>
                 <div class="hint">Optional override to exercise webhook payloads.</div>
             </div>
+            <fieldset>
+                <legend>2FA TOTP Verification</legend>
+                <label class="checkbox-label">
+                    <input type="checkbox" id="trigger_2fa" name="trigger_2fa"
+                           onchange="document.getElementById('totp_code').disabled = !this.checked">
+                    Trigger 2FA TOTP verification
+                </label>
+                <div class="hint">When enabled, MockGatehub will call your 2FA endpoint to verify the TOTP code before completing KYC.</div>
+                <div class="form-group">
+                    <label for="totp_code">TOTP Code</label>
+                    <input id="totp_code" name="totp_code" placeholder="Enter TOTP code" disabled>
+                    <div class="hint">The code will be sent to your 2FA endpoint for verification. No client-side validation.</div>
+                </div>
+            </fieldset>
             <button type="submit" id="submitBtn">Submit for Verification</button>
             <div id="status" class="status"></div>
         </form>

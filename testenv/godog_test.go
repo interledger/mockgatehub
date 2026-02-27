@@ -67,6 +67,10 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^I GET (/[^ ]+)$`, tc.getEndpoint)
 	ctx.Step(`^the response is HTML that mentions "([^"]*)" and "([^"]*)"$`, tc.responseIsHTMLMentioning)
 
+	// KYC 2FA steps
+	ctx.Step(`^I submit the KYC form for user \{userId\} without 2FA$`, tc.submitKYCFormWithout2FA)
+	ctx.Step(`^I submit the KYC form for user \{userId\} with 2FA and code "([^"]*)"$`, tc.submitKYCFormWith2FA)
+
 	// Signature auth steps
 	ctx.Step(`^a clean MockGatehub instance with authentication enforced$`, tc.cleanMockGatehubInstanceWithAuthenticationEnforced)
 	ctx.Step(`^valid credentials with app id "([^"]*)" and secret "([^"]*)"$`, tc.validCredentialsWithAppIdAndSecret)
@@ -218,4 +222,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 		bodyJSON := fmt.Sprintf(`{"deposit_fee_percentage": %.1f}`, percent)
 		return tc.setUserFeesWithoutAuth(tc.userID, bodyJSON)
 	})
+
+	// Organization configuration steps
+	InitializeOrganizationScenario(ctx, tc)
 }
