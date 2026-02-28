@@ -17,6 +17,7 @@ type Config struct {
 	UseRedis              bool
 	EnforceAuthentication bool
 	ValidCredentials      map[string]string // appID -> secret
+	DefaultOrganizationID string
 }
 
 // Load reads configuration from environment variables
@@ -31,6 +32,7 @@ func Load() *Config {
 		WebhookMinDelaySec:    getEnvFloat("WEBHOOK_MIN_DELAY_SEC", 0.05),
 		EnforceAuthentication: getEnvBool("MOCKGATEHUB_ENFORCE_AUTHENTICATION", true),
 		ValidCredentials:      parseCredentials(getEnv("MOCKGATEHUB_VALID_CREDENTIALS", "local-test-app-id:local-test-app-secret")),
+		DefaultOrganizationID: getEnv("DEFAULT_ORGANIZATION_ID", "default-org"),
 	}
 
 	// Validate WebhookMinDelaySec: enforce minimum of 2 seconds to prevent

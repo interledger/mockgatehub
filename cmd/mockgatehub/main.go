@@ -61,7 +61,7 @@ func main() {
 		store = storage.NewMemoryStorage()
 	}
 
-	if err := storage.SeedTestUsers(store); err != nil {
+	if err := storage.SeedTestUsersWithOrgID(store, cfg.DefaultOrganizationID); err != nil {
 		logger.Fatal("failed to seed test users", zap.Error(err))
 	}
 
@@ -89,7 +89,7 @@ func main() {
 		webhookQueue = webhook.NewQueue(redisClient, cfg.WebhookMinDelaySec)
 	}
 
-	webhookManager := webhook.NewManager(cfg.WebhookURL, cfg.WebhookSecret, webhookQueue)
+	webhookManager := webhook.NewManager(cfg.WebhookURL, cfg.WebhookSecret, webhookQueue, store, cfg.DefaultOrganizationID)
 	webhookWorker = webhook.NewWorker(webhookQueue, webhookManager)
 
 	// Start webhook worker in background
@@ -185,6 +185,7 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		r.Post("/users/managed", h.CreateManagedUser)
 		r.Get("/users/managed", h.GetManagedUser)
 		r.Put("/users/managed/email", h.UpdateManagedUserEmail)
+		r.Patch("/users/organization/{organizationID}", h.UpdateOrganizationConfiguration)
 	})
 	r.Route("/id/v1", func(r chi.Router) {
 		logger.Info("REGISTERING /id/v1 ROUTES")

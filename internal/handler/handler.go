@@ -27,6 +27,7 @@ import (
 type Handler struct {
 	store          storage.Storage
 	webhookManager *webhook.Manager
+	httpClient     *http.Client
 	tokenToUser    sync.Map // Maps bearer tokens to user UUIDs
 	feeConfig      *FeeConfig
 }
@@ -43,7 +44,10 @@ func NewHandler(store storage.Storage, webhookManager *webhook.Manager) *Handler
 	return &Handler{
 		store:          store,
 		webhookManager: webhookManager,
-		feeConfig:      NewFeeConfig(),
+		httpClient: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+		feeConfig: NewFeeConfig(),
 	}
 }
 

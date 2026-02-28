@@ -16,7 +16,7 @@ import (
 
 func TestOrderAdditionalCardRoute(t *testing.T) {
 	store := storage.NewMemoryStorage()
-	webhookManager := webhook.NewManager("", "test-secret", nil)
+	webhookManager := webhook.NewManager("", "test-secret", nil, nil, "")
 	h := handler.NewHandler(store, webhookManager)
 
 	r := chi.NewRouter()

@@ -42,7 +42,7 @@ func TestCreateTransactionExternalDeposit(t *testing.T) {
 	store := storage.NewMemoryStorage()
 	storage.SeedTestUsers(store)
 
-	webhookManager := webhook.NewManager("", "test-secret", nil) // No URL - won't send webhooks
+	webhookManager := webhook.NewManager("", "test-secret", nil, nil, "") // No URL - won't send webhooks
 	handler := NewHandler(store, webhookManager)
 
 	// Create transaction request for external deposit
@@ -89,7 +89,7 @@ func TestCreateTransactionHostedDeposit(t *testing.T) {
 	store := storage.NewMemoryStorage()
 	storage.SeedTestUsers(store)
 
-	webhookManager := webhook.NewManager("", "test-secret", nil) // No URL - won't send webhooks
+	webhookManager := webhook.NewManager("", "test-secret", nil, nil, "") // No URL - won't send webhooks
 	handler := NewHandler(store, webhookManager)
 
 	// Create transaction request for hosted deposit (type=2)
@@ -135,7 +135,7 @@ func TestCreateTransactionMissingUserID(t *testing.T) {
 	store := storage.NewMemoryStorage()
 	storage.SeedTestUsers(store)
 
-	webhookManager := webhook.NewManager("", "test-secret", nil)
+	webhookManager := webhook.NewManager("", "test-secret", nil, nil, "")
 	handler := NewHandler(store, webhookManager)
 
 	// Missing user_id
@@ -162,7 +162,7 @@ func TestCreateTransactionMultipleCurrencies(t *testing.T) {
 	store := storage.NewMemoryStorage()
 	storage.SeedTestUsers(store)
 
-	webhookManager := webhook.NewManager("", "test-secret", nil)
+	webhookManager := webhook.NewManager("", "test-secret", nil, nil, "")
 	handler := NewHandler(store, webhookManager)
 
 	currencies := []string{"USD", "EUR", "GBP", "XRP"}
@@ -202,7 +202,7 @@ func TestTransactionCompleteHandlerMissingAmount(t *testing.T) {
 	store := storage.NewMemoryStorage()
 	storage.SeedTestUsers(store)
 
-	webhookManager := webhook.NewManager("", "test-secret", nil)
+	webhookManager := webhook.NewManager("", "test-secret", nil, nil, "")
 	handler := NewHandler(store, webhookManager)
 
 	// Create a wallet first
@@ -234,7 +234,7 @@ func TestTransactionCompleteHandlerMissingCurrency(t *testing.T) {
 	store := storage.NewMemoryStorage()
 	storage.SeedTestUsers(store)
 
-	webhookManager := webhook.NewManager("", "test-secret", nil)
+	webhookManager := webhook.NewManager("", "test-secret", nil, nil, "")
 	handler := NewHandler(store, webhookManager)
 
 	// Create a wallet first
@@ -266,7 +266,7 @@ func TestTransactionCompleteHandlerEmptyBody(t *testing.T) {
 	store := storage.NewMemoryStorage()
 	storage.SeedTestUsers(store)
 
-	webhookManager := webhook.NewManager("", "test-secret", nil)
+	webhookManager := webhook.NewManager("", "test-secret", nil, nil, "")
 	handler := NewHandler(store, webhookManager)
 
 	// Create a wallet first
@@ -291,7 +291,7 @@ func TestTransactionCompleteHandlerInvalidAmount(t *testing.T) {
 	store := storage.NewMemoryStorage()
 	storage.SeedTestUsers(store)
 
-	webhookManager := webhook.NewManager("", "test-secret", nil)
+	webhookManager := webhook.NewManager("", "test-secret", nil, nil, "")
 	handler := NewHandler(store, webhookManager)
 
 	// Create a wallet first
@@ -324,7 +324,7 @@ func TestTransactionCompleteHandlerInvalidCurrency(t *testing.T) {
 	store := storage.NewMemoryStorage()
 	storage.SeedTestUsers(store)
 
-	webhookManager := webhook.NewManager("", "test-secret", nil)
+	webhookManager := webhook.NewManager("", "test-secret", nil, nil, "")
 	handler := NewHandler(store, webhookManager)
 
 	// Create a wallet first
@@ -357,7 +357,7 @@ func TestTransactionCompleteHandlerValid(t *testing.T) {
 	store := storage.NewMemoryStorage()
 	storage.SeedTestUsers(store)
 
-	webhookManager := webhook.NewManager("", "test-secret", nil)
+	webhookManager := webhook.NewManager("", "test-secret", nil, nil, "")
 	handler := NewHandler(store, webhookManager)
 
 	// Create a wallet first
@@ -393,7 +393,7 @@ func TestTransactionCompleteHandlerValid(t *testing.T) {
 // TestRequestLoggerMultiValueHeaders verifies that multi-value headers are properly joined
 func TestRequestLoggerMultiValueHeaders(t *testing.T) {
 	store := storage.NewMemoryStorage()
-	webhookManager := webhook.NewManager("", "test-secret", nil)
+	webhookManager := webhook.NewManager("", "test-secret", nil, nil, "")
 	h := NewHandler(store, webhookManager)
 
 	// Create a simple test handler

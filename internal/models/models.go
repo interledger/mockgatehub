@@ -44,6 +44,15 @@ type Wallet struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// Organization represents organization-level configuration
+type Organization struct {
+	ID         string    `json:"id"`
+	APIBaseURL string    `json:"apiBaseUrl"`
+	TwoFAType  string    `json:"type2fa"`
+	CreatedAt  time.Time `json:"createdAt"`
+	UpdatedAt  time.Time `json:"updatedAt"`
+}
+
 // Transaction represents a deposit or transaction
 type Transaction struct {
 	ID               string    `json:"uuid"` // GateHub uses "uuid" not "id"

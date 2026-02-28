@@ -72,3 +72,35 @@ func (tc *TestContext) responseIsHTMLMentioning(text1, text2 string) error {
 	}
 	return nil
 }
+
+func (tc *TestContext) submitKYCFormWithout2FA() error {
+	formData := map[string]string{
+		"user_id":    tc.userID,
+		"first_name": "Jane",
+		"last_name":  "Doe",
+		"dob":        "1990-05-15",
+		"address":    "123 Main St",
+		"city":       "Testville",
+		"country":    "US",
+		"risk_level": "low",
+	}
+	_, err := tc.requestForm("POST", "/iframe/submit", formData)
+	return err
+}
+
+func (tc *TestContext) submitKYCFormWith2FA(code string) error {
+	formData := map[string]string{
+		"user_id":     tc.userID,
+		"first_name":  "Jane",
+		"last_name":   "Doe",
+		"dob":         "1990-05-15",
+		"address":     "123 Main St",
+		"city":        "Testville",
+		"country":     "US",
+		"risk_level":  "low",
+		"trigger_2fa": "on",
+		"totp_code":   code,
+	}
+	_, err := tc.requestForm("POST", "/iframe/submit", formData)
+	return err
+}

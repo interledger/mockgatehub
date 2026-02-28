@@ -98,6 +98,21 @@ type GetVaultsResponse struct {
 	Vaults []VaultItem `json:"vaults"`
 }
 
+// UpdateOrganizationConfigurationRequest represents the request to update organization config
+type UpdateOrganizationConfigurationRequest struct {
+	APIBaseURL string `json:"apiBaseUrl"`
+	TwoFAType  string `json:"type2fa"`
+}
+
+// UpdateOrganizationConfigurationResponse represents the response
+type UpdateOrganizationConfigurationResponse struct {
+	ID         string `json:"id"`
+	APIBaseURL string `json:"apiBaseUrl"`
+	TwoFAType  string `json:"type2fa"`
+	CreatedAt  string `json:"createdAt"`
+	UpdatedAt  string `json:"updatedAt"`
+}
+
 // ErrorResponse is a generic error response
 type ErrorResponse struct {
 	Error   string `json:"error"`

@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -346,6 +348,46 @@ func (h *Handler) KYCIframeSubmit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Optional 2FA TOTP verification
+	trigger2FA := r.FormValue("trigger_2fa")
+	if trigger2FA == "on" {
+		totpCode := r.FormValue("totp_code")
+
+		callbackURL := h.resolve2FACallbackURL()
+		if callbackURL == "" {
+			logger.Warn("2FA verification requested but no organization callback URL configured",
+				zap.String("user_id", userID),
+			)
+			h.sendError(w, http.StatusBadRequest,
+				"2FA verification requested but no organization callback URL configured")
+			return
+		}
+
+		normalizedCallbackURL := strings.TrimRight(callbackURL, "/")
+		endpoint := fmt.Sprintf("%s/v1/users/managed/%s/2fa", normalizedCallbackURL, userID)
+		success, err := h.call2FAVerify(endpoint, totpCode)
+		if err != nil {
+			logger.Error("2FA verification callback failed",
+				zap.String("user_id", userID),
+				zap.String("endpoint", endpoint),
+				zap.Error(err),
+			)
+			h.sendError(w, http.StatusBadRequest, "2FA verification failed: "+err.Error())
+			return
+		}
+		if !success {
+			logger.Info("2FA verification rejected by integrator",
+				zap.String("user_id", userID),
+			)
+			h.sendError(w, http.StatusBadRequest, "2FA verification rejected")
+			return
+		}
+
+		logger.Info("2FA verification succeeded",
+			zap.String("user_id", userID),
+		)
+	}
+
 	user.KYCState = consts.KYCStateAccepted
 	riskLevel := r.FormValue("risk_level")
 	if riskLevel == "" {
@@ -367,4 +409,44 @@ func (h *Handler) KYCIframeSubmit(w http.ResponseWriter, r *http.Request) {
 		"status":  consts.KYCStateAccepted,
 		"message": "KYC verification completed successfully",
 	})
+}
+
+// resolve2FACallbackURL gets the apiBaseUrl strictly from organization config.
+// Returns empty string if no org-specific apiBaseUrl is configured (no fallback to WEBHOOK_URL).
+func (h *Handler) resolve2FACallbackURL() string {
+	if h.webhookManager == nil {
+		return ""
+	}
+	return h.webhookManager.ResolveOrgBaseURL()
+}
+
+// call2FAVerify calls the integrator's 2FA endpoint and returns (success, error).
+func (h *Handler) call2FAVerify(endpoint, code string) (bool, error) {
+	payload := map[string]string{
+		"action": "VERIFY",
+		"code":   code,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return false, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
+	resp, err := h.httpClient.Post(endpoint, "application/json", bytes.NewReader(body))
+	if err != nil {
+		return false, fmt.Errorf("callback request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, fmt.Errorf("callback returned status %d", resp.StatusCode)
+	}
+
+	var result struct {
+		Success bool `json:"success"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false, fmt.Errorf("failed to decode callback response: %w", err)
+	}
+
+	return result.Success, nil
 }

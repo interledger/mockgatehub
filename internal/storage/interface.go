@@ -62,4 +62,9 @@ type Storage interface {
 	GetThreeDSChallenge(txID string) (*models.ThreeDSChallenge, error)
 	GetPendingThreeDSChallenges(userID string) ([]*models.ThreeDSChallenge, error)
 	UpdateThreeDSChallenge(challenge *models.ThreeDSChallenge) error
+
+	// Organizations
+	GetOrganization(orgID string) (*models.Organization, error)
+	CreateOrganization(org *models.Organization) error
+	UpdateOrganization(org *models.Organization) error
 }

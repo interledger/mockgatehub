@@ -1,12 +1,21 @@
 package storage
 
 import (
+	"fmt"
+	"strings"
+	"time"
+
 	"mockgatehub/internal/consts"
 	"mockgatehub/internal/models"
 )
 
 // SeedTestUsers creates pre-seeded test users with balances
 func SeedTestUsers(store Storage) error {
+	return SeedTestUsersWithOrgID(store, "default-org")
+}
+
+// SeedTestUsersWithOrgID creates pre-seeded test users with balances and a default organization
+func SeedTestUsersWithOrgID(store Storage, defaultOrgID string) error {
 	// Test User 1: USD balance
 	user1 := &models.User{
 		ID:        consts.TestUser1ID,
@@ -47,6 +56,21 @@ func SeedTestUsers(store Storage) error {
 	// Add 10,000 EUR balance
 	if err := store.AddBalance(user2.ID, "EUR", 10000.00); err != nil {
 		return err
+	}
+
+	// Create default organization
+	now := time.Now()
+	defaultOrg := &models.Organization{
+		ID:        defaultOrgID,
+		TwoFAType: "sms",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	if err := store.CreateOrganization(defaultOrg); err != nil {
+		// Only ignore "already exists" errors; propagate real failures (e.g., Redis connectivity)
+		if !strings.Contains(err.Error(), "already exists") {
+			return fmt.Errorf("failed to create default organization: %w", err)
+		}
 	}
 
 	return nil

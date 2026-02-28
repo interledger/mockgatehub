@@ -26,6 +26,7 @@ type MemoryStorage struct {
 	wallets                map[string]*models.Wallet                    // address -> Wallet
 	transactions           map[string]*models.Transaction               // txID -> Transaction
 	balances               map[string]map[string]float64                // userID -> currency -> amount
+	organizations          map[string]*models.Organization              // orgID -> Organization
 }
 
 // NewMemoryStorage creates a new in-memory storage
@@ -45,6 +46,7 @@ func NewMemoryStorage() *MemoryStorage {
 		wallets:                make(map[string]*models.Wallet),
 		transactions:           make(map[string]*models.Transaction),
 		balances:               make(map[string]map[string]float64),
+		organizations:          make(map[string]*models.Organization),
 	}
 }
 
@@ -633,5 +635,53 @@ func (s *MemoryStorage) UpdateThreeDSChallenge(challenge *models.ThreeDSChalleng
 	}
 
 	s.threeDSChallenges[challenge.TransactionID] = challenge
+	return nil
+}
+
+// Organization operations
+
+// GetOrganization retrieves an organization by ID
+func (s *MemoryStorage) GetOrganization(orgID string) (*models.Organization, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	org, exists := s.organizations[orgID]
+	if !exists {
+		return nil, fmt.Errorf("organization not found")
+	}
+
+	// Return copy to prevent external mutation
+	orgCopy := *org
+	return &orgCopy, nil
+}
+
+// CreateOrganization creates a new organization
+func (s *MemoryStorage) CreateOrganization(org *models.Organization) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.organizations[org.ID]; exists {
+		return fmt.Errorf("organization already exists")
+	}
+
+	// Store a defensive copy to prevent external mutation
+	orgCopy := *org
+	s.organizations[org.ID] = &orgCopy
+	return nil
+}
+
+// UpdateOrganization updates an existing organization
+func (s *MemoryStorage) UpdateOrganization(org *models.Organization) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.organizations[org.ID]; !exists {
+		return fmt.Errorf("organization not found")
+	}
+
+	org.UpdatedAt = time.Now()
+	// Store a defensive copy to prevent external mutation
+	orgCopy := *org
+	s.organizations[org.ID] = &orgCopy
 	return nil
 }
