@@ -19,8 +19,11 @@ test: unit-tests e2e-tests
 
 # Run unit tests
 unit-tests:
-	@echo "Running unit tests..."
-	@go test -v ./... -cover
+	@echo "Running all unit tests..."
+	@go test -v ./...
+	@echo "Checking coverage for internal"
+	@go test -v -coverprofile=coverage.out ./internal/...
+	
 
 e2e-tests:
 	@echo "Running feature e2e tests (godog)..."

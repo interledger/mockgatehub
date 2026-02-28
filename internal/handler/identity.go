@@ -351,41 +351,10 @@ func (h *Handler) KYCIframeSubmit(w http.ResponseWriter, r *http.Request) {
 	// Optional 2FA TOTP verification
 	trigger2FA := r.FormValue("trigger_2fa")
 	if trigger2FA == "on" {
-		totpCode := r.FormValue("totp_code")
-
-		callbackURL := h.resolve2FACallbackURL()
-		if callbackURL == "" {
-			logger.Warn("2FA verification requested but no organization callback URL configured",
-				zap.String("user_id", userID),
-			)
-			h.sendError(w, http.StatusBadRequest,
-				"2FA verification requested but no organization callback URL configured")
+		if err := h.verify2FA(userID, r.FormValue("totp_code")); err != nil {
+			h.sendError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-
-		normalizedCallbackURL := strings.TrimRight(callbackURL, "/")
-		endpoint := fmt.Sprintf("%s/v1/users/managed/%s/2fa", normalizedCallbackURL, userID)
-		success, err := h.call2FAVerify(endpoint, totpCode)
-		if err != nil {
-			logger.Error("2FA verification callback failed",
-				zap.String("user_id", userID),
-				zap.String("endpoint", endpoint),
-				zap.Error(err),
-			)
-			h.sendError(w, http.StatusBadRequest, "2FA verification failed: "+err.Error())
-			return
-		}
-		if !success {
-			logger.Info("2FA verification rejected by integrator",
-				zap.String("user_id", userID),
-			)
-			h.sendError(w, http.StatusBadRequest, "2FA verification rejected")
-			return
-		}
-
-		logger.Info("2FA verification succeeded",
-			zap.String("user_id", userID),
-		)
 	}
 
 	user.KYCState = consts.KYCStateAccepted
@@ -409,6 +378,42 @@ func (h *Handler) KYCIframeSubmit(w http.ResponseWriter, r *http.Request) {
 		"status":  consts.KYCStateAccepted,
 		"message": "KYC verification completed successfully",
 	})
+}
+
+// verify2FA resolves the org callback URL, builds the 2FA endpoint for the given user,
+// and calls the integrator's VERIFY action. Returns nil on success or an error describing
+// the failure (suitable for sending to the client).
+func (h *Handler) verify2FA(userID, totpCode string) error {
+	callbackURL := h.resolve2FACallbackURL()
+	if callbackURL == "" {
+		logger.Warn("2FA verification requested but no organization callback URL configured",
+			zap.String("user_id", userID),
+		)
+		return fmt.Errorf("2FA verification requested but no organization callback URL configured")
+	}
+
+	normalizedCallbackURL := strings.TrimRight(callbackURL, "/")
+	endpoint := fmt.Sprintf("%s/v1/users/managed/%s/2fa", normalizedCallbackURL, userID)
+	success, err := h.call2FAVerify(endpoint, totpCode)
+	if err != nil {
+		logger.Error("2FA verification callback failed",
+			zap.String("user_id", userID),
+			zap.String("endpoint", endpoint),
+			zap.Error(err),
+		)
+		return fmt.Errorf("2FA verification failed: %w", err)
+	}
+	if !success {
+		logger.Info("2FA verification rejected by integrator",
+			zap.String("user_id", userID),
+		)
+		return fmt.Errorf("2FA verification rejected")
+	}
+
+	logger.Info("2FA verification succeeded",
+		zap.String("user_id", userID),
+	)
+	return nil
 }
 
 // resolve2FACallbackURL gets the apiBaseUrl strictly from organization config.

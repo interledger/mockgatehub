@@ -34,8 +34,10 @@ type Handler struct {
 
 // TransactionRequest represents a transaction request from the iframe
 type TransactionRequest struct {
-	Amount   string `json:"amount"`
-	Currency string `json:"currency"`
+	Amount     string `json:"amount"`
+	Currency   string `json:"currency"`
+	TriggerSCA bool   `json:"trigger_sca,omitempty"`
+	TOTPCode   string `json:"totp_code,omitempty"`
 }
 
 // NewHandler creates a new handler with dependencies
@@ -287,6 +289,26 @@ func (h *Handler) TransactionCompleteHandler(w http.ResponseWriter, r *http.Requ
 	}
 
 	logger.Info("parsed transaction details", zap.String("amount", txReq.Amount), zap.String("currency", txReq.Currency))
+
+	// Optional SCA TOTP verification (same flow as KYC 2FA)
+	if txReq.TriggerSCA {
+		userUUID := h.extractUserFromBearer(bearer)
+		if userUUID == "" {
+			logger.Warn("SCA requested but could not extract user from bearer")
+			h.sendErrorWithCORS(w, http.StatusBadRequest, "Invalid bearer token for SCA verification")
+			return
+		}
+
+		if err := h.verify2FA(userUUID, txReq.TOTPCode); err != nil {
+			h.sendErrorWithCORS(w, http.StatusBadRequest, err.Error())
+			return
+		}
+
+		logger.Info("SCA TOTP verification succeeded",
+			zap.String("user_id", userUUID),
+			zap.String("payment_type", paymentType),
+		)
+	}
 
 	// For deposit type, create a transaction and send a webhook to wallet-backend
 	if paymentType == "deposit" {
