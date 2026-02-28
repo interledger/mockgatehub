@@ -217,3 +217,159 @@ func TestUpdateOrganizationConfiguration_TimestampFormat(t *testing.T) {
 	_, err = time.Parse("2006-01-02 15:04:05.999999", updatedAt)
 	assert.NoError(t, err, "updatedAt should be in GateHub timestamp format")
 }
+
+// ── CreateToken ──
+
+func TestCreateToken_Default(t *testing.T) {
+	h, _ := newSeededHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/v1/tokens", nil)
+	w := httptest.NewRecorder()
+	h.CreateToken(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp models.TokenResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.NotEmpty(t, resp.AccessToken)
+	assert.Equal(t, "Bearer", resp.TokenType)
+	assert.Equal(t, 3600, resp.ExpiresIn)
+}
+
+func TestCreateToken_ManagedUser(t *testing.T) {
+	h, _ := newSeededHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/auth/v1/tokens", nil)
+	req.Header.Set("x-gatehub-managed-user-uuid", "user-abc-123")
+	w := httptest.NewRecorder()
+	h.CreateToken(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp models.TokenResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp.Token, "iframe-token-")
+
+	// Verify token was stored in the mapping
+	userID, ok := h.tokenToUser.Load(resp.Token)
+	assert.True(t, ok)
+	assert.Equal(t, "user-abc-123", userID)
+}
+
+// ── CreateManagedUser ──
+
+func TestCreateManagedUser_Success(t *testing.T) {
+	h, _ := newSeededHandler(t)
+
+	body, _ := json.Marshal(map[string]string{"email": "new@example.com"})
+	req := httptest.NewRequest(http.MethodPost, "/auth/v1/users/managed", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.CreateManagedUser(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+	var user models.User
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &user))
+	assert.Equal(t, "new@example.com", user.Email)
+	assert.True(t, user.Managed)
+	assert.True(t, user.Activated)
+}
+
+func TestCreateManagedUser_DuplicateEmail(t *testing.T) {
+	h, _ := newSeededHandler(t)
+
+	// testuser1 is already seeded
+	body, _ := json.Marshal(map[string]string{"email": "testuser1@mockgatehub.local"})
+	req := httptest.NewRequest(http.MethodPost, "/auth/v1/users/managed", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.CreateManagedUser(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code) // Returns existing user
+}
+
+func TestCreateManagedUser_MissingEmail(t *testing.T) {
+	h, _ := newSeededHandler(t)
+
+	body, _ := json.Marshal(map[string]string{})
+	req := httptest.NewRequest(http.MethodPost, "/auth/v1/users/managed", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.CreateManagedUser(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── GetManagedUser ──
+
+func TestGetManagedUser_Success(t *testing.T) {
+	h, _ := newSeededHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/auth/v1/users/managed?email=testuser1@mockgatehub.local", nil)
+	w := httptest.NewRecorder()
+	h.GetManagedUser(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp models.GetManagedUserResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "testuser1@mockgatehub.local", resp.User.Email)
+}
+
+func TestGetManagedUser_NotFound(t *testing.T) {
+	h, _ := newSeededHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/auth/v1/users/managed?email=no@one.com", nil)
+	w := httptest.NewRecorder()
+	h.GetManagedUser(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestGetManagedUser_MissingEmail(t *testing.T) {
+	h, _ := newSeededHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/auth/v1/users/managed", nil)
+	w := httptest.NewRecorder()
+	h.GetManagedUser(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── UpdateManagedUserEmail ──
+
+func TestUpdateManagedUserEmail_Success(t *testing.T) {
+	h, _ := newSeededHandler(t)
+
+	body, _ := json.Marshal(map[string]string{"email": "testuser1@mockgatehub.local", "new_email": "updated@example.com"})
+	req := httptest.NewRequest(http.MethodPut, "/auth/v1/users/managed/email", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.UpdateManagedUserEmail(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp models.GetManagedUserResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, "updated@example.com", resp.User.Email)
+}
+
+func TestUpdateManagedUserEmail_UserNotFound(t *testing.T) {
+	h, _ := newSeededHandler(t)
+
+	body, _ := json.Marshal(map[string]string{"email": "nobody@test.com", "new_email": "new@test.com"})
+	req := httptest.NewRequest(http.MethodPut, "/auth/v1/users/managed/email", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.UpdateManagedUserEmail(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestUpdateManagedUserEmail_MissingFields(t *testing.T) {
+	h, _ := newSeededHandler(t)
+
+	body, _ := json.Marshal(map[string]string{"email": "test@test.com"})
+	req := httptest.NewRequest(http.MethodPut, "/auth/v1/users/managed/email", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.UpdateManagedUserEmail(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}

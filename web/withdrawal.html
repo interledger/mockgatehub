@@ -5,6 +5,9 @@
 	<meta charset="UTF-8">
 	<meta name="viewport" content="width=device-width, initial-scale=1.0">
 	<style>
+		html, body {
+			overflow-y: auto;
+		}
 		body {
 			font-family: Arial, sans-serif;
 			margin: 0;
@@ -12,7 +15,10 @@
 			background-color: #f5f5f5;
 		}
 		.container {
+			box-sizing: border-box;
 			max-width: 600px;
+			max-height: calc(100vh - 40px);
+			overflow-y: auto;
 			margin: 0 auto;
 			background: white;
 			padding: 20px;
@@ -61,6 +67,12 @@
 		}
 		.status.success { background: #d4edda; color: #155724; display: block; }
 		.status.error { background: #f8d7da; color: #721c24; display: block; }
+		fieldset { border: 1px solid #ddd; border-radius: 6px; padding: 14px 16px 10px; margin: 20px 0; }
+		fieldset legend { font-weight: 600; font-size: 14px; color: #333; padding: 0 6px; }
+		.checkbox-label { display: flex; align-items: center; gap: 8px; font-weight: 400; margin-bottom: 8px; cursor: pointer; }
+		.checkbox-label input[type="checkbox"] { width: auto; margin: 0; }
+		.hint { color: #666; font-size: 13px; margin-top: 4px; margin-bottom: 10px; }
+		input:disabled { background: #f0f0f0; color: #999; cursor: not-allowed; }
 	</style>
 </head>
 <body>
@@ -82,6 +94,22 @@
 				<select id="currency" style="padding: 8px; font-size: 16px; width: 100%;"><option>Loading...</option></select>
 			</div>
 		</div>
+
+		<fieldset>
+			<legend>SCA TOTP Verification</legend>
+			<label class="checkbox-label">
+				<input type="checkbox" id="trigger_sca" name="trigger_sca"
+				       onchange="document.getElementById('totp_code').disabled = !this.checked">
+				Require SCA TOTP verification
+			</label>
+			<div class="hint">When enabled, MockGateHub will call your 2FA endpoint to verify the TOTP code before completing the withdrawal.</div>
+			<div>
+				<label>TOTP Code:</label><br>
+				<input type="text" id="totp_code" name="totp_code" placeholder="Enter TOTP code" disabled
+				       style="padding: 8px; font-size: 16px; width: 100%; box-sizing: border-box;">
+				<div class="hint">The code will be sent to your 2FA endpoint for verification.</div>
+			</div>
+		</fieldset>
 
 		<div class="info">
 			<strong>Debug Info:</strong><br>
@@ -160,6 +188,14 @@
 					console.log("Withdrawal details:", requestBody);
 				}
 
+				// Include SCA fields if checkbox is checked
+				const scaCheckbox = document.getElementById('trigger_sca');
+				if (scaCheckbox && scaCheckbox.checked) {
+					requestBody.trigger_sca = true;
+					requestBody.totp_code = document.getElementById('totp_code').value;
+					console.log("SCA TOTP verification enabled");
+				}
+
 				const response = await fetch(`/transaction/complete?paymentType=withdrawal&bearer=${encodeURIComponent(bearer)}`, {
 					method: 'POST',
 					headers: {
@@ -199,7 +235,7 @@
 
 				if (window.parent && window.parent !== window) {
 					window.parent.postMessage({
-						type: 'WithdrawalCompleted',
+						type: 'withdrawal-error',
 						status: 'error',
 						message: 'Error: ' + error.message
 					}, '*');

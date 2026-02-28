@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -61,4 +62,69 @@ func hmacSHA256Hex(message, secret string) string {
 	mac := hmac.New(sha256.New, []byte(secret))
 	mac.Write([]byte(message))
 	return hex.EncodeToString(mac.Sum(nil))
+}
+
+func TestSignRequest_SetsHeaders(t *testing.T) {
+	req, _ := http.NewRequest("POST", "http://example.com/auth/v1/tokens", nil)
+	body := []byte(`{"key":"value"}`)
+
+	SignRequest(req, "my-secret", body)
+
+	assert.NotEmpty(t, req.Header.Get("x-gatehub-timestamp"))
+	assert.NotEmpty(t, req.Header.Get("x-gatehub-signature"))
+	assert.Equal(t, "mockgatehub", req.Header.Get("x-gatehub-app-id"))
+
+	// Signature should be valid
+	ts := req.Header.Get("x-gatehub-timestamp")
+	sig := req.Header.Get("x-gatehub-signature")
+	expected := GenerateSignature(ts, "POST", "http://example.com/auth/v1/tokens", string(body), "my-secret")
+	assert.Equal(t, expected, sig)
+}
+
+func TestBuildOutgoingURL(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		want string
+	}{
+		{"full url", "http://example.com/path", "http://example.com/path"},
+		{"with query", "http://example.com/path?q=1", "http://example.com/path?q=1"},
+		{"https", "https://example.com/path", "https://example.com/path"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, _ := http.NewRequest("GET", tt.url, nil)
+			got := buildOutgoingURL(req)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestGenerateGateHubWebhookSignature_HexSecret(t *testing.T) {
+	body := `{"event":"test"}`
+	secret := hex.EncodeToString([]byte("webhook-key"))
+
+	sig := GenerateGateHubWebhookSignature(body, secret)
+	assert.Len(t, sig, 64, "should be hex-encoded SHA256")
+
+	// Verify manually
+	key, _ := hex.DecodeString(secret)
+	mac := hmac.New(sha256.New, key)
+	mac.Write([]byte(body))
+	expected := hex.EncodeToString(mac.Sum(nil))
+	assert.Equal(t, expected, sig)
+}
+
+func TestGenerateGateHubWebhookSignature_NonHexFallback(t *testing.T) {
+	body := `{"event":"test"}`
+	secret := "not-hex-at-all"
+
+	sig := GenerateGateHubWebhookSignature(body, secret)
+	assert.Len(t, sig, 64)
+
+	// When hex decode fails, uses raw secret
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(body))
+	expected := hex.EncodeToString(mac.Sum(nil))
+	assert.Equal(t, expected, sig)
 }

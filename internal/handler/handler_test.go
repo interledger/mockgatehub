@@ -3,9 +3,12 @@ package handler
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -432,4 +435,524 @@ func createTestWallet(t *testing.T, store storage.Storage, userID string) {
 	}
 	err := store.CreateWallet(wallet)
 	require.NoError(t, err)
+}
+
+// setupSCATestHandler creates a handler with a test user, wallet, balance, and optional org config.
+func setupSCATestHandler(t *testing.T, orgAPIBaseURL string) (*Handler, *storage.MemoryStorage) {
+	t.Helper()
+	store := storage.NewMemoryStorage()
+	storage.SeedTestUsers(store)
+
+	wm := webhook.NewManager("", "test-secret", nil, store, "default-org")
+	h := NewHandler(store, wm)
+
+	createTestWallet(t, store, consts.TestUser1ID)
+	h.tokenToUser.Store("sca-token", consts.TestUser1ID)
+
+	if orgAPIBaseURL != "" {
+		// Seeder already creates "default-org"; update it with the provided apiBaseUrl
+		org, err := store.GetOrganization("default-org")
+		require.NoError(t, err)
+		org.APIBaseURL = orgAPIBaseURL
+		org.TwoFAType = "totp"
+		require.NoError(t, store.UpdateOrganization(org))
+	}
+
+	return h, store
+}
+
+func postTransaction(h *Handler, paymentType string, body map[string]interface{}) *httptest.ResponseRecorder {
+	bodyBytes, _ := json.Marshal(body)
+	url := fmt.Sprintf("/transaction/complete?paymentType=%s&bearer=sca-token", paymentType)
+	req := httptest.NewRequest(http.MethodPost, url, bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.TransactionCompleteHandler(w, req)
+	return w
+}
+
+func TestTransactionSCA_DepositSuccess(t *testing.T) {
+	var receivedBody map[string]interface{}
+	var receivedPath string
+	mock2FA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		bodyBytes, _ := io.ReadAll(r.Body)
+		json.Unmarshal(bodyBytes, &receivedBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	}))
+	defer mock2FA.Close()
+
+	h, store := setupSCATestHandler(t, mock2FA.URL)
+
+	w := postTransaction(h, "deposit", map[string]interface{}{
+		"amount":      "50.00",
+		"currency":    "USD",
+		"trigger_sca": true,
+		"totp_code":   "123456",
+	})
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, fmt.Sprintf("/v1/users/managed/%s/2fa", consts.TestUser1ID), receivedPath)
+	assert.Equal(t, "VERIFY", receivedBody["action"])
+	assert.Equal(t, "123456", receivedBody["code"])
+
+	// Balance should have increased
+	balance, _ := store.GetBalance(consts.TestUser1ID, "USD")
+	assert.Greater(t, balance, 10000.0) // seeded with 10,000
+}
+
+func TestTransactionSCA_DepositRejected(t *testing.T) {
+	mock2FA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"success": false})
+	}))
+	defer mock2FA.Close()
+
+	h, store := setupSCATestHandler(t, mock2FA.URL)
+
+	w := postTransaction(h, "deposit", map[string]interface{}{
+		"amount":      "50.00",
+		"currency":    "USD",
+		"trigger_sca": true,
+		"totp_code":   "wrong",
+	})
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	// Balance should be unchanged
+	balance, _ := store.GetBalance(consts.TestUser1ID, "USD")
+	assert.Equal(t, 10000.0, balance)
+}
+
+func TestTransactionSCA_NoOrgConfig(t *testing.T) {
+	h, _ := setupSCATestHandler(t, "") // no org
+
+	w := postTransaction(h, "deposit", map[string]interface{}{
+		"amount":      "50.00",
+		"currency":    "USD",
+		"trigger_sca": true,
+		"totp_code":   "123456",
+	})
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Contains(t, resp["message"], "no organization callback URL configured")
+}
+
+func TestTransactionSCA_InvalidBearer(t *testing.T) {
+	mock2FA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	}))
+	defer mock2FA.Close()
+
+	h, _ := setupSCATestHandler(t, mock2FA.URL)
+
+	// Use an unknown bearer token
+	bodyBytes, _ := json.Marshal(map[string]interface{}{
+		"amount":      "50.00",
+		"currency":    "USD",
+		"trigger_sca": true,
+		"totp_code":   "123456",
+	})
+	req := httptest.NewRequest(http.MethodPost, "/transaction/complete?paymentType=deposit&bearer=unknown-token", bytes.NewReader(bodyBytes))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.TransactionCompleteHandler(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestTransactionSCA_NetworkError(t *testing.T) {
+	h, _ := setupSCATestHandler(t, "https://127.0.0.1:1") // unroutable
+
+	w := postTransaction(h, "deposit", map[string]interface{}{
+		"amount":      "50.00",
+		"currency":    "USD",
+		"trigger_sca": true,
+		"totp_code":   "123456",
+	})
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestTransactionSCA_WithdrawalSuccess(t *testing.T) {
+	mock2FA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]bool{"success": true})
+	}))
+	defer mock2FA.Close()
+
+	h, store := setupSCATestHandler(t, mock2FA.URL)
+
+	w := postTransaction(h, "withdrawal", map[string]interface{}{
+		"amount":      "50.00",
+		"currency":    "USD",
+		"trigger_sca": true,
+		"totp_code":   "654321",
+	})
+
+	assert.Equal(t, http.StatusOK, w.Code)
+
+	// Balance should have decreased
+	balance, _ := store.GetBalance(consts.TestUser1ID, "USD")
+	assert.Less(t, balance, 10000.0)
+}
+
+func TestTransactionSCA_SkippedWhenNotTriggered(t *testing.T) {
+	// No SCA fields — should succeed without any 2FA callback, even with no org config
+	h, _ := setupSCATestHandler(t, "")
+
+	w := postTransaction(h, "deposit", map[string]interface{}{
+		"amount":   "50.00",
+		"currency": "USD",
+	})
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestTransactionSCA_IntegratorReturns500(t *testing.T) {
+	mock2FA := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer mock2FA.Close()
+
+	h, _ := setupSCATestHandler(t, mock2FA.URL)
+
+	w := postTransaction(h, "deposit", map[string]interface{}{
+		"amount":      "50.00",
+		"currency":    "USD",
+		"trigger_sca": true,
+		"totp_code":   "123456",
+	})
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── HealthCheck ──
+
+func TestHealthCheck(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	wm := webhook.NewManager("", "s", nil, store, "")
+	h := NewHandler(store, wm)
+
+	req := httptest.NewRequest(http.MethodGet, "/health", nil)
+	rec := httptest.NewRecorder()
+	h.HealthCheck(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"status":"ok"`)
+	assert.Contains(t, rec.Body.String(), `"service":"mockgatehub"`)
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+}
+
+// ── extractBearerFromAuthHeader ──
+
+func TestExtractBearerFromAuthHeader(t *testing.T) {
+	tests := []struct {
+		name   string
+		header string
+		want   string
+	}{
+		{"valid", "Bearer abc123", "abc123"},
+		{"empty", "", ""},
+		{"too_short", "Bear", ""},
+		{"no_bearer_prefix", "Basic abc123", ""},
+		{"bearer_only", "Bearer ", ""},
+		{"with_spaces", "Bearer tok en", "tok en"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, extractBearerFromAuthHeader(tt.header))
+		})
+	}
+}
+
+// ── validateTransactionRequest ──
+
+func TestValidateTransactionRequest(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	wm := webhook.NewManager("", "s", nil, store, "")
+	h := NewHandler(store, wm)
+
+	tests := []struct {
+		name    string
+		req     *TransactionRequest
+		wantErr bool
+	}{
+		{"valid", &TransactionRequest{Amount: "100.00", Currency: "USD"}, false},
+		{"missing_amount", &TransactionRequest{Currency: "USD"}, true},
+		{"missing_currency", &TransactionRequest{Amount: "100.00"}, true},
+		{"invalid_amount", &TransactionRequest{Amount: "abc", Currency: "USD"}, true},
+		{"unsupported_currency", &TransactionRequest{Amount: "10", Currency: "FAKE"}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := h.validateTransactionRequest(tt.req)
+			if tt.wantErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// ── isSupportedCurrency ──
+
+func TestIsSupportedCurrency(t *testing.T) {
+	assert.True(t, isSupportedCurrency("USD"))
+	assert.True(t, isSupportedCurrency("EUR"))
+	assert.True(t, isSupportedCurrency("XRP"))
+	assert.False(t, isSupportedCurrency("FAKE"))
+	assert.False(t, isSupportedCurrency(""))
+}
+
+// ── RequestLogger preserves body ──
+
+func TestRequestLoggerPreservesBody(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	wm := webhook.NewManager("", "s", nil, store, "")
+	h := NewHandler(store, wm)
+
+	var capturedBody string
+	inner := http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		capturedBody = string(body)
+		rw.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/test", strings.NewReader(`{"key":"value"}`))
+	rec := httptest.NewRecorder()
+	h.RequestLogger(inner).ServeHTTP(rec, req)
+
+	assert.Equal(t, `{"key":"value"}`, capturedBody)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+// ── TransactionCompleteHandler OPTIONS ──
+
+func TestTransactionCompleteHandler_CORS_Options(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	wm := webhook.NewManager("", "s", nil, store, "")
+	h := NewHandler(store, wm)
+
+	req := httptest.NewRequest(http.MethodOptions, "/transaction/complete?paymentType=deposit", nil)
+	rec := httptest.NewRecorder()
+	h.TransactionCompleteHandler(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "*", rec.Header().Get("Access-Control-Allow-Origin"))
+}
+
+// ── extractUserFromBearer ──
+
+func TestExtractUserFromBearer(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	wm := webhook.NewManager("", "s", nil, store, "")
+	h := NewHandler(store, wm)
+
+	h.tokenToUser.Store("known-tok", "user-123")
+
+	assert.Equal(t, "user-123", h.extractUserFromBearer("known-tok"))
+	assert.Equal(t, "", h.extractUserFromBearer("unknown-really-long-token-value"))
+}
+
+// ── processWithdrawal insufficient balance ──
+
+func TestProcessWithdrawal_InsufficientBalance(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	storage.SeedTestUsers(store)
+	wm := webhook.NewManager("", "s", nil, store, "")
+	h := NewHandler(store, wm)
+
+	createTestWallet(t, store, consts.TestUser1ID)
+	h.tokenToUser.Store("bearer-insuff", consts.TestUser1ID)
+
+	req := httptest.NewRequest(http.MethodPost, "/transaction/complete?paymentType=withdrawal&bearer=bearer-insuff",
+		strings.NewReader(`{"amount":"999999.00","currency":"USD"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.TransactionCompleteHandler(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "Insufficient balance")
+}
+
+// ── processWithdrawal no wallets ──
+
+func TestProcessWithdrawal_NoWallets(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	storage.SeedTestUsers(store)
+	wm := webhook.NewManager("", "s", nil, store, "")
+	h := NewHandler(store, wm)
+
+	h.tokenToUser.Store("bearer-nowal", consts.TestUser1ID)
+
+	req := httptest.NewRequest(http.MethodPost, "/transaction/complete?paymentType=withdrawal&bearer=bearer-nowal",
+		strings.NewReader(`{"amount":"10.00","currency":"USD"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.TransactionCompleteHandler(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "no wallets")
+}
+
+// ── min helper ──
+
+func TestMinHelper(t *testing.T) {
+	assert.Equal(t, 3, min(3, 5))
+	assert.Equal(t, 3, min(5, 3))
+	assert.Equal(t, 0, min(0, 0))
+}
+
+// ── RootHandler ──
+
+func TestRootHandler_MissingBearer(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	wm := webhook.NewManager("", "s", nil, store, "")
+	h := NewHandler(store, wm)
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	rec := httptest.NewRecorder()
+	h.RootHandler(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "Missing bearer token")
+}
+
+// ── TransactionCompleteHandler with Authorization header ──
+
+func TestTransactionCompleteHandler_AuthHeader(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	storage.SeedTestUsers(store)
+	wm := webhook.NewManager("", "s", nil, store, "")
+	h := NewHandler(store, wm)
+
+	createTestWallet(t, store, consts.TestUser1ID)
+	h.tokenToUser.Store("auth-bearer-tok", consts.TestUser1ID)
+
+	req := httptest.NewRequest(http.MethodPost, "/transaction/complete?paymentType=deposit",
+		strings.NewReader(`{"amount":"10.00","currency":"USD"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer auth-bearer-tok")
+	rec := httptest.NewRecorder()
+	h.TransactionCompleteHandler(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+// ── TransactionCompleteHandler missing bearer ──
+
+func TestTransactionCompleteHandler_MissingBearer(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	wm := webhook.NewManager("", "s", nil, store, "")
+	h := NewHandler(store, wm)
+
+	req := httptest.NewRequest(http.MethodPost, "/transaction/complete?paymentType=deposit",
+		strings.NewReader(`{"amount":"10.00","currency":"USD"}`))
+	rec := httptest.NewRecorder()
+	h.TransactionCompleteHandler(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "Missing bearer token")
+}
+
+// ── processDeposit invalid bearer ──
+
+func TestProcessDeposit_InvalidBearer(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	wm := webhook.NewManager("", "s", nil, store, "")
+	h := NewHandler(store, wm)
+
+	req := httptest.NewRequest(http.MethodPost, "/transaction/complete?paymentType=deposit&bearer=unknown-token-value-long",
+		strings.NewReader(`{"amount":"10.00","currency":"USD"}`))
+	rec := httptest.NewRecorder()
+	h.TransactionCompleteHandler(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Contains(t, rec.Body.String(), "Invalid bearer token")
+}
+
+// ── processWithdrawal invalid bearer ──
+
+func TestProcessWithdrawal_InvalidBearer(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	wm := webhook.NewManager("", "s", nil, store, "")
+	h := NewHandler(store, wm)
+
+	req := httptest.NewRequest(http.MethodPost, "/transaction/complete?paymentType=withdrawal&bearer=unknown-token-value-long",
+		strings.NewReader(`{"amount":"10.00","currency":"USD"}`))
+	rec := httptest.NewRecorder()
+	h.TransactionCompleteHandler(rec, req)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+}
+
+// ── processDeposit auto-creates wallet ──
+
+func TestProcessDeposit_AutoCreatesWallet(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	storage.SeedTestUsers(store)
+	wm := webhook.NewManager("", "s", nil, store, "")
+	h := NewHandler(store, wm)
+
+	h.tokenToUser.Store("auto-wal-tok", consts.TestUser1ID)
+
+	// Don't create a wallet — processDeposit should auto-create one
+	req := httptest.NewRequest(http.MethodPost, "/transaction/complete?paymentType=deposit&bearer=auto-wal-tok",
+		strings.NewReader(`{"amount":"25.00","currency":"USD"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.TransactionCompleteHandler(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	// Verify balance increased
+	bal, _ := store.GetBalance(consts.TestUser1ID, "USD")
+	assert.InDelta(t, 10025.0, bal, 0.01)
+}
+
+// ── processWithdrawal success ──
+
+func TestProcessWithdrawal_Success(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	storage.SeedTestUsers(store)
+	wm := webhook.NewManager("", "s", nil, store, "")
+	h := NewHandler(store, wm)
+
+	createTestWallet(t, store, consts.TestUser1ID)
+	h.tokenToUser.Store("wd-tok", consts.TestUser1ID)
+
+	req := httptest.NewRequest(http.MethodPost, "/transaction/complete?paymentType=withdrawal&bearer=wd-tok",
+		strings.NewReader(`{"amount":"50.00","currency":"USD"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.TransactionCompleteHandler(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	bal, _ := store.GetBalance(consts.TestUser1ID, "USD")
+	assert.InDelta(t, 9950.0, bal, 0.01)
+}
+
+// ── generic paymentType (not deposit/withdrawal) ──
+
+func TestTransactionComplete_GenericType(t *testing.T) {
+	store := storage.NewMemoryStorage()
+	wm := webhook.NewManager("", "s", nil, store, "")
+	h := NewHandler(store, wm)
+
+	h.tokenToUser.Store("gen-tok", "user-1")
+
+	req := httptest.NewRequest(http.MethodPost, "/transaction/complete?paymentType=exchange&bearer=gen-tok",
+		strings.NewReader(`{"amount":"10.00","currency":"USD"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	h.TransactionCompleteHandler(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), "Transaction completed")
 }

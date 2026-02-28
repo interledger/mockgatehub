@@ -3,7 +3,10 @@ package auth
 import (
 	"crypto/tls"
 	"net/http"
+	"net/http/httptest"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -166,3 +169,84 @@ func TestMatchesPublicPattern(t *testing.T) {
 	}
 }
 
+// --- Middleware integration tests ---
+
+var testCreds = map[string]string{"test-app": "test-secret"}
+var okHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+})
+
+func signedRequest(method, url, body string) *http.Request {
+	ts := strconv.FormatInt(time.Now().UnixMilli(), 10)
+	sig := GenerateSignature(ts, method, url, body, "test-secret")
+	req := httptest.NewRequest(method, url, nil)
+	req.Header.Set("x-gatehub-app-id", "test-app")
+	req.Header.Set("x-gatehub-timestamp", ts)
+	req.Header.Set("x-gatehub-signature", sig)
+	return req
+}
+
+func TestMiddleware_ValidSignature(t *testing.T) {
+	mw := Middleware(testCreds)(okHandler)
+	url := "http://example.com/core/v1/wallets"
+	req := signedRequest("GET", url, "")
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestMiddleware_MissingHeaders(t *testing.T) {
+	mw := Middleware(testCreds)(okHandler)
+	req := httptest.NewRequest("GET", "/core/v1/wallets", nil)
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestMiddleware_UnknownAppID(t *testing.T) {
+	mw := Middleware(testCreds)(okHandler)
+	req := httptest.NewRequest("GET", "/core/v1/wallets", nil)
+	req.Header.Set("x-gatehub-app-id", "unknown")
+	req.Header.Set("x-gatehub-timestamp", "123456")
+	req.Header.Set("x-gatehub-signature", "badsig")
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestMiddleware_BadSignature(t *testing.T) {
+	mw := Middleware(testCreds)(okHandler)
+	req := httptest.NewRequest("GET", "/core/v1/wallets", nil)
+	req.Header.Set("x-gatehub-app-id", "test-app")
+	req.Header.Set("x-gatehub-timestamp", "123456")
+	req.Header.Set("x-gatehub-signature", "definitely-wrong")
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusUnauthorized, w.Code)
+}
+
+func TestMiddleware_PublicEndpointSkipsAuth(t *testing.T) {
+	mw := Middleware(testCreds)(okHandler)
+	for _, path := range []string{"/health", "/", "/iframe/onboarding", "/admin/fees"} {
+		req := httptest.NewRequest("GET", path, nil)
+		w := httptest.NewRecorder()
+		mw.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusOK, w.Code, "public endpoint %s should skip auth", path)
+	}
+}
+
+func TestMiddleware_PublicPatternSkipsAuth(t *testing.T) {
+	mw := Middleware(testCreds)(okHandler)
+	req := httptest.NewRequest("GET", "/admin/users/some-uuid/fees", nil)
+	w := httptest.NewRecorder()
+	mw.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestGetRegisteredAppIDs(t *testing.T) {
+	ids := getRegisteredAppIDs(map[string]string{"a": "1", "b": "2"})
+	assert.Len(t, ids, 2)
+	assert.Contains(t, ids, "a")
+	assert.Contains(t, ids, "b")
+}

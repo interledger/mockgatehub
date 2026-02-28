@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +18,7 @@ import (
 	"mockgatehub/internal/storage"
 	"mockgatehub/internal/webhook"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -276,4 +279,328 @@ func TestKYCIframeSubmit_2FA_TokenResolvedUser(t *testing.T) {
 	user, err := store.GetUser(userID)
 	require.NoError(t, err)
 	assert.Equal(t, consts.KYCStateAccepted, user.KYCState)
+}
+
+// ── Helper for chi URL params ──
+
+func idWithURLParams(r *http.Request, params map[string]string) *http.Request {
+	rctx := chi.NewRouteContext()
+	for k, v := range params {
+		rctx.URLParams.Add(k, v)
+	}
+	return r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, rctx))
+}
+
+func idTestHandler(t *testing.T) (*Handler, *storage.MemoryStorage) {
+	t.Helper()
+	store := storage.NewMemoryStorage()
+	storage.SeedTestUsers(store)
+	wm := webhook.NewManager("", "mock-secret", nil, store, "default-org")
+	h := NewHandler(store, wm)
+	return h, store
+}
+
+// ── GetUser ──
+
+func TestGetUser_Success(t *testing.T) {
+	h, _ := idTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/id/v1/users/"+consts.TestUser1ID, nil)
+	req = idWithURLParams(req, map[string]string{"userID": consts.TestUser1ID})
+	w := httptest.NewRecorder()
+	h.GetUser(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp models.GetUserResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, consts.TestUser1ID, resp.ID)
+	assert.Equal(t, consts.TestUser1Email, resp.Email)
+	assert.True(t, resp.Activated)
+	assert.Equal(t, 0, resp.Verifications[0].Status)
+}
+
+func TestGetUser_KYCAccepted(t *testing.T) {
+	h, store := idTestHandler(t)
+
+	user, _ := store.GetUser(consts.TestUser1ID)
+	user.KYCState = consts.KYCStateAccepted
+	store.UpdateUser(user)
+
+	req := httptest.NewRequest(http.MethodGet, "/id/v1/users/"+consts.TestUser1ID, nil)
+	req = idWithURLParams(req, map[string]string{"userID": consts.TestUser1ID})
+	w := httptest.NewRecorder()
+	h.GetUser(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp models.GetUserResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.Equal(t, 1, resp.Verifications[0].Status)
+}
+
+func TestGetUser_NotFound(t *testing.T) {
+	h, _ := idTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/id/v1/users/nonexistent", nil)
+	req = idWithURLParams(req, map[string]string{"userID": "nonexistent"})
+	w := httptest.NewRecorder()
+	h.GetUser(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestGetUser_MissingUserID(t *testing.T) {
+	h, _ := idTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/id/v1/users/", nil)
+	w := httptest.NewRecorder()
+	h.GetUser(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── StartKYC ──
+
+func TestStartKYC_Success(t *testing.T) {
+	h, store := idTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/id/v1/users/"+consts.TestUser1ID+"/hubs/gateway1", nil)
+	req = idWithURLParams(req, map[string]string{"userID": consts.TestUser1ID, "gatewayID": "gateway1"})
+	w := httptest.NewRecorder()
+	h.StartKYC(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp models.StartKYCResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.NotEmpty(t, resp.IframeURL)
+	assert.NotEmpty(t, resp.Token)
+	assert.Contains(t, resp.IframeURL, "onboarding")
+
+	user, _ := store.GetUser(consts.TestUser1ID)
+	assert.Equal(t, consts.KYCStateActionRequired, user.KYCState)
+}
+
+func TestStartKYC_UserNotFound(t *testing.T) {
+	h, _ := idTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/id/v1/users/nonexistent/hubs/gw1", nil)
+	req = idWithURLParams(req, map[string]string{"userID": "nonexistent", "gatewayID": "gw1"})
+	w := httptest.NewRecorder()
+	h.StartKYC(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestStartKYC_MissingParams(t *testing.T) {
+	h, _ := idTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/id/v1/users//hubs/", nil)
+	w := httptest.NewRecorder()
+	h.StartKYC(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── UpdateKYCState ──
+
+func TestUpdateKYCState_Accepted(t *testing.T) {
+	h, store := idTestHandler(t)
+
+	body, _ := json.Marshal(models.UpdateKYCStateRequest{
+		State:     consts.KYCStateAccepted,
+		RiskLevel: consts.RiskLevelLow,
+	})
+	req := httptest.NewRequest(http.MethodPut, "/id/v1/users/"+consts.TestUser1ID+"/hubs/gw1", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = idWithURLParams(req, map[string]string{"userID": consts.TestUser1ID, "gatewayID": "gw1"})
+	w := httptest.NewRecorder()
+	h.UpdateKYCState(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	user, _ := store.GetUser(consts.TestUser1ID)
+	assert.Equal(t, consts.KYCStateAccepted, user.KYCState)
+	assert.Equal(t, consts.RiskLevelLow, user.RiskLevel)
+}
+
+func TestUpdateKYCState_Rejected(t *testing.T) {
+	h, store := idTestHandler(t)
+
+	body, _ := json.Marshal(models.UpdateKYCStateRequest{
+		State:     consts.KYCStateRejected,
+		RiskLevel: "high",
+	})
+	req := httptest.NewRequest(http.MethodPut, "/id/v1/users/"+consts.TestUser1ID+"/hubs/gw1", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = idWithURLParams(req, map[string]string{"userID": consts.TestUser1ID, "gatewayID": "gw1"})
+	w := httptest.NewRecorder()
+	h.UpdateKYCState(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	user, _ := store.GetUser(consts.TestUser1ID)
+	assert.Equal(t, consts.KYCStateRejected, user.KYCState)
+}
+
+func TestUpdateKYCState_UserNotFound(t *testing.T) {
+	h, _ := idTestHandler(t)
+
+	body, _ := json.Marshal(models.UpdateKYCStateRequest{State: consts.KYCStateAccepted})
+	req := httptest.NewRequest(http.MethodPut, "/id/v1/users/nonexistent/hubs/gw1", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = idWithURLParams(req, map[string]string{"userID": "nonexistent", "gatewayID": "gw1"})
+	w := httptest.NewRecorder()
+	h.UpdateKYCState(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestUpdateKYCState_MissingParams(t *testing.T) {
+	h, _ := idTestHandler(t)
+
+	body, _ := json.Marshal(models.UpdateKYCStateRequest{State: consts.KYCStateAccepted})
+	req := httptest.NewRequest(http.MethodPut, "/id/v1/users//hubs/", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.UpdateKYCState(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestUpdateKYCState_InvalidBody(t *testing.T) {
+	h, _ := idTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/id/v1/users/"+consts.TestUser1ID+"/hubs/gw1", bytes.NewReader([]byte("not json")))
+	req.Header.Set("Content-Type", "application/json")
+	req = idWithURLParams(req, map[string]string{"userID": consts.TestUser1ID, "gatewayID": "gw1"})
+	w := httptest.NewRecorder()
+	h.UpdateKYCState(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── OverrideRiskLevel ──
+
+func TestOverrideRiskLevel_Success(t *testing.T) {
+	h, store := idTestHandler(t)
+
+	body, _ := json.Marshal(map[string]string{"risk_level": "high", "reason": "manual override"})
+	req := httptest.NewRequest(http.MethodPut, "/id/v1/users/"+consts.TestUser1ID+"/hubs/gw1/risk-level", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = idWithURLParams(req, map[string]string{"userID": consts.TestUser1ID, "gatewayID": "gw1"})
+	w := httptest.NewRecorder()
+	h.OverrideRiskLevel(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	user, _ := store.GetUser(consts.TestUser1ID)
+	assert.Equal(t, "high", user.RiskLevel)
+}
+
+func TestOverrideRiskLevel_UserNotFound(t *testing.T) {
+	h, _ := idTestHandler(t)
+
+	body, _ := json.Marshal(map[string]string{"risk_level": "high"})
+	req := httptest.NewRequest(http.MethodPut, "/id/v1/users/nonexistent/hubs/gw1/risk-level", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req = idWithURLParams(req, map[string]string{"userID": "nonexistent", "gatewayID": "gw1"})
+	w := httptest.NewRecorder()
+	h.OverrideRiskLevel(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestOverrideRiskLevel_MissingParams(t *testing.T) {
+	h, _ := idTestHandler(t)
+
+	body, _ := json.Marshal(map[string]string{"risk_level": "high"})
+	req := httptest.NewRequest(http.MethodPut, "/id/v1/users//hubs//risk-level", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.OverrideRiskLevel(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestOverrideRiskLevel_InvalidBody(t *testing.T) {
+	h, _ := idTestHandler(t)
+
+	req := httptest.NewRequest(http.MethodPut, "/id/v1/users/"+consts.TestUser1ID+"/hubs/gw1/risk-level", bytes.NewReader([]byte("bad")))
+	req.Header.Set("Content-Type", "application/json")
+	req = idWithURLParams(req, map[string]string{"userID": consts.TestUser1ID, "gatewayID": "gw1"})
+	w := httptest.NewRecorder()
+	h.OverrideRiskLevel(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// ── KYCIframeSubmit (additional functional cases) ──
+
+func TestKYCIframeSubmit_FormDataSuccess(t *testing.T) {
+	h, store := idTestHandler(t)
+
+	form := "user_id=" + consts.TestUser1ID + "&first_name=John&last_name=Doe&dob=1990-05-15&address=123+Main+St&city=NYC&country=US"
+	req := httptest.NewRequest(http.MethodPost, "/iframe/submit", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.KYCIframeSubmit(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	user, _ := store.GetUser(consts.TestUser1ID)
+	assert.Equal(t, consts.KYCStateAccepted, user.KYCState)
+	assert.Equal(t, "John", user.FirstName)
+	assert.Equal(t, "Doe", user.LastName)
+	assert.Equal(t, 1990, user.BirthYear)
+	assert.Equal(t, 5, user.BirthMonth)
+	assert.Equal(t, 15, user.BirthDay)
+}
+
+func TestKYCIframeSubmit_TokenMappingResolvesUser(t *testing.T) {
+	h, store := idTestHandler(t)
+
+	h.tokenToUser.Store("test-tok", consts.TestUser1ID)
+
+	form := "token=test-tok&first_name=Jane"
+	req := httptest.NewRequest(http.MethodPost, "/iframe/submit", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.KYCIframeSubmit(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	user, _ := store.GetUser(consts.TestUser1ID)
+	assert.Equal(t, consts.KYCStateAccepted, user.KYCState)
+}
+
+func TestKYCIframeSubmit_NoUserIDOrToken(t *testing.T) {
+	h, _ := idTestHandler(t)
+
+	form := "first_name=Jane"
+	req := httptest.NewRequest(http.MethodPost, "/iframe/submit", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.KYCIframeSubmit(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+func TestKYCIframeSubmit_UserNotFoundInStore(t *testing.T) {
+	h, _ := idTestHandler(t)
+
+	form := "user_id=nonexistent"
+	req := httptest.NewRequest(http.MethodPost, "/iframe/submit", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.KYCIframeSubmit(w, req)
+
+	assert.Equal(t, http.StatusNotFound, w.Code)
+}
+
+func TestKYCIframeSubmit_CustomRiskLevel(t *testing.T) {
+	h, store := idTestHandler(t)
+
+	form := "user_id=" + consts.TestUser1ID + "&risk_level=medium"
+	req := httptest.NewRequest(http.MethodPost, "/iframe/submit", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	h.KYCIframeSubmit(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	user, _ := store.GetUser(consts.TestUser1ID)
+	assert.Equal(t, "medium", user.RiskLevel)
 }

@@ -32,9 +32,11 @@ func SeedTestUsersWithOrgID(store Storage, defaultOrgID string) error {
 		// User might already exist, ignore error
 	}
 
-	// Add 10,000 USD balance
-	if err := store.AddBalance(user1.ID, "USD", 10000.00); err != nil {
-		return err
+	// Add 10,000 USD balance only if not already seeded
+	if bal, _ := store.GetBalance(user1.ID, "USD"); bal == 0 {
+		if err := store.AddBalance(user1.ID, "USD", 10000.00); err != nil {
+			return err
+		}
 	}
 
 	// Test User 2: EUR balance
@@ -53,9 +55,11 @@ func SeedTestUsersWithOrgID(store Storage, defaultOrgID string) error {
 		// User might already exist, ignore error
 	}
 
-	// Add 10,000 EUR balance
-	if err := store.AddBalance(user2.ID, "EUR", 10000.00); err != nil {
-		return err
+	// Add 10,000 EUR balance only if not already seeded
+	if bal, _ := store.GetBalance(user2.ID, "EUR"); bal == 0 {
+		if err := store.AddBalance(user2.ID, "EUR", 10000.00); err != nil {
+			return err
+		}
 	}
 
 	// Create default organization
