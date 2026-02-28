@@ -58,11 +58,14 @@ func TestSeedTestUsers_Idempotent(t *testing.T) {
 	err := SeedTestUsers(store)
 	require.NoError(t, err)
 
-	// Seed again — should not error
+	// Seed again — should not error and should not change existing balances
 	err = SeedTestUsers(store)
 	require.NoError(t, err)
 
-	// Balances accumulate (AddBalance is additive)
+	// Balances remain unchanged on repeated seeding
 	usdBal, _ := store.GetBalance(consts.TestUser1ID, "USD")
-	assert.Equal(t, 20000.0, usdBal)
+	assert.Equal(t, 10000.0, usdBal)
+
+	eurBal, _ := store.GetBalance(consts.TestUser2ID, "EUR")
+	assert.Equal(t, 10000.0, eurBal)
 }

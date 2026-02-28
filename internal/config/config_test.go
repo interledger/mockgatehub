@@ -1,21 +1,20 @@
 package config
 
 import (
-	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 )
 
 func TestLoad_Defaults(t *testing.T) {
-	// Clear env vars to test defaults
+	// Clear env vars to test defaults (t.Setenv registers cleanup to restore originals)
 	for _, key := range []string{
 		"MOCKGATEHUB_PORT", "LOG_LEVEL", "MOCKGATEHUB_REDIS_URL", "MOCKGATEHUB_REDIS_DB",
 		"WEBHOOK_URL", "WEBHOOK_SECRET", "WEBHOOK_MIN_DELAY_SEC",
 		"MOCKGATEHUB_ENFORCE_AUTHENTICATION", "MOCKGATEHUB_VALID_CREDENTIALS",
 		"DEFAULT_ORGANIZATION_ID",
 	} {
-		os.Unsetenv(key)
+		t.Setenv(key, "")
 	}
 
 	cfg := Load()
@@ -68,7 +67,7 @@ func TestLoad_WebhookMinDelayClamp(t *testing.T) {
 }
 
 func TestGetEnv_Default(t *testing.T) {
-	os.Unsetenv("TEST_NONEXISTENT_KEY")
+	t.Setenv("TEST_NONEXISTENT_KEY", "")
 	assert.Equal(t, "fallback", getEnv("TEST_NONEXISTENT_KEY", "fallback"))
 }
 
@@ -78,7 +77,7 @@ func TestGetEnv_Set(t *testing.T) {
 }
 
 func TestGetEnvInt_Default(t *testing.T) {
-	os.Unsetenv("TEST_INT_KEY")
+	t.Setenv("TEST_INT_KEY", "")
 	assert.Equal(t, 42, getEnvInt("TEST_INT_KEY", 42))
 }
 
@@ -93,7 +92,7 @@ func TestGetEnvInt_Invalid(t *testing.T) {
 }
 
 func TestGetEnvFloat_Default(t *testing.T) {
-	os.Unsetenv("TEST_FLOAT_KEY")
+	t.Setenv("TEST_FLOAT_KEY", "")
 	assert.Equal(t, 1.5, getEnvFloat("TEST_FLOAT_KEY", 1.5))
 }
 
@@ -118,7 +117,7 @@ func TestGetEnvBool_Variations(t *testing.T) {
 		assert.False(t, getEnvBool("TEST_BOOL_KEY", true), "expected false for %q", val)
 	}
 
-	os.Unsetenv("TEST_BOOL_KEY")
+	t.Setenv("TEST_BOOL_KEY", "")
 	assert.True(t, getEnvBool("TEST_BOOL_KEY", true))
 	assert.False(t, getEnvBool("TEST_BOOL_KEY", false))
 }
