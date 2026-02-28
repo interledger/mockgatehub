@@ -15,7 +15,10 @@
 			background-color: #f5f5f5;
 		}
 		.container {
+			box-sizing: border-box;
 			max-width: 600px;
+			max-height: calc(100vh - 40px);
+			overflow-y: auto;
 			margin: 0 auto;
 			background: white;
 			padding: 20px;
@@ -232,7 +235,7 @@
 
 				if (window.parent && window.parent !== window) {
 					window.parent.postMessage({
-						type: 'WithdrawalCompleted',
+						type: 'withdrawal-error',
 						status: 'error',
 						message: 'Error: ' + error.message
 					}, '*');

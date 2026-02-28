@@ -15,7 +15,10 @@
 			background-color: #f5f5f5;
 		}
 		.container {
+			box-sizing: border-box;
 			max-width: 600px;
+			max-height: calc(100vh - 40px);
+			overflow-y: auto;
 			margin: 0 auto;
 			background: white;
 			padding: 20px;
@@ -288,12 +291,21 @@
 				currencySelect.style.backgroundColor = "#f0f0f0";
 				currencySelect.style.cursor = "not-allowed";
 				console.log("Single currency account detected:", currencies[0]);
+			} else {
+				const euroOption = currencies.find(currency => currency.toUpperCase() === "EUR");
+				if (euroOption) {
+					currencySelect.value = euroOption;
+					console.log("Defaulted deposit currency to EUR");
+				}
 			}
 		}).catch(error => {
 			console.error("Failed to fetch user currencies:", error);
 			const currencySelect = document.getElementById("currency");
 			if (!currencySelect) return;
 			currencySelect.innerHTML = availableCurrencies.map(c => "<option>" + c + "</option>").join("");
+			if (availableCurrencies.includes("EUR")) {
+				currencySelect.value = "EUR";
+			}
 		});
 	</script>
 </body>
