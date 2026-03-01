@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
+	"time"
 
 	"mockgatehub/internal/consts"
 	"mockgatehub/internal/models"
@@ -446,9 +448,79 @@ func TestGetPendingConfirmations_Empty(t *testing.T) {
 	h.GetPendingConfirmations(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp []models.PendingThreeDSConfirmation
+	var resp map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Empty(t, resp)
+	confirmations, ok := resp["pendingConfirmations"].([]interface{})
+	require.True(t, ok, "response must have pendingConfirmations key with array value")
+	assert.Empty(t, confirmations)
+}
+
+func TestGetPendingConfirmations_WithChallenge(t *testing.T) {
+	h, store := setupCardsHandler(t)
+
+	challenge := &models.ThreeDSChallenge{
+		TransactionID:    "3ds-pending-test",
+		CardID:           "card-123",
+		UserID:           consts.TestUser1ID,
+		MerchantName:     "Test Shop",
+		PurchaseAmount:   "50.00",
+		PurchaseCurrency: "EUR",
+		PurchaseDate:     time.Now().UTC().Format(time.RFC3339),
+		Timeout:          time.Now().Add(5 * time.Minute),
+		Status:           "pending",
+		CreatedAt:        time.Now(),
+	}
+	require.NoError(t, store.CreateThreeDSChallenge(challenge))
+
+	req := httptest.NewRequest(http.MethodGet, "/cards/v1/confirmations", nil)
+	req.Header.Set("x-gatehub-managed-user-uuid", consts.TestUser1ID)
+	w := httptest.NewRecorder()
+	h.GetPendingConfirmations(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	confirmations, ok := resp["pendingConfirmations"].([]interface{})
+	require.True(t, ok, "response must have pendingConfirmations key")
+	assert.Len(t, confirmations, 1)
+}
+
+func TestGetPendingConfirmations_TimeoutFormat(t *testing.T) {
+	h, store := setupCardsHandler(t)
+
+	challenge := &models.ThreeDSChallenge{
+		TransactionID:    "3ds-timeout-test",
+		CardID:           "card-123",
+		UserID:           consts.TestUser1ID,
+		MerchantName:     "Shop",
+		PurchaseAmount:   "10.00",
+		PurchaseCurrency: "EUR",
+		PurchaseDate:     time.Now().UTC().Format(time.RFC3339),
+		Timeout:          time.Now().Add(5 * time.Minute),
+		Status:           "pending",
+		CreatedAt:        time.Now(),
+	}
+	require.NoError(t, store.CreateThreeDSChallenge(challenge))
+
+	req := httptest.NewRequest(http.MethodGet, "/cards/v1/confirmations", nil)
+	req.Header.Set("x-gatehub-managed-user-uuid", consts.TestUser1ID)
+	w := httptest.NewRecorder()
+	h.GetPendingConfirmations(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	var confirmations []map[string]interface{}
+	require.NoError(t, json.Unmarshal(resp["pendingConfirmations"], &confirmations))
+	require.Len(t, confirmations, 1)
+
+	timeout := confirmations[0]["timeout"].(string)
+	// Verify timeout is a numeric string (seconds remaining), not RFC3339
+	secondsRemaining, err := strconv.Atoi(timeout)
+	assert.NoError(t, err, "timeout should be seconds-as-string, got: %s", timeout)
+	assert.Greater(t, secondsRemaining, 0, "timeout should be positive seconds")
+	assert.LessOrEqual(t, secondsRemaining, 300, "timeout should be <= 5 minutes")
 }
 
 // --- CreateCustomerAddress ---
@@ -529,6 +601,22 @@ func TestUpdateCardLimits_Success(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 }
 
+func TestUpdateCardLimits_POST(t *testing.T) {
+	h, store := setupCardsHandler(t)
+	_, _, cardID := seedCard(t, store)
+
+	limits := []models.CardLimit{{Type: "dailyOverall", Limit: 3000, Currency: "EUR"}}
+	b, _ := json.Marshal(limits)
+	req := httptest.NewRequest(http.MethodPost, "/cards/v1/cards/"+cardID+"/limits", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req = cardChiParams(req, map[string]string{"cardID": cardID})
+
+	w := httptest.NewRecorder()
+	h.UpdateCardLimits(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
 // --- GetCardToken ---
 
 func TestGetCardToken_Success(t *testing.T) {
@@ -547,6 +635,31 @@ func TestGetCardToken_Success(t *testing.T) {
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	assert.Contains(t, resp.Token, "mock-card-data-card-123")
 	assert.Len(t, resp.Links, 1)
+}
+
+func TestGetCardToken_AllTokenTypes(t *testing.T) {
+	tokenTypes := []string{"card-data", "pin", "pin-change", "apple-provisioning", "google-provisioning", "pai"}
+	for _, tt := range tokenTypes {
+		t.Run(tt, func(t *testing.T) {
+			h, _ := setupCardsHandler(t)
+			body := map[string]interface{}{"cardId": "card-123"}
+			b, _ := json.Marshal(body)
+			req := httptest.NewRequest(http.MethodPost, "/cards/v1/token/"+tt, bytes.NewReader(b))
+			req.Header.Set("Content-Type", "application/json")
+			req = cardChiParams(req, map[string]string{"tokenType": tt})
+
+			w := httptest.NewRecorder()
+			h.GetCardToken(w, req)
+
+			assert.Equal(t, http.StatusOK, w.Code, "token type %s failed", tt)
+			var resp models.CardTokenResponse
+			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+			expectedToken := "mock-" + tt + "-card-123"
+			assert.Equal(t, expectedToken, resp.Token, "token type %s", tt)
+			assert.Len(t, resp.Links, 1)
+			assert.Contains(t, resp.Links[0].Href, tt)
+		})
+	}
 }
 
 // --- CreateCardTransaction ---
@@ -639,12 +752,13 @@ func TestConfirmThreeDS_Approve(t *testing.T) {
 		CardID:        "card-123",
 		UserID:        consts.TestUser1ID,
 		Status:        "pending",
+		Timeout:       time.Now().Add(5 * time.Minute),
 	}
 	require.NoError(t, store.CreateThreeDSChallenge(challenge))
 
 	body := map[string]interface{}{"confirmed": true, "authMethod": "biometric"}
 	b, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/cards/v1/3ds/3ds-test/confirm", bytes.NewReader(b))
+	req := httptest.NewRequest(http.MethodPost, "/cards/v1/transaction/3ds-test", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	req = cardChiParams(req, map[string]string{"txID": "3ds-test"})
 
@@ -654,7 +768,8 @@ func TestConfirmThreeDS_Approve(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "approved", resp["status"])
+	assert.Equal(t, "3ds-test", resp["transactionId"])
+	assert.Equal(t, true, resp["confirmed"])
 }
 
 func TestConfirmThreeDS_Decline(t *testing.T) {
@@ -665,12 +780,13 @@ func TestConfirmThreeDS_Decline(t *testing.T) {
 		CardID:        "card-123",
 		UserID:        consts.TestUser1ID,
 		Status:        "pending",
+		Timeout:       time.Now().Add(5 * time.Minute),
 	}
 	require.NoError(t, store.CreateThreeDSChallenge(challenge))
 
 	body := map[string]interface{}{"confirmed": false, "authMethod": "pin"}
 	b, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/cards/v1/3ds/3ds-decline/confirm", bytes.NewReader(b))
+	req := httptest.NewRequest(http.MethodPost, "/cards/v1/transaction/3ds-decline", bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	req = cardChiParams(req, map[string]string{"txID": "3ds-decline"})
 
@@ -680,7 +796,8 @@ func TestConfirmThreeDS_Decline(t *testing.T) {
 	assert.Equal(t, http.StatusOK, w.Code)
 	var resp map[string]interface{}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Equal(t, "declined", resp["status"])
+	assert.Equal(t, "3ds-decline", resp["transactionId"])
+	assert.Equal(t, false, resp["confirmed"])
 }
 
 func TestConfirmThreeDS_NotFound(t *testing.T) {

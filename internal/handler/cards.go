@@ -395,19 +395,23 @@ func (h *Handler) GetPendingConfirmations(w http.ResponseWriter, r *http.Request
 
 	challenges, err := h.store.GetPendingThreeDSChallenges(userID)
 	if err != nil {
-		h.sendJSON(w, http.StatusOK, []models.PendingThreeDSConfirmation{})
+		h.sendJSON(w, http.StatusOK, map[string]interface{}{"pendingConfirmations": []models.PendingThreeDSConfirmation{}})
 		return
 	}
 
 	var pending []models.PendingThreeDSConfirmation
 	for _, c := range challenges {
+		remaining := int(time.Until(c.Timeout).Seconds())
+		if remaining < 0 {
+			remaining = 0
+		}
 		pending = append(pending, models.PendingThreeDSConfirmation{
 			TransactionID:    c.TransactionID,
 			MerchantName:     c.MerchantName,
 			PurchaseAmount:   c.PurchaseAmount,
 			PurchaseCurrency: c.PurchaseCurrency,
 			PurchaseDate:     c.PurchaseDate,
-			Timeout:          c.Timeout.Format(time.RFC3339),
+			Timeout:          fmt.Sprintf("%d", remaining),
 		})
 	}
 
@@ -415,7 +419,7 @@ func (h *Handler) GetPendingConfirmations(w http.ResponseWriter, r *http.Request
 		pending = []models.PendingThreeDSConfirmation{}
 	}
 
-	h.sendJSON(w, http.StatusOK, pending)
+	h.sendJSON(w, http.StatusOK, map[string]interface{}{"pendingConfirmations": pending})
 }
 
 // CreateCustomerAddress creates a delivery address for a card customer
@@ -525,9 +529,13 @@ func (h *Handler) UpdateCardLimits(w http.ResponseWriter, r *http.Request) {
 	h.sendJSON(w, http.StatusOK, limits)
 }
 
-// GetCardToken generates a token for retrieving card data
+// GetCardToken generates a token for retrieving card data or other card operations
 func (h *Handler) GetCardToken(w http.ResponseWriter, r *http.Request) {
-	logger.Info("get card token called")
+	tokenType := chi.URLParam(r, "tokenType")
+	if tokenType == "" {
+		tokenType = "card-data"
+	}
+	logger.Info("get card token called", zap.String("token_type", tokenType))
 
 	var req models.GetCardTokenArgs
 	if err := h.decodeJSON(r, &req); err != nil {
@@ -535,11 +543,12 @@ func (h *Handler) GetCardToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tokenValue := fmt.Sprintf("mock-%s-%s", tokenType, req.CardID)
 	response := models.CardTokenResponse{
-		Token: fmt.Sprintf("mock-card-data-%s", req.CardID),
+		Token: tokenValue,
 		Links: []models.CardTokenLink{
 			{
-				Href:   fmt.Sprintf("/cards/v1/token/card-data/data?token=mock-card-data-%s", req.CardID),
+				Href:   fmt.Sprintf("/cards/v1/proxy/clientDevice/%s?token=%s", tokenType, tokenValue),
 				Rel:    "data",
 				Method: "GET",
 			},
@@ -720,7 +729,7 @@ func (h *Handler) ConfirmThreeDS(w http.ResponseWriter, r *http.Request) {
 
 	h.sendJSON(w, http.StatusOK, map[string]interface{}{
 		"transactionId": txID,
-		"status":        challenge.Status,
+		"confirmed":     req.Confirmed,
 	})
 }
 
