@@ -155,6 +155,11 @@ func (tc *TestContext) getWithManagedUserHeader(path string) error {
 	return err
 }
 
+func (tc *TestContext) getWithCardAppIDHeader(path string) error {
+	_, err := tc.sendWithCardAppIDHeader("GET", path, nil)
+	return err
+}
+
 func (tc *TestContext) postWithManagedUserHeader(path string) error {
 	_, err := tc.sendWithManagedUserHeader("POST", path, nil)
 	return err
@@ -470,26 +475,43 @@ func (tc *TestContext) responseContainsTokenStarting(prefix string) error {
 }
 
 func (tc *TestContext) responseIsArrayOfPending3DSConfirmations(version int) error {
-	var result []map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return fmt.Errorf("response is not an array: %w", err)
+	var wrapper map[string]interface{}
+	if err := json.Unmarshal(tc.lastResponseBody, &wrapper); err != nil {
+		return fmt.Errorf("response is not an object: %w", err)
 	}
 
-	if len(result) == 0 {
-		return fmt.Errorf("array is empty")
+	confirmations, ok := wrapper["pendingConfirmations"].([]interface{})
+	if !ok {
+		return fmt.Errorf("missing pendingConfirmations key in response or not an array: %s", string(tc.lastResponseBody))
+	}
+
+	if len(confirmations) == 0 {
+		return fmt.Errorf("pendingConfirmations array is empty")
 	}
 
 	return nil
 }
 
 func (tc *TestContext) eachConfirmationHasRequiredFields() error {
-	var result []map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
+	var wrapper map[string]interface{}
+	if err := json.Unmarshal(tc.lastResponseBody, &wrapper); err != nil {
 		return err
 	}
 
+	confirmationsRaw, ok := wrapper["pendingConfirmations"].([]interface{})
+	if !ok {
+		return fmt.Errorf("missing pendingConfirmations key in response")
+	}
+
+	var confirmations []map[string]interface{}
+	for _, c := range confirmationsRaw {
+		if m, ok := c.(map[string]interface{}); ok {
+			confirmations = append(confirmations, m)
+		}
+	}
+
 	requiredFields := []string{"transactionId", "merchantName", "purchaseAmount", "purchaseCurrency", "timeout"}
-	for i, item := range result {
+	for i, item := range confirmations {
 		for _, field := range requiredFields {
 			if _, ok := item[field]; !ok {
 				return fmt.Errorf("confirmation %d missing %s", i, field)
@@ -510,22 +532,46 @@ func (tc *TestContext) postWith3DSConfirmation(path string, confirmed string, au
 	return err
 }
 
-func (tc *TestContext) responseIndicatesSuccess(status string) error {
-	return tc.checkFieldValue("status", status)
-}
-
-func (tc *TestContext) responseIndicatesDeclined(status string) error {
-	return tc.checkFieldValue("status", status)
-}
-
-func (tc *TestContext) responseHasCardProducts() error {
+func (tc *TestContext) responseContainsFieldWithBoolValue(fieldName, expectedValue string) error {
 	var result map[string]interface{}
 	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
 		return err
 	}
 
-	if data, ok := result["data"].([]interface{}); !ok || len(data) == 0 {
-		return fmt.Errorf("missing or empty data array")
+	value, ok := result[fieldName]
+	if !ok {
+		return fmt.Errorf("field '%s' not found in response", fieldName)
+	}
+
+	expectedBool := expectedValue == "true"
+	if value != expectedBool {
+		return fmt.Errorf("expected %s=%v, got %v", fieldName, expectedBool, value)
+	}
+
+	return nil
+}
+
+func (tc *TestContext) responseHasCardProducts() error {
+	var products []map[string]interface{}
+	if err := json.Unmarshal(tc.lastResponseBody, &products); err != nil {
+		return fmt.Errorf("response is not an array of products: %w", err)
+	}
+
+	if len(products) == 0 {
+		return fmt.Errorf("products array is empty")
+	}
+
+	// Verify products have expected fields
+	for i, product := range products {
+		if _, ok := product["code"]; !ok {
+			return fmt.Errorf("product[%d] missing 'code' field", i)
+		}
+		if _, ok := product["name"]; !ok {
+			return fmt.Errorf("product[%d] missing 'name' field", i)
+		}
+		if _, ok := product["cardProductLimits"]; !ok {
+			return fmt.Errorf("product[%d] missing 'cardProductLimits' field", i)
+		}
 	}
 
 	return nil

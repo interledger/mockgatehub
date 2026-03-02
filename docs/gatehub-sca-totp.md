@@ -2,7 +2,7 @@
 
 ## Regulatory Context
 
-Strong Customer Authentication (SCA) must be implemented by **March 4, 2026**. After that date, withdrawals and SEPA contact creation will no longer be possible without 2FA verification in place.
+Secure Customer Authentication (SCA) must be implemented by **March 4, 2026**. After that date, withdrawals and SEPA contact creation will no longer be possible without 2FA verification in place.
 
 ## Overview
 

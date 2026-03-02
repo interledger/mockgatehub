@@ -94,18 +94,18 @@ Feature: Card management and lifecycle
     Given a managed customer with a pending 3DS challenge exists
     When I POST /cards/v1/transaction/{transactionId} with managed user UUID header, confirmed true, authMethod "pin"
     Then the response status is 200
-    And the response indicates success with status "approved"
+    And the response contains "confirmed" with value true
 
   Scenario: Decline 3DS payment
     Given a managed customer with a pending 3DS challenge exists
     When I POST /cards/v1/transaction/{transactionId} with managed user UUID header, confirmed false, authMethod "pin"
     Then the response status is 200
-    And the response indicates declined with status "declined"
+    And the response contains "confirmed" with value false
 
   Scenario: Get card application products
-    When I GET /cards/v1/card-applications/test-app-id/card-products with managed user UUID header
+    When I GET /cards/v1/card-applications/test-app-id/card-products with card app ID header
     Then the response status is 200
-    And the response contains a data array with card product objects
+    And the response is an array of card product objects
 
   Scenario: Order plastic card for a card
     Given a managed customer with a card exists

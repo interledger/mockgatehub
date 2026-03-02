@@ -400,6 +400,36 @@ func TestStartKYC_MissingParams(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestStartKYC_PreservesAcceptedState(t *testing.T) {
+	h, store := idTestHandler(t)
+
+	// Create a user whose KYC state is already accepted
+	user := &models.User{
+		ID:        "user-with-accepted-kyc",
+		Email:     "accepted@example.com",
+		Managed:   true,
+		Activated: true,
+		KYCState:  consts.KYCStateAccepted,
+		RiskLevel: consts.RiskLevelLow,
+		CreatedAt: time.Now(),
+	}
+	require.NoError(t, store.CreateUser(user))
+
+	// Call StartKYC for a user whose KYC state is already accepted
+	req := httptest.NewRequest(http.MethodPost, "/id/v1/users/user-with-accepted-kyc/hubs/gateway1", nil)
+	req = idWithURLParams(req, map[string]string{"userID": "user-with-accepted-kyc", "gatewayID": "gateway1"})
+	w := httptest.NewRecorder()
+	h.StartKYC(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	var resp models.StartKYCResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+
+	// Verify KYC state remains accepted and was NOT reset
+	updatedUser, _ := store.GetUser("user-with-accepted-kyc")
+	assert.Equal(t, consts.KYCStateAccepted, updatedUser.KYCState, "StartKYC should not reset already-accepted KYC state")
+}
+
 // ── UpdateKYCState ──
 
 func TestUpdateKYCState_Accepted(t *testing.T) {

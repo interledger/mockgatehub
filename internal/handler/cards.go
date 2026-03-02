@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"strings"
 	"time"
 
 	"mockgatehub/internal/consts"
@@ -50,11 +51,17 @@ func (h *Handler) CreateManagedCustomer(w http.ResponseWriter, r *http.Request) 
 	// Validate user exists and KYC is accepted
 	user, err := h.store.GetUser(userID)
 	if err != nil {
-		h.sendError(w, http.StatusNotFound, "user not found")
+		h.sendError(w, http.StatusNotFound, "user not found in GateHub")
 		return
 	}
+
+	logger.Info("card creation requested",
+		zap.String("user_id", userID),
+		zap.String("current_kyc_state", user.KYCState),
+		zap.Bool("kyc_accepted", user.KYCState == consts.KYCStateAccepted))
+
 	if user.KYCState != consts.KYCStateAccepted {
-		h.sendError(w, http.StatusForbidden, "user KYC state must be accepted")
+		h.sendError(w, http.StatusForbidden, fmt.Sprintf("user KYC state is '%s' but must be 'accepted' before ordering cards", user.KYCState))
 		return
 	}
 
@@ -70,19 +77,26 @@ func (h *Handler) CreateManagedCustomer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if len(req.NameOnCard) > 26 {
-		h.sendError(w, http.StatusBadRequest, "nameOnCard must be 26 characters or less")
+		h.sendError(w, http.StatusBadRequest, fmt.Sprintf("nameOnCard must be 26 characters or less (provided: %d characters)", len(req.NameOnCard)))
 		return
 	}
 
-	// Validate currency
+	// Validate currency - accept both EUR and prefixed variants like PW_EUR, DEB_EUR
 	currency := req.Account.Currency
 	if currency == "" {
 		currency = "EUR"
 	}
-	if currency != "EUR" {
-		h.sendError(w, http.StatusBadRequest, "only EUR currency is supported for cards")
+	// Strip any prefix (PW_, DEB_, etc.) and validate base currency is EUR
+	baseCurrency := currency
+	if idx := strings.LastIndex(currency, "_"); idx >= 0 {
+		baseCurrency = currency[idx+1:]
+	}
+	if baseCurrency != "EUR" {
+		h.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid currency '%s': only EUR-based currencies are supported for cards (e.g., 'EUR', 'PW_EUR', 'DEB_EUR')", currency))
 		return
 	}
+
+	logger.Debug("customer creation request validated", zap.String("user_id", userID), zap.String("currency", currency), zap.String("name_on_card", req.NameOnCard))
 
 	productCode := req.Account.ProductCode
 	if productCode == "" {
@@ -395,19 +409,23 @@ func (h *Handler) GetPendingConfirmations(w http.ResponseWriter, r *http.Request
 
 	challenges, err := h.store.GetPendingThreeDSChallenges(userID)
 	if err != nil {
-		h.sendJSON(w, http.StatusOK, []models.PendingThreeDSConfirmation{})
+		h.sendJSON(w, http.StatusOK, map[string]interface{}{"pendingConfirmations": []models.PendingThreeDSConfirmation{}})
 		return
 	}
 
 	var pending []models.PendingThreeDSConfirmation
 	for _, c := range challenges {
+		remaining := int(time.Until(c.Timeout).Seconds())
+		if remaining < 0 {
+			remaining = 0
+		}
 		pending = append(pending, models.PendingThreeDSConfirmation{
 			TransactionID:    c.TransactionID,
 			MerchantName:     c.MerchantName,
 			PurchaseAmount:   c.PurchaseAmount,
 			PurchaseCurrency: c.PurchaseCurrency,
 			PurchaseDate:     c.PurchaseDate,
-			Timeout:          c.Timeout.Format(time.RFC3339),
+			Timeout:          fmt.Sprintf("%d", remaining),
 		})
 	}
 
@@ -415,7 +433,7 @@ func (h *Handler) GetPendingConfirmations(w http.ResponseWriter, r *http.Request
 		pending = []models.PendingThreeDSConfirmation{}
 	}
 
-	h.sendJSON(w, http.StatusOK, pending)
+	h.sendJSON(w, http.StatusOK, map[string]interface{}{"pendingConfirmations": pending})
 }
 
 // CreateCustomerAddress creates a delivery address for a card customer
@@ -525,9 +543,13 @@ func (h *Handler) UpdateCardLimits(w http.ResponseWriter, r *http.Request) {
 	h.sendJSON(w, http.StatusOK, limits)
 }
 
-// GetCardToken generates a token for retrieving card data
+// GetCardToken generates a token for retrieving card data or other card operations
 func (h *Handler) GetCardToken(w http.ResponseWriter, r *http.Request) {
-	logger.Info("get card token called")
+	tokenType := chi.URLParam(r, "tokenType")
+	if tokenType == "" {
+		tokenType = "card-data"
+	}
+	logger.Info("get card token called", zap.String("token_type", tokenType))
 
 	var req models.GetCardTokenArgs
 	if err := h.decodeJSON(r, &req); err != nil {
@@ -535,11 +557,12 @@ func (h *Handler) GetCardToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	tokenValue := fmt.Sprintf("mock-%s-%s", tokenType, req.CardID)
 	response := models.CardTokenResponse{
-		Token: fmt.Sprintf("mock-card-data-%s", req.CardID),
+		Token: tokenValue,
 		Links: []models.CardTokenLink{
 			{
-				Href:   fmt.Sprintf("/cards/v1/token/card-data/data?token=mock-card-data-%s", req.CardID),
+				Href:   fmt.Sprintf("/cards/v1/proxy/clientDevice/%s?token=%s", tokenType, tokenValue),
 				Rel:    "data",
 				Method: "GET",
 			},
@@ -720,7 +743,7 @@ func (h *Handler) ConfirmThreeDS(w http.ResponseWriter, r *http.Request) {
 
 	h.sendJSON(w, http.StatusOK, map[string]interface{}{
 		"transactionId": txID,
-		"status":        challenge.Status,
+		"confirmed":     req.Confirmed,
 	})
 }
 
@@ -762,9 +785,7 @@ func (h *Handler) GetCardApplicationProducts(w http.ResponseWriter, r *http.Requ
 		},
 	}
 
-	h.sendJSON(w, http.StatusOK, map[string]interface{}{
-		"data": products,
-	})
+	h.sendJSON(w, http.StatusOK, products)
 }
 
 // OrderPlasticCard orders a physical card

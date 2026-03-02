@@ -243,9 +243,10 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		// Card limits
 		r.Get("/cards/{cardID}/limits", h.GetCardLimits)
 		r.Put("/cards/{cardID}/limits", h.UpdateCardLimits)
+		r.Post("/cards/{cardID}/limits", h.UpdateCardLimits)
 
 		// Card tokenization and security
-		r.Post("/token/card-data", h.GetCardToken)
+		r.Post("/token/{tokenType}", h.GetCardToken)
 
 		// Card transactions
 		r.Post("/transactions", h.CreateCardTransaction)

@@ -109,11 +109,17 @@ func (h *Handler) StartKYC(w http.ResponseWriter, r *http.Request) {
 
 	logger.Info("kyc iframe url generated", zap.String("iframe_url", iframeURL))
 
-	// Move user into action_required so KYC must be completed via iframe submission
-	user.KYCState = consts.KYCStateActionRequired
-	user.RiskLevel = consts.RiskLevelLow
-	if err := h.store.UpdateUser(user); err != nil {
-		logger.Error("failed to update user kyc state", zap.String("user_id", userID), zap.Error(err))
+	// Only reset to action_required if user hasn't already completed KYC
+	// If user already has kyc_state="accepted", don't overwrite it
+	if user.KYCState != consts.KYCStateAccepted {
+		logger.Debug("setting user to action_required for kyc", zap.String("user_id", userID), zap.String("previous_state", user.KYCState))
+		user.KYCState = consts.KYCStateActionRequired
+		user.RiskLevel = consts.RiskLevelLow
+		if err := h.store.UpdateUser(user); err != nil {
+			logger.Error("failed to update user kyc state", zap.String("user_id", userID), zap.Error(err))
+		}
+	} else {
+		logger.Info("user already has accepted kyc state, not resetting", zap.String("user_id", userID))
 	}
 
 	response := models.StartKYCResponse{
@@ -324,6 +330,11 @@ func (h *Handler) KYCIframeSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	logger.Info("loaded user from storage",
+		zap.String("user_id", userID),
+		zap.String("user_email", user.Email),
+		zap.String("current_kyc_state", user.KYCState))
+
 	// Parse KYC form data
 	user.FirstName = r.FormValue("first_name")
 	user.LastName = r.FormValue("last_name")
@@ -364,11 +375,20 @@ func (h *Handler) KYCIframeSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	user.RiskLevel = riskLevel
 
+	logger.Info("persisting kyc acceptance to storage",
+		zap.String("user_id", userID),
+		zap.String("new_kyc_state", user.KYCState),
+		zap.String("user_email", user.Email))
+
 	if err := h.store.UpdateUser(user); err != nil {
 		logger.Error("failed to update user after kyc submission", zap.String("user_id", userID), zap.Error(err))
 		h.sendError(w, http.StatusInternalServerError, "Failed to update user")
 		return
 	}
+
+	logger.Info("kyc acceptance persisted successfully",
+		zap.String("user_id", userID),
+		zap.String("kyc_state", user.KYCState))
 
 	go h.webhookManager.SendAsync(consts.WebhookEventKYCAccepted, userID, map[string]interface{}{
 		"message": "User verification accepted",
