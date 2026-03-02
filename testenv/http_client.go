@@ -175,3 +175,11 @@ func (tc *TestContext) sendWithManagedUserHeader(method, path string, body inter
 	}
 	return tc.request(method, path, body, headers)
 }
+
+// sendWithCardAppIDHeader is a helper to send requests with card app ID header
+func (tc *TestContext) sendWithCardAppIDHeader(method, path string, body interface{}) (*http.Response, error) {
+	headers := map[string]string{
+		"x-gatehub-card-app-id": "test-app-id",
+	}
+	return tc.request(method, path, body, headers)
+}

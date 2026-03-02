@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 	"net/http"
+	"strings"
 	"time"
 
 	"mockgatehub/internal/consts"
@@ -50,11 +51,17 @@ func (h *Handler) CreateManagedCustomer(w http.ResponseWriter, r *http.Request) 
 	// Validate user exists and KYC is accepted
 	user, err := h.store.GetUser(userID)
 	if err != nil {
-		h.sendError(w, http.StatusNotFound, "user not found")
+		h.sendError(w, http.StatusNotFound, "user not found in GateHub")
 		return
 	}
+
+	logger.Info("card creation requested",
+		zap.String("user_id", userID),
+		zap.String("current_kyc_state", user.KYCState),
+		zap.Bool("kyc_accepted", user.KYCState == consts.KYCStateAccepted))
+
 	if user.KYCState != consts.KYCStateAccepted {
-		h.sendError(w, http.StatusForbidden, "user KYC state must be accepted")
+		h.sendError(w, http.StatusForbidden, fmt.Sprintf("user KYC state is '%s' but must be 'accepted' before ordering cards", user.KYCState))
 		return
 	}
 
@@ -70,19 +77,26 @@ func (h *Handler) CreateManagedCustomer(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if len(req.NameOnCard) > 26 {
-		h.sendError(w, http.StatusBadRequest, "nameOnCard must be 26 characters or less")
+		h.sendError(w, http.StatusBadRequest, fmt.Sprintf("nameOnCard must be 26 characters or less (provided: %d characters)", len(req.NameOnCard)))
 		return
 	}
 
-	// Validate currency
+	// Validate currency - accept both EUR and prefixed variants like PW_EUR, DEB_EUR
 	currency := req.Account.Currency
 	if currency == "" {
 		currency = "EUR"
 	}
-	if currency != "EUR" {
-		h.sendError(w, http.StatusBadRequest, "only EUR currency is supported for cards")
+	// Strip any prefix (PW_, DEB_, etc.) and validate base currency is EUR
+	baseCurrency := currency
+	if idx := strings.LastIndex(currency, "_"); idx >= 0 {
+		baseCurrency = currency[idx+1:]
+	}
+	if baseCurrency != "EUR" {
+		h.sendError(w, http.StatusBadRequest, fmt.Sprintf("invalid currency '%s': only EUR-based currencies are supported for cards (e.g., 'EUR', 'PW_EUR', 'DEB_EUR')", currency))
 		return
 	}
+
+	logger.Debug("customer creation request validated", zap.String("user_id", userID), zap.String("currency", currency), zap.String("name_on_card", req.NameOnCard))
 
 	productCode := req.Account.ProductCode
 	if productCode == "" {
@@ -771,9 +785,7 @@ func (h *Handler) GetCardApplicationProducts(w http.ResponseWriter, r *http.Requ
 		},
 	}
 
-	h.sendJSON(w, http.StatusOK, map[string]interface{}{
-		"data": products,
-	})
+	h.sendJSON(w, http.StatusOK, products)
 }
 
 // OrderPlasticCard orders a physical card

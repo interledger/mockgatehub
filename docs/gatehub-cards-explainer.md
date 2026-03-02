@@ -145,9 +145,21 @@ sequenceDiagram
 - `walletAddress` — The user's wallet address
 - `nameOnCard` — Cardholder name (required, max 26 chars)
 - `account.productCode` — Determines card product (e.g. `PWSR_DEBP_2404`)
-- `account.currency` — Must be `"EUR"`
+- `account.currency` — Must use EUR base currency. Accepts both `"EUR"` and prefixed variants like `"PW_EUR"` (where PW = Prepaid Wallet, a GateHub account type)
 - `account.card.productCode` — Card product code
 - `delivery` (optional) — Address for physical card delivery
+
+### Currency Prefixes (PW_, DEB_, etc.)
+
+GateHub uses prefixed currency codes to indicate the account type:
+
+| Prefix | Meaning | Use Case |
+|--------|---------|----------|
+| `PW_` | Prepaid Wallet | Virtual card accounts with balance drawn from prepaid wallet |
+| `DEB_` | Debit | Accounts linked to bank accounts |
+| (none) | Base currency | Plain `EUR` without type prefix |
+
+The Interledger backend typically sends `"PW_EUR"` to indicate prepaid wallet accounts. MockGateHub accepts all EUR-base variants (`EUR`, `PW_EUR`, `DEB_EUR`, etc.) and validates only that the base currency is EUR.
 
 **Response** returns the full Customer object with nested accounts and cards, allowing the backend to extract all created entity IDs from a single response.
 

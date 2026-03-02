@@ -155,6 +155,11 @@ func (tc *TestContext) getWithManagedUserHeader(path string) error {
 	return err
 }
 
+func (tc *TestContext) getWithCardAppIDHeader(path string) error {
+	_, err := tc.sendWithCardAppIDHeader("GET", path, nil)
+	return err
+}
+
 func (tc *TestContext) postWithManagedUserHeader(path string) error {
 	_, err := tc.sendWithManagedUserHeader("POST", path, nil)
 	return err
@@ -547,13 +552,26 @@ func (tc *TestContext) responseContainsFieldWithBoolValue(fieldName, expectedVal
 }
 
 func (tc *TestContext) responseHasCardProducts() error {
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
+	var products []map[string]interface{}
+	if err := json.Unmarshal(tc.lastResponseBody, &products); err != nil {
+		return fmt.Errorf("response is not an array of products: %w", err)
 	}
 
-	if data, ok := result["data"].([]interface{}); !ok || len(data) == 0 {
-		return fmt.Errorf("missing or empty data array")
+	if len(products) == 0 {
+		return fmt.Errorf("products array is empty")
+	}
+
+	// Verify products have expected fields
+	for i, product := range products {
+		if _, ok := product["code"]; !ok {
+			return fmt.Errorf("product[%d] missing 'code' field", i)
+		}
+		if _, ok := product["name"]; !ok {
+			return fmt.Errorf("product[%d] missing 'name' field", i)
+		}
+		if _, ok := product["cardProductLimits"]; !ok {
+			return fmt.Errorf("product[%d] missing 'cardProductLimits' field", i)
+		}
 	}
 
 	return nil

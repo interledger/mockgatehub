@@ -142,6 +142,41 @@ func TestCreateManagedCustomer_NonEURCurrency(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, w.Code)
 }
 
+func TestCreateManagedCustomer_PrefixedEURCurrency(t *testing.T) {
+	h, store := setupCardsHandler(t)
+
+	// Set up test user with accepted KYC
+	user := &models.User{
+		ID:       "test-user-pw-eur",
+		Email:    "test@example.com",
+		KYCState: consts.KYCStateAccepted,
+	}
+	store.CreateUser(user)
+
+	// PW_EUR should be accepted (common GateHub prefix for prepaid wallets)
+	body := models.CreateCustomerAndCardArgs{
+		WalletAddress: "rWallet",
+		Account: models.CardAccount{
+			Currency: "PW_EUR",
+			Card:     models.NewCardArgs{ProductCode: "PWSR_DEBP_2404"},
+		},
+		NameOnCard: "John Doe",
+	}
+	b, _ := json.Marshal(body)
+	req := httptest.NewRequest(http.MethodPost, "/cards/v1/customers", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("x-gatehub-managed-user-uuid", "test-user-pw-eur")
+
+	w := httptest.NewRecorder()
+	h.CreateManagedCustomer(w, req)
+
+	assert.Equal(t, http.StatusCreated, w.Code)
+	var resp models.CustomerResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	assert.NotNil(t, resp.Customer)
+	assert.Equal(t, "Citizen", resp.Customer.Type)
+}
+
 // helper: create a customer+card in the store and return IDs
 func seedCard(t *testing.T, store *storage.MemoryStorage) (customerID, accountID, cardID string) {
 	t.Helper()
@@ -826,10 +861,11 @@ func TestGetCardApplicationProducts(t *testing.T) {
 	h.GetCardApplicationProducts(w, req)
 
 	assert.Equal(t, http.StatusOK, w.Code)
-	var resp map[string]interface{}
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	data := resp["data"].([]interface{})
-	assert.Len(t, data, 2)
+	var products []map[string]interface{}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &products))
+	assert.Len(t, products, 2)
+	assert.Equal(t, "PWSR_DEBP_2404", products[0]["code"])
+	assert.Equal(t, "PROD_PLASTIC_CARD", products[1]["code"])
 }
 
 // --- OrderPlasticCard ---

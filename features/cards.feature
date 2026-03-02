@@ -103,7 +103,7 @@ Feature: Card management and lifecycle
     And the response contains "confirmed" with value false
 
   Scenario: Get card application products
-    When I GET /cards/v1/card-applications/test-app-id/card-products with managed user UUID header
+    When I GET /cards/v1/card-applications/test-app-id/card-products with card app ID header
     Then the response status is 200
     And the response contains a data array with card product objects
 
