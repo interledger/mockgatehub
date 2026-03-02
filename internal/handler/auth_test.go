@@ -89,14 +89,14 @@ func TestUpdateOrganizationConfiguration(t *testing.T) {
 			expectedStatus: http.StatusNotFound,
 		},
 		{
-			name:  "invalid URL - not HTTPS",
+			name:  "valid URL - HTTP also accepted",
 			orgID: "test-org",
 			requestBody: map[string]string{
 				"apiBaseUrl": "http://api.example.com",
 				"type2fa":    "sms",
 			},
 			setupOrg:       true,
-			expectedStatus: http.StatusBadRequest,
+			expectedStatus: http.StatusOK,
 		},
 		{
 			name:  "invalid URL - empty",

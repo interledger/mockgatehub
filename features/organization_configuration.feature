@@ -20,9 +20,9 @@ Feature: Organization Configuration Management
     Then the response status is 200
     And the response field "type2fa" is "sms"
 
-  Scenario: Reject non-HTTPS API base URL
+  Scenario: Allow non-HTTPS API base URL so that we can test in dev
     When I PATCH /auth/v1/users/organization/default-org with apiBaseUrl "http://api.example.com" and type2fa "totp"
-    Then the response status is 400
+    Then the response status is 200
 
   Scenario: Reject invalid 2FA type
     When I PATCH /auth/v1/users/organization/default-org with apiBaseUrl "https://api.example.com" and type2fa "invalid"

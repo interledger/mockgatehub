@@ -169,7 +169,7 @@ func (h *Handler) UpdateOrganizationConfiguration(w http.ResponseWriter, r *http
 		h.sendError(w, http.StatusBadRequest, "invalid API base URL")
 		return
 	}
-	if parsed.Scheme != "https" {
+	if parsed.Scheme != "https" && parsed.Scheme != "http" {
 		h.sendError(w, http.StatusBadRequest, "API base URL must use HTTPS")
 		return
 	}
