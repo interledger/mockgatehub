@@ -1,6 +1,6 @@
 # 3DS Fixes — TDD Implementation Plan
 
-Based on [gatehub-cards-3ds.md](gatehub-cards-3ds.md) sections 7–9. Ordered by impact: critical backend-breaking bugs first, then API compliance fixes.
+Based on [gatehub-cards-explainer.md](gatehub-cards-explainer.md) sections 7–9. Ordered by impact: critical backend-breaking bugs first, then API compliance fixes.
 
 ---
 

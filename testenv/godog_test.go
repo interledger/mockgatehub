@@ -159,7 +159,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^I POST (.+) with managed user UUID header, confirmed (true|false), authMethod "([^"]*)"$`, tc.postWith3DSConfirmation)
 	ctx.Step(`^the response contains "([^"]*)" with value (true|false)$`, tc.responseContainsFieldWithBoolValue)
 	ctx.Step(`^I GET (.+) with card app ID header$`, tc.getWithCardAppIDHeader)
-	ctx.Step(`^the response contains a data array with card product objects$`, tc.responseHasCardProducts)
+	ctx.Step(`^the response is an array of card product objects$`, tc.responseHasCardProducts)
 	ctx.Step(`^the response contains orderId, cardId, status "([^"]*)", and type "([^"]*)"$`, tc.responseContainsPlasticCardOrder)
 	ctx.Step(`^the response is an array of card limit objects$`, tc.responseIsArrayOfCardLimits)
 	ctx.Step(`^each limit has type, limit amount, currency "([^"]*)", and isDisabled flag$`, tc.eachLimitHasRequiredFields)
