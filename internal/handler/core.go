@@ -326,9 +326,10 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Simulate real-world transaction processing:
-	// 1) Immediately emit a PENDING webhook
-	// 2) After a short delay, mark completed, emit COMPLETED webhook, and update balance
-	// This keeps Temporal workflows from hanging on long polling timers.
+	// After a short delay, mark completed, emit a single COMPLETED webhook, and update balance.
+	// Real GateHub fires core.deposit.completed exactly once, only after the transaction settles.
+	// The pending→completed lifecycle is visible via GET /core/v1/transactions/{id} (status 1→100),
+	// not via a separate pending webhook event.
 	respTx := *tx // snapshot to avoid mutating response status during async completion
 
 	if req.DepositType == consts.DepositTypeExternal || req.DepositType == consts.DepositTypeHosted {
@@ -340,17 +341,6 @@ func (h *Handler) CreateTransaction(w http.ResponseWriter, r *http.Request) {
 		depositType := req.DepositType
 		receivingAddr := req.ReceivingAddress
 		hasWebhook := h.webhookManager.HasURL()
-
-		pendingPayload := map[string]interface{}{
-			"transaction_id": txID,
-			"tx_uuid":        txID,
-			"amount":         tx.Amount,
-			"currency":       tx.Currency,
-			"address":        receivingAddr,
-			"deposit_type":   depositType,
-			"status":         "pending",
-		}
-		h.webhookManager.SendAsync(consts.WebhookEventDepositCompleted, userID, pendingPayload, 0)
 
 		complete := func() {
 			if hasWebhook {
