@@ -35,13 +35,6 @@ func Load() *Config {
 		DefaultOrganizationID: getEnv("DEFAULT_ORGANIZATION_ID", "default-org"),
 	}
 
-	// Validate WebhookMinDelaySec: enforce minimum of 2 seconds to prevent
-	// negative values or zero from bypassing intended minimum delay behavior.
-	// Clamp to 2-second minimum if env var is misconfigured.
-	if cfg.WebhookMinDelaySec < 2 {
-		cfg.WebhookMinDelaySec = 2
-	}
-
 	// Use Redis if URL is provided
 	cfg.UseRedis = cfg.RedisURL != ""
 

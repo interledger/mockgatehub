@@ -76,7 +76,7 @@ func main() {
 			logger.Fatal("redis storage type assertion failed")
 		}
 		webhookQueue = webhook.NewQueue(redisStore.GetClient(), cfg.WebhookMinDelaySec)
-		logger.Info("using redis-backed webhook queue")
+		logger.Info("using redis stream-backed webhook queue")
 	} else {
 		// For in-memory mode, we still need Redis for webhook queue
 		// Create a dedicated Redis connection just for webhooks

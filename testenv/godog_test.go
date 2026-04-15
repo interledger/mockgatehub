@@ -117,6 +117,11 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the payload contains a counter currency$`, tc.payloadHasCounterCurrency)
 	ctx.Step(`^at least one currency rate entry besides the counter field$`, tc.rateEntryExists)
 	ctx.Step(`^the response includes a non-empty vaults array$`, tc.responseHasVaults)
+	ctx.Step(`^the counter field is "([^"]*)"$`, tc.counterFieldIs)
+	ctx.Step(`^the rate for "([^"]*)" is ([\d.]+)$`, tc.rateForCurrencyIs)
+	ctx.Step(`^the rate for "([^"]*)" is approximately ([\d.]+) within ([\d.]+)$`, tc.rateForCurrencyApprox)
+	ctx.Step(`^I save the rate for "([^"]*)" as "([^"]*)"$`, tc.saveRateAs)
+	ctx.Step(`^the rate for "([^"]*)" is approximately the inverse of "([^"]*)" within ([\d.]+)$`, tc.rateIsInverseOfSaved)
 
 	// Card steps
 	ctx.Step(`^a managed user with KYC state "([^"]*)"$`, tc.existingManagedUserWithKYC)
@@ -184,6 +189,12 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^fields amount, total_amount, and fee are string formatted with two decimals$`, tc.fieldsAreStringFormatted)
 	ctx.Step(`^status is integer (\d+)$`, tc.statusIsInteger)
 	ctx.Step(`^the transaction can be retrieved via GET \/core\/v(\d+)\/transactions\/{id} with the same format$`, tc.transactionCanBeRetrievedFormatted)
+
+	// Hosted transfer debit/credit steps
+	ctx.Step(`^the user has a funded (\w+) wallet with balance (\d+)\.(\d+)$`, tc.userHasFundedWallet)
+	ctx.Step(`^I POST /core/v1/transactions with sending_address as "?([^",]*)"?, receiving_address as "?([^",]*)"?, amount (\d+)\.(\d+), currency "([^"]*)", type (\d+), deposit_type "([^"]*)"$`, tc.postHostedWithSendingAddress)
+	ctx.Step(`^I POST /core/v1/transactions with receiving_address as "?([^",]*)"?, sending_address as "?([^",]*)"?, amount (\d+)\.(\d+), currency "([^"]*)", type (\d+), deposit_type "([^"]*)"$`, tc.postHostedWithReceivingAddress)
+	ctx.Step(`^the user balance for (\w+) is (\d+)\.(\d+)$`, tc.userBalanceForCurrencyIs)
 
 	// Fee configuration steps
 	ctx.Step(`^deposit fee is configured to ([\d.]+)%$`, tc.depositFeeConfigured)

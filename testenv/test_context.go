@@ -47,6 +47,7 @@ type TestContext struct {
 	customerID      string
 	cardID          string
 	transactionID   string
+	savedRates      map[string]float64
 }
 
 // Reset initializes the test context to a clean state
@@ -78,4 +79,5 @@ func (tc *TestContext) Reset() {
 	tc.lastResponse = nil
 	tc.lastResponseBody = nil
 	tc.lastError = nil
+	tc.savedRates = make(map[string]float64)
 }

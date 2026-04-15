@@ -25,7 +25,7 @@ func TestLoad_Defaults(t *testing.T) {
 	assert.Equal(t, 0, cfg.RedisDB)
 	assert.Equal(t, "", cfg.WebhookURL)
 	assert.Equal(t, "mock-secret", cfg.WebhookSecret)
-	assert.GreaterOrEqual(t, cfg.WebhookMinDelaySec, 2.0, "should clamp min delay to 2")
+	assert.Equal(t, 0.05, cfg.WebhookMinDelaySec, "default min delay should be 0.05")
 	assert.True(t, cfg.EnforceAuthentication)
 	assert.False(t, cfg.UseRedis)
 	assert.Equal(t, "default-org", cfg.DefaultOrganizationID)
@@ -63,7 +63,7 @@ func TestLoad_CustomEnvVars(t *testing.T) {
 func TestLoad_WebhookMinDelayClamp(t *testing.T) {
 	t.Setenv("WEBHOOK_MIN_DELAY_SEC", "0.5")
 	cfg := Load()
-	assert.Equal(t, 2.0, cfg.WebhookMinDelaySec, "should clamp to 2s minimum")
+	assert.Equal(t, 0.5, cfg.WebhookMinDelaySec, "should use value as-is without clamping")
 }
 
 func TestGetEnv_Default(t *testing.T) {

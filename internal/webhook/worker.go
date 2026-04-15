@@ -2,7 +2,6 @@ package webhook
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"mockgatehub/internal/logger"
@@ -10,7 +9,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// Worker processes webhook jobs from the queue
+const staleIdleDuration = 2 * time.Minute // Reclaim messages idle for >2 min
+
+// Worker processes webhook jobs from the Redis Stream consumer group.
+// Instead of polling on a ticker, it blocks on XREADGROUP so jobs are
+// picked up immediately when they arrive.
 type Worker struct {
 	queue   *Queue
 	manager *Manager
@@ -18,7 +21,7 @@ type Worker struct {
 	cancel  context.CancelFunc
 }
 
-// NewWorker creates a new webhook worker
+// NewWorker creates a new webhook worker.
 func NewWorker(queue *Queue, manager *Manager) *Worker {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Worker{
@@ -29,87 +32,108 @@ func NewWorker(queue *Queue, manager *Manager) *Worker {
 	}
 }
 
-// Start begins processing webhook jobs (blocking)
+// Start begins processing webhook jobs (blocking).
+// It first reclaims any stale messages left by a previous process, then
+// enters a blocking read loop that wakes only when messages arrive.
 func (w *Worker) Start() {
-	logger.Info("starting webhook worker", zap.Duration("poll_interval", pollInterval))
+	logger.Info("starting webhook worker (stream mode)",
+		zap.Duration("block_timeout", blockTimeout),
+		zap.String("consumer", w.queue.consumerName),
+	)
 
-	ticker := time.NewTicker(pollInterval)
-	defer ticker.Stop()
+	// Recover messages that a crashed worker left unacknowledged.
+	w.reclaimStale()
 
 	for {
 		select {
 		case <-w.ctx.Done():
 			logger.Info("stopping webhook worker")
 			return
-		case <-ticker.C:
-			w.processReadyJobs()
+		default:
+			w.readAndProcess()
 		}
 	}
 }
 
-// Stop gracefully stops the worker
+// Stop gracefully stops the worker.
 func (w *Worker) Stop() {
 	w.cancel()
 }
 
-// processReadyJobs fetches and processes all ready jobs sequentially
-func (w *Worker) processReadyJobs() {
-	jobs, err := w.queue.GetReadyJobs(w.ctx, batchSize)
+// readAndProcess does a single blocking XREADGROUP and processes the batch.
+func (w *Worker) readAndProcess() {
+	jobs, err := w.queue.ReadJobs(w.ctx, batchSize)
 	if err != nil {
-		logger.Error("failed to fetch ready jobs", zap.Error(err))
+		// Context canceled → shutdown in progress.
+		if w.ctx.Err() != nil {
+			return
+		}
+		logger.Error("failed to read jobs from stream", zap.Error(err))
+		time.Sleep(1 * time.Second) // Back off briefly on transient errors
 		return
 	}
-
-	if len(jobs) == 0 {
-		return // No jobs ready
-	}
-
-	logger.Info("found ready jobs to process", zap.Int("count", len(jobs)))
 
 	for _, job := range jobs {
 		w.processJob(job)
 	}
 }
 
-// processJob processes a single webhook job
-func (w *Worker) processJob(job *Job) {
+// processJob sends a single webhook and acks or retries the stream message.
+func (w *Worker) processJob(job StreamJob) {
 	logger.Info("processing webhook job",
-		zap.String("job_id", job.ID),
+		zap.String("job_id", job.JobID),
 		zap.String("event", job.EventType),
 		zap.String("user", job.UserID),
 		zap.Int("attempt", job.Attempts+1),
 		zap.Int("max_attempts", maxAttempts),
 	)
 
-	// Send webhook using manager's send method
 	err := w.manager.send(job.EventType, job.UserID, job.Data)
 
 	if err != nil {
-		// Mark as failed and reschedule
-		errMsg := err.Error()
-		if markErr := w.queue.MarkFailed(w.ctx, job.ID, errMsg); markErr != nil {
-			logger.Error("failed to mark job as failed", zap.Error(markErr))
+		if retryErr := w.queue.RetryLater(w.ctx, job, err.Error()); retryErr != nil {
+			logger.Error("failed to schedule retry", zap.Error(retryErr))
 		}
-		logger.Warn("webhook job failed", zap.String("job_id", job.ID), zap.String("error", errMsg))
+		logger.Warn("webhook job failed",
+			zap.String("job_id", job.JobID),
+			zap.String("error", err.Error()),
+		)
 		return
 	}
 
-	// Mark as completed
-	if err := w.queue.MarkCompleted(w.ctx, job.ID); err != nil {
-		logger.Error("failed to mark job as completed", zap.Error(err))
+	if ackErr := w.queue.Ack(w.ctx, job.MessageID); ackErr != nil {
+		logger.Error("failed to ack completed job", zap.Error(ackErr))
 		return
 	}
 
-	logger.Info("webhook job completed successfully", zap.String("job_id", job.ID))
+	logger.Info("webhook job completed successfully", zap.String("job_id", job.JobID))
 }
 
-// StartAsync starts the worker in a goroutine
+// reclaimStale uses XAUTOCLAIM to pick up messages that another consumer
+// (or a previous incarnation of this one) left pending.
+func (w *Worker) reclaimStale() {
+	jobs, err := w.queue.ClaimStale(w.ctx, staleIdleDuration)
+	if err != nil {
+		logger.Warn("failed to reclaim stale messages", zap.Error(err))
+		return
+	}
+
+	if len(jobs) == 0 {
+		return
+	}
+
+	logger.Info("reclaimed stale webhook jobs", zap.Int("count", len(jobs)))
+	for _, job := range jobs {
+		w.processJob(job)
+	}
+}
+
+// StartAsync starts the worker in a goroutine.
 func (w *Worker) StartAsync() {
 	go func() {
 		defer func() {
 			if r := recover(); r != nil {
 				logger.Error("panic in webhook worker", zap.Any("panic", r))
-				// Restart worker after panic, but only if context is still active
 				time.Sleep(5 * time.Second)
 				select {
 				case <-w.ctx.Done():
@@ -124,24 +148,7 @@ func (w *Worker) StartAsync() {
 	}()
 }
 
-// GetStats returns queue statistics (for debugging/monitoring)
+// GetStats returns stream/consumer-group statistics for debugging.
 func (w *Worker) GetStats(ctx context.Context) (map[string]int64, error) {
-	// Count total jobs in queue
-	totalInQueue, err := w.queue.client.ZCard(ctx, queueKey).Result()
-	if err != nil {
-		return nil, fmt.Errorf("failed to count queue size: %w", err)
-	}
-
-	// Count ready jobs
-	now := time.Now().Unix()
-	readyCount, err := w.queue.client.ZCount(ctx, queueKey, "-inf", fmt.Sprintf("%d", now)).Result()
-	if err != nil {
-		return nil, fmt.Errorf("failed to count ready jobs: %w", err)
-	}
-
-	return map[string]int64{
-		"total_in_queue": totalInQueue,
-		"ready_now":      readyCount,
-		"scheduled":      totalInQueue - readyCount,
-	}, nil
+	return w.queue.GetStats(ctx)
 }
