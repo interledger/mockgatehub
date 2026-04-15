@@ -56,9 +56,10 @@ func NewQueue(client *redis.Client, minDelaySec float64) *Queue {
 	return q
 }
 
-// Enqueue adds a new webhook job. If minDelay + offsetDelaySeconds > 0 the
-// message is added to the stream after that delay (via a goroutine timer);
-// otherwise it is added immediately.
+// Enqueue adds a new webhook job. The effective delay is the greater of
+// minDelay and offsetDelaySeconds — if either is > 0 the message is added
+// to the stream after that delay (via a goroutine timer); otherwise it is
+// added immediately.
 func (q *Queue) Enqueue(ctx context.Context, eventType, userID string, data any, offsetDelaySeconds float64) (string, error) {
 	jobID := utils.GenerateUUID()
 	dataMap := coerceToMap(data)
@@ -78,7 +79,7 @@ func (q *Queue) Enqueue(ctx context.Context, eventType, userID string, data any,
 	}
 
 	offset := time.Duration(offsetDelaySeconds * float64(time.Second))
-	totalDelay := q.minDelay + offset
+	totalDelay := max(q.minDelay, offset)
 
 	if totalDelay > 0 {
 		// Fire-and-forget: add to stream after the delay elapses.
