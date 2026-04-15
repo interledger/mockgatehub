@@ -117,6 +117,11 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the payload contains a counter currency$`, tc.payloadHasCounterCurrency)
 	ctx.Step(`^at least one currency rate entry besides the counter field$`, tc.rateEntryExists)
 	ctx.Step(`^the response includes a non-empty vaults array$`, tc.responseHasVaults)
+	ctx.Step(`^the counter field is "([^"]*)"$`, tc.counterFieldIs)
+	ctx.Step(`^the rate for "([^"]*)" is ([\d.]+)$`, tc.rateForCurrencyIs)
+	ctx.Step(`^the rate for "([^"]*)" is approximately ([\d.]+) within ([\d.]+)$`, tc.rateForCurrencyApprox)
+	ctx.Step(`^I save the rate for "([^"]*)" as "([^"]*)"$`, tc.saveRateAs)
+	ctx.Step(`^the rate for "([^"]*)" is approximately the inverse of "([^"]*)" within ([\d.]+)$`, tc.rateIsInverseOfSaved)
 
 	// Card steps
 	ctx.Step(`^a managed user with KYC state "([^"]*)"$`, tc.existingManagedUserWithKYC)
