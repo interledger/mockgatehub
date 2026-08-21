@@ -157,7 +157,12 @@ const (
 	WebhookEventDocumentNoticeExpired = "id.document_notice.expired"
 	WebhookEventDocumentNoticeWarning = "id.document_notice.warning"
 	WebhookEventDepositCompleted      = "core.deposit.completed"
-	WebhookEventCardCreated           = "cards.card.created"
+
+	// Withdrawal outcomes. Note the differing namespaces: completion comes
+	// from core, rejection from the bridge that settles it.
+	WebhookEventWithdrawalCompleted = "core.withdrawal.completed"
+	WebhookEventWithdrawalRejected  = "more-bridge.withdrawal.rejected"
+	WebhookEventCardCreated         = "cards.card.created"
 
 	// WebhookEventCardTransactionAuthorization carries a full card
 	// transaction under an "authorizationData" key. This is the event
@@ -180,6 +185,14 @@ const (
 	CardStatusSoftDelete       = "SoftDelete"
 	CardStatusAccountBlocked   = "AccountBlocked"
 	CardStatusInCreation       = "InCreation"
+)
+
+// Placeholder bank details attached to a mock withdrawal, so a consumer
+// displaying one has something to show for where the money went.
+const (
+	MockWithdrawalIBAN      = "GB29NWBK60161331926819"
+	MockWithdrawalLegalName = "Jane Smith"
+	MockWithdrawalReference = "Mock Reference"
 )
 
 // Pre-seeded test user IDs

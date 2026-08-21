@@ -44,16 +44,25 @@ func cleanup() {
 }
 
 func waitForServices() error {
+	for _, url := range []string{mockGatehubURL, asyncWithdrawalsURL} {
+		if err := waitForService(url); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func waitForService(baseURL string) error {
 	for i := 0; i < maxWaitSeconds; i++ {
-		resp, err := http.Get(mockGatehubURL + "/health")
+		resp, err := http.Get(baseURL + "/health")
 		if err == nil && resp.StatusCode == 200 {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil
 		}
 		if resp != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		time.Sleep(time.Second)
 	}
-	return fmt.Errorf("health check timed out after %d seconds", maxWaitSeconds)
+	return fmt.Errorf("health check for %s timed out after %d seconds", baseURL, maxWaitSeconds)
 }

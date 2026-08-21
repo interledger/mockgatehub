@@ -34,6 +34,39 @@ services:
       retries: 3
       start_period: 5s
 
+  # A second instance with asynchronous withdrawals enabled. The behaviour is
+  # opt-in, so both positions of the switch need covering, and the default
+  # instance above must keep settling withdrawals immediately.
+  mockgatehub-async:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    ports:
+      - "25152:8080"
+    environment:
+      - LOG_LEVEL=debug
+      - MOCKGATEHUB_PORT=8080
+      - MOCKGATEHUB_REDIS_URL=redis://redis:6379
+      # A separate Redis database so the two instances do not share state or
+      # consume each other's webhook queue.
+      - MOCKGATEHUB_REDIS_DB=1
+      - WEBHOOK_URL=http://mockgatehub-async:8080/test-webhook
+      - WEBHOOK_SECRET=test-webhook-secret
+      - MOCKGATEHUB_ENFORCE_AUTHENTICATION=true
+      - MOCKGATEHUB_ASYNC_WITHDRAWALS=true
+      - WEBHOOK_POLL_INTERVAL_MS=200
+      - WEBHOOK_BATCH_SIZE=50
+    depends_on:
+      - redis
+    networks:
+      - mockgatehub-test
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
 networks:
   mockgatehub-test:
     driver: bridge

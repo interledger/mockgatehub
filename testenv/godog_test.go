@@ -227,6 +227,19 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the stored transaction reports txStatus "([^"]*)"$`, tc.storedTransactionStatusIs)
 	ctx.Step(`^the error names the valid scenarios$`, tc.errorNamesTheValidScenarios)
 
+	// Withdrawal settlement steps
+	ctx.Step(`^requests go to the asynchronous withdrawals instance$`, tc.usingTheAsyncWithdrawalsInstance)
+	ctx.Step(`^I request a withdrawal of "([^"]*)" ([A-Z]+)$`, tc.requestWithdrawal)
+	ctx.Step(`^the withdrawal status is "([^"]*)"$`, tc.withdrawalStatusIs)
+	ctx.Step(`^I GET the withdrawals filtered by "([^"]*)"$`, tc.iGETWithdrawalsFiltered)
+	ctx.Step(`^the withdrawal listing holds (\d+) withdrawals?$`, tc.withdrawalListingHolds)
+	ctx.Step(`^the withdrawal listing names the destination bank details$`, tc.withdrawalListingNamesTheBankDetails)
+	ctx.Step(`^I trigger the withdrawal event "([^"]*)"$`, tc.triggerWithdrawalEvent)
+	ctx.Step(`^I trigger the withdrawal event "([^"]*)" for transaction "([^"]*)"$`, func(event, txID string) error {
+		return tc.triggerWithdrawalEventFor(txID, event)
+	})
+	ctx.Step(`^the "([^"]*)" webhook reports the withdrawal$`, tc.withdrawalWebhookReportsTheTransaction)
+
 	// Statement steps
 	ctx.Step(`^I GET the account confirmation for the user wallet$`, tc.getAccountConfirmation)
 	ctx.Step(`^I GET the account confirmation for the user wallet without any HMAC headers$`, tc.getAccountConfirmationUnauthenticated)

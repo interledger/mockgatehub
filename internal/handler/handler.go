@@ -565,6 +565,17 @@ func (h *Handler) processWithdrawal(w http.ResponseWriter, bearer string, txReq 
 
 	txID := utils.GenerateUUID()
 
+	// A real provider settles a withdrawal asynchronously, but a consumer that
+	// does not handle withdrawal webhooks would then see its withdrawals never
+	// complete. The behaviour is therefore selectable, defaulting to
+	// settling immediately.
+	status := consts.TransactionStatusCompleted
+	responseMessage := "Withdrawal completed"
+	if h.config.AsyncWithdrawals {
+		status = consts.TransactionStatusPending
+		responseMessage = "Withdrawal pending"
+	}
+
 	tx := &models.Transaction{
 		ID:               txID,
 		UserID:           userUUID,
@@ -573,10 +584,14 @@ func (h *Handler) processWithdrawal(w http.ResponseWriter, bearer string, txReq 
 		Fee:              feeStr,
 		Currency:         txReq.Currency,
 		VaultUUID:        vaultUUID,
+		SendingAddress:   walletAddress,
 		ReceivingAddress: walletAddress,
 		Type:             consts.TransactionTypeWithdrawal, // Type 0 = withdrawal
 		DepositType:      consts.DepositTypeWithdrawal,
-		Status:           consts.TransactionStatusCompleted,
+		Status:           status,
+		AccountIBAN:      consts.MockWithdrawalIBAN,
+		AccountLegalName: consts.MockWithdrawalLegalName,
+		Message:          consts.MockWithdrawalReference,
 	}
 
 	if err := h.store.CreateTransaction(tx); err != nil {
@@ -585,26 +600,36 @@ func (h *Handler) processWithdrawal(w http.ResponseWriter, bearer string, txReq 
 		return
 	}
 
-	// Note that deduct can potentially fail and then we would have to handle it somehow. For simplicity, we assume
-	// it succeeds here. In a real implementation, you would want to handle potential errors and possibly roll back
-	// the transaction creation if balance deduction fails.
+	if h.config.AsyncWithdrawals {
+		// The balance moves when the withdrawal settles, not when it is
+		// requested: a rejected withdrawal must leave the balance untouched.
+		logger.Info("withdrawal created as pending",
+			zap.String("user_id", userUUID),
+			zap.String("transaction_id", txID),
+			zap.String("amount", amountStr),
+			zap.String("currency", txReq.Currency))
+	} else {
+		// Deduct balance (including fee) from user. If this fails the
+		// transaction record is already written; the withdrawal is reported as
+		// failed rather than silently leaving an uncharged completion behind.
+		if err := h.store.DeductBalance(userUUID, txReq.Currency, totalAmount); err != nil {
+			logger.Error("failed to deduct balance for withdrawal", zap.String("user_id", userUUID), zap.Error(err))
+			if updateErr := h.store.UpdateTransactionStatus(txID, consts.TransactionStatusFailed); updateErr != nil {
+				logger.Error("failed to mark withdrawal as failed", zap.String("transaction_id", txID), zap.Error(updateErr))
+			}
+			h.sendErrorWithCORS(w, http.StatusInternalServerError, "Failed to deduct balance")
+			return
+		}
 
-	// Deduct balance (including fee) from user
-	if err := h.store.DeductBalance(userUUID, txReq.Currency, totalAmount); err != nil {
-		logger.Error("failed to deduct balance for withdrawal", zap.String("user_id", userUUID), zap.Error(err))
-		h.sendErrorWithCORS(w, http.StatusInternalServerError, "Failed to deduct balance")
-		return
+		// Settling immediately emits no webhook: the consumer learns the
+		// outcome from this response.
+		logger.Info("withdrawal completed", zap.String("user_id", userUUID), zap.String("transaction_id", txID), zap.String("amount", amountStr), zap.String("currency", txReq.Currency))
 	}
-
-	// NOTE: Unlike deposits, withdrawals do NOT send webhooks to the backend
-	// The withdrawal flow is: iframe -> postMessage -> frontend -> CreateGatehubWithdrawal RPC -> backend workflow
-	// Real GateHub does not send withdrawal webhooks either
-	logger.Info("withdrawal completed", zap.String("user_id", userUUID), zap.String("transaction_id", txID), zap.String("amount", amountStr), zap.String("currency", txReq.Currency))
 
 	// Return success response with transaction ID for iframe
 	h.sendJSONWithCORS(w, http.StatusOK, map[string]string{
 		"status":         "success",
-		"message":        "Withdrawal completed",
+		"message":        responseMessage,
 		"transaction_id": txID, // Frontend needs this for CreateGatehubWithdrawal
 		"uuid":           txID, // Alias for compatibility
 	})

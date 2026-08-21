@@ -183,3 +183,21 @@ func TestRandomSecret_LengthAndUniqueness(t *testing.T) {
 	// base64 raw-url of 32 bytes is 43 chars.
 	assert.Len(t, a, 43)
 }
+
+func TestLoad_AsyncWithdrawalsDefaultsOff(t *testing.T) {
+	// Consumers that handle no withdrawal webhooks would see their withdrawals
+	// never complete, so the asynchronous behaviour must be opt-in.
+	t.Setenv("MOCKGATEHUB_ASYNC_WITHDRAWALS", "")
+	assert.False(t, Load().AsyncWithdrawals)
+}
+
+func TestLoad_AsyncWithdrawalsIsOptIn(t *testing.T) {
+	for _, truthy := range []string{"true", "1", "yes"} {
+		t.Setenv("MOCKGATEHUB_ASYNC_WITHDRAWALS", truthy)
+		assert.True(t, Load().AsyncWithdrawals, "expected %q to enable", truthy)
+	}
+	for _, falsy := range []string{"false", "0", "no"} {
+		t.Setenv("MOCKGATEHUB_ASYNC_WITHDRAWALS", falsy)
+		assert.False(t, Load().AsyncWithdrawals, "expected %q to disable", falsy)
+	}
+}

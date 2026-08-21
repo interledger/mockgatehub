@@ -72,4 +72,10 @@ type Transaction struct {
 	DepositType      string    `json:"deposit_type"` // external/hosted
 	Status           int       `json:"status"`       // 0=pending, 1=completed, 2=failed
 	CreatedAt        time.Time `json:"created_at"`
+
+	// Withdrawal settlement details. A withdrawal leaves the platform for a
+	// bank account, so a consumer displaying one needs to say where it went.
+	AccountIBAN      string `json:"account_iban,omitempty"`
+	AccountLegalName string `json:"account_legal_name,omitempty"`
+	Message          string `json:"message,omitempty"`
 }

@@ -33,6 +33,12 @@ type Config struct {
 	// through the calling backend — currently the card-data tokenisation link.
 	PublicBaseURL string
 
+	// AsyncWithdrawals switches withdrawals from settling immediately to
+	// staying pending until an outcome is triggered, which is how a real
+	// provider behaves. It defaults to off: a consumer that does not handle
+	// withdrawal webhooks would see its withdrawals never complete.
+	AsyncWithdrawals bool
+
 	// CardDataTokenSecret is the HMAC secret used to sign the short-lived
 	// card-data JWTs returned by POST /cards/v1/token/card-data. It is
 	// deliberately not a compiled-in constant: the endpoint those tokens
@@ -56,6 +62,7 @@ func Load() *Config {
 		DefaultOrganizationID: getEnv("DEFAULT_ORGANIZATION_ID", "default-org"),
 		PublicBaseURL:         getEnv("MOCKGATEHUB_PUBLIC_BASE_URL", "http://localhost:8080"),
 		CardDataTokenSecret:   getEnv("MOCKGATEHUB_CARD_DATA_TOKEN_SECRET", ""),
+		AsyncWithdrawals:      getEnvBool("MOCKGATEHUB_ASYNC_WITHDRAWALS", false),
 	}
 
 	// The 2-second minimum delay clamp was removed upstream so webhooks can be
