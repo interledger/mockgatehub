@@ -238,8 +238,8 @@ type PendingThreeDSConfirmation struct {
 }
 
 type ThreeDSPaymentConfirmationArgs struct {
-	TransactionID string `json:"-"`         // URL param
-	Confirmed     bool   `json:"confirmed"` // true = approve, false = decline
+	TransactionID string `json:"-"`          // URL param
+	Confirmed     bool   `json:"confirmed"`  // true = approve, false = decline
 	AuthMethod    string `json:"authMethod"` // "biometric" | "pin" | "password"
 }
 

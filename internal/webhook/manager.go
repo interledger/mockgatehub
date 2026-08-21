@@ -196,7 +196,7 @@ func (m *Manager) send(eventType, userID string, data any) error {
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	duration := time.Since(start)
 	logger.Info("webhook response received",
@@ -315,7 +315,7 @@ func (m *Manager) test2FASMSWorkflow(org *models.Organization, userID string) er
 		)
 		return err
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	logger.Info("2FA INITIATE callback succeeded",
 		zap.String("org_id", org.ID),
@@ -338,7 +338,7 @@ func (m *Manager) test2FASMSWorkflow(org *models.Organization, userID string) er
 		)
 		return err
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	logger.Info("2FA VERIFY callback succeeded",
 		zap.String("org_id", org.ID),
@@ -365,7 +365,7 @@ func (m *Manager) test2FATOTPWorkflow(org *models.Organization, userID string) e
 		)
 		return err
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	logger.Info("2FA TOTP callback succeeded",
 		zap.String("org_id", org.ID),

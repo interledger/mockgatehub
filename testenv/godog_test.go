@@ -16,6 +16,10 @@ var opts = godog.Options{
 	Format: "progress",
 	Paths:  []string{"../features"},
 	Tags:   "~@skip && ~@stubbed",
+	// Without Strict, a scenario whose steps have no matching definition is
+	// reported as undefined and the suite still exits 0 — a new scenario could
+	// look green while never running. Treat undefined and pending as failures.
+	Strict: true,
 }
 
 func TestFeatures(t *testing.T) {
@@ -178,7 +182,15 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^authenticated requests signed with HMAC headers$`, tc.authenticatedRequestsWithHMAC)
 	ctx.Step(`^an iframe token obtained with scope \["([^"]*)"\] and mapped to the managed user$`, tc.iframeTokenWithScope)
 	ctx.Step(`^I POST (.+) with amount "([^"]*)" and currency "([^"]*)" and Authorization header "Bearer (.+)"$`, tc.postTransactionWithAuth)
-	ctx.Step(`^the user balance for EUR increases by (\d+)\.(\d+)$`, tc.userBalanceIncreasesBy)
+	// Balance steps: assert on the observed balance, not just on the response.
+	ctx.Step(`^I record the user's ([A-Z]+) balance$`, tc.iRecordTheBalance)
+	ctx.Step(`^the user's ([A-Z]+) balance has increased by ([\d.]+)$`, tc.balanceHasIncreasedBy)
+	ctx.Step(`^the user's ([A-Z]+) balance has decreased by ([\d.]+)$`, tc.balanceHasDecreasedBy)
+	ctx.Step(`^the user's ([A-Z]+) balance is unchanged$`, tc.balanceIsUnchanged)
+	ctx.Step(`^the user has a funded ([A-Z]+) balance$`, tc.userHasFundedBalance)
+	ctx.Step(`^I POST a hosted transfer of ([\d.]+) ([A-Z]+) from the user wallet to "([^"]*)"$`, tc.postHostedTransferFromUserWallet)
+	ctx.Step(`^I POST a hosted transfer of ([\d.]+) ([A-Z]+) from "([^"]*)" to the user wallet$`, tc.postHostedTransferToUserWallet)
+	ctx.Step(`^the response reports sending_address as (.+)$`, tc.responseEchoesSendingAddress)
 	ctx.Step(`^I POST (.+) with user_id, amount (\d+)\.(\d+), currency "([^"]*)", type (\d+), and deposit_type "([^"]*)"$`, tc.postHostedTransfer)
 	ctx.Step(`^the response includes an id or uuid$`, tc.responseHasIDOrUUID)
 	ctx.Step(`^the amount echoes (\d+)\.(\d+)$`, tc.amountEchoes)

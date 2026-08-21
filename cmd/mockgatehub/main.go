@@ -54,7 +54,7 @@ func main() {
 		if err != nil {
 			logger.Fatal("failed to connect to redis", zap.Error(err))
 		}
-		defer redisStore.Close()
+		defer func() { _ = redisStore.Close() }()
 		store = redisStore
 	} else {
 		logger.Info("setting up in-memory storage")
@@ -77,25 +77,34 @@ func main() {
 		}
 		webhookQueue = webhook.NewQueue(redisStore.GetClient(), cfg.WebhookMinDelaySec)
 		logger.Info("using redis stream-backed webhook queue")
-	} else {
-		// For in-memory mode, we still need Redis for webhook queue
-		// Create a dedicated Redis connection just for webhooks
-		logger.Warn("in-memory storage mode requires redis for webhook queue")
+	} else if cfg.RedisURL != "" {
+		// In-memory storage with a Redis URL configured: open a dedicated
+		// connection just for the webhook queue.
 		logger.Info("connecting to redis for webhook queue", zap.String("url", cfg.RedisURL), zap.Int("db", cfg.RedisDB))
 		redisClient, err := storage.NewRedisClient(cfg.RedisURL, cfg.RedisDB)
 		if err != nil {
 			logger.Fatal("failed to connect to redis for webhook queue", zap.Error(err))
 		}
 		webhookQueue = webhook.NewQueue(redisClient, cfg.WebhookMinDelaySec)
+		logger.Info("using redis stream-backed webhook queue in in-memory storage mode")
+	} else {
+		// No storage Redis and no webhook Redis: run without a queue rather
+		// than refusing to start. Everything except webhook delivery works,
+		// which is what a bare `go run ./cmd/mockgatehub` needs.
+		logger.Warn("no redis configured in in-memory mode; webhook delivery is disabled")
 	}
 
 	webhookManager := webhook.NewManager(cfg.WebhookURL, cfg.WebhookSecret, webhookQueue, store, cfg.DefaultOrganizationID)
-	webhookWorker = webhook.NewWorker(webhookQueue, webhookManager)
+	if webhookQueue != nil {
+		webhookWorker = webhook.NewWorker(webhookQueue, webhookManager)
 
-	// Start webhook worker in background
-	webhookWorker.StartAsync()
-	logger.Info("webhook worker started")
-	h := handler.NewHandler(store, webhookManager)
+		// Start webhook worker in background
+		webhookWorker.StartAsync()
+		logger.Info("webhook worker started")
+	} else {
+		logger.Info("webhook queue disabled; not starting webhook worker")
+	}
+	h := handler.NewHandlerWithConfig(cfg, store, webhookManager)
 	r := chi.NewRouter()
 
 	// Built-in middleware

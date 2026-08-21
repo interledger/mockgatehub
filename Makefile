@@ -3,7 +3,7 @@
 help:
 	@echo "MockGatehub Test Commands"
 	@echo ""
-	@echo "test              Run unit tests + feature e2e tests"
+	@echo "test              Run lint + unit tests + feature e2e tests"
 	@echo "unit-tests        Run unit tests only"
 	@echo "e2e-tests         Run feature (godog) e2e tests"
 	@echo "coverage          Run unit tests with coverage report"
@@ -13,7 +13,7 @@ help:
 	@echo ""
 
 # Run all tests: unit tests + feature tests
-test: unit-tests e2e-tests
+test: lint unit-tests e2e-tests
 	@echo ""
 	@echo "✅ All tests completed"
 
@@ -44,8 +44,10 @@ build:
 # Run linter
 lint:
 	@echo "Running linters..."
-	@gofmt -l .
-	@go vet ./...
+	@test -z "$$(gofmt -l . | tee /dev/stderr)" || (echo "gofmt found unformatted files"; exit 1)
+	@go vet -tags e2e ./...
+	@echo "Running golangci-lint..."
+	@golangci-lint run ./...
 
 # Clean up artifacts
 clean:

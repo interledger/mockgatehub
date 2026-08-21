@@ -48,6 +48,10 @@ type TestContext struct {
 	cardID          string
 	transactionID   string
 	savedRates      map[string]float64
+
+	// recordedBalances holds balance snapshots taken mid-scenario so later
+	// steps can assert on the change rather than on an absolute figure.
+	recordedBalances map[string]float64
 }
 
 // Reset initializes the test context to a clean state
@@ -80,4 +84,5 @@ func (tc *TestContext) Reset() {
 	tc.lastResponseBody = nil
 	tc.lastError = nil
 	tc.savedRates = make(map[string]float64)
+	tc.recordedBalances = nil
 }

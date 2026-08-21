@@ -137,3 +137,49 @@ func TestSplitString(t *testing.T) {
 	assert.Equal(t, []string{"single"}, splitString("single", ','))
 	assert.Equal(t, []string{"a", "b"}, splitString("a:b", ':'))
 }
+
+func TestLoad_PublicBaseURLDefault(t *testing.T) {
+	t.Setenv("MOCKGATEHUB_PUBLIC_BASE_URL", "")
+	cfg := Load()
+	assert.Equal(t, "http://localhost:8080", cfg.PublicBaseURL)
+}
+
+func TestLoad_PublicBaseURLTrimsTrailingSlash(t *testing.T) {
+	// Callers build absolute URLs by concatenating a rooted path, so a trailing
+	// slash would yield "https://host//cards/v1/...".
+	t.Setenv("MOCKGATEHUB_PUBLIC_BASE_URL", "https://mock.example.com/")
+	cfg := Load()
+	assert.Equal(t, "https://mock.example.com", cfg.PublicBaseURL)
+
+	t.Setenv("MOCKGATEHUB_PUBLIC_BASE_URL", "https://mock.example.com///")
+	cfg = Load()
+	assert.Equal(t, "https://mock.example.com", cfg.PublicBaseURL)
+}
+
+func TestLoad_CardDataTokenSecretGeneratedWhenUnset(t *testing.T) {
+	t.Setenv("MOCKGATEHUB_CARD_DATA_TOKEN_SECRET", "")
+
+	first := Load()
+	second := Load()
+
+	assert.NotEmpty(t, first.CardDataTokenSecret)
+	// A compiled-in default would let anyone mint a card-data token, so each
+	// load must produce its own secret.
+	assert.NotEqual(t, first.CardDataTokenSecret, second.CardDataTokenSecret,
+		"generated secret must not be a fixed value")
+}
+
+func TestLoad_CardDataTokenSecretHonoursEnv(t *testing.T) {
+	t.Setenv("MOCKGATEHUB_CARD_DATA_TOKEN_SECRET", "explicit-secret")
+	cfg := Load()
+	assert.Equal(t, "explicit-secret", cfg.CardDataTokenSecret)
+}
+
+func TestRandomSecret_LengthAndUniqueness(t *testing.T) {
+	a := randomSecret(32)
+	b := randomSecret(32)
+	assert.NotEmpty(t, a)
+	assert.NotEqual(t, a, b)
+	// base64 raw-url of 32 bytes is 43 chars.
+	assert.Len(t, a, 43)
+}

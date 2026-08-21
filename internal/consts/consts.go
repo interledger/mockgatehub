@@ -97,6 +97,49 @@ const (
 	NetworkXRPLedger = 30
 )
 
+// Card defaults, matching what the GateHub sandbox returns for a new card.
+const (
+	DefaultCardProductCode = "PWSR_DEBP_2404"
+	DefaultCustomerType    = "Citizen"
+	DefaultAccountType     = "DEBIT"
+	CardRelationPrimary    = "PRIMARY"
+	DefaultStatusActive    = "ACTIVE"
+)
+
+// Card transaction types. These are the numeric `type` values GateHub puts on a
+// card transaction; the set mirrors the consumer-side CardTrxTypeEnum so a
+// simulated transaction is classified the same way a real one would be.
+const (
+	CardTxTypePurchase                   = 0
+	CardTxTypeATMWithdrawal              = 1
+	CardTxTypeCardVerificationInquiry    = 6
+	CardTxTypeCashAdvance                = 17
+	CardTxTypeRefundCreditPayment        = 20
+	CardTxTypeBalanceInquiryOnATM        = 30
+	CardTxTypePINUnblock                 = 91
+	CardTxTypePINChange                  = 92
+	CardTxTypePreauthorization           = 101
+	CardTxTypePreauthorizationIncrement  = 102
+	CardTxTypePreauthorizationCompletion = 103
+	CardTxTypeTransferToAccount          = 107
+	CardTxTypeTransferFromAccount        = 108
+)
+
+// Card transaction operations, describing which way money moves.
+const (
+	CardTxOperationWithdrawal = 0
+	CardTxOperationDeposit    = 1
+	CardTxOperationNone       = 2
+)
+
+// Card transaction statuses.
+const (
+	CardTxStatusProcessing = "PROCESSING"
+	CardTxStatusCompleted  = "COMPLETED"
+	CardTxStatusReversed   = "REVERSED"
+	CardTxStatusDeclined   = "DECLINED"
+)
+
 // Webhook event types
 const (
 	WebhookEventKYCAccepted       = "id.verification.accepted"

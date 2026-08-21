@@ -34,7 +34,7 @@ func (h *Handler) CreateToken(w http.ResponseWriter, r *http.Request) {
 		// Store the mapping of token -> user UUID
 		h.tokenToUser.Store(token, managedUserUuid)
 
-		logger.Info("created iframe token for user", zap.String("user_uuid", managedUserUuid), zap.String("token_prefix", token[:20]))
+		logger.Info("created iframe token for user", zap.String("user_uuid", managedUserUuid), zap.String("token_prefix", tokenPrefix(token)))
 	} else {
 		// Regular access token (backward compatibility)
 		token = "mock-access-token-" + consts.TestUser1ID

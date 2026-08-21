@@ -302,11 +302,7 @@ func (h *Handler) KYCIframeSubmit(w http.ResponseWriter, r *http.Request) {
 	// If user_id is not in form, try to extract from bearer token
 	if userID == "" {
 		token := r.FormValue("token")
-		tokenShort := token
-		if len(token) > 20 {
-			tokenShort = token[:20]
-		}
-		logger.Warn("user id missing from form, attempting to extract from token", zap.String("token_prefix", tokenShort))
+		logger.Warn("user id missing from form, attempting to extract from token", zap.String("token_prefix", tokenPrefix(token)))
 		// Try to look up user from token in our map
 		if uuid, ok := h.tokenToUser.Load(token); ok {
 			if u, ok := uuid.(string); ok {
@@ -460,7 +456,7 @@ func (h *Handler) call2FAVerify(endpoint, code string) (bool, error) {
 	if err != nil {
 		return false, fmt.Errorf("callback request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return false, fmt.Errorf("callback returned status %d", resp.StatusCode)

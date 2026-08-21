@@ -1,0 +1,20 @@
+version: "2"
+
+run:
+  timeout: 10m
+  # Step definitions and the godog harness live behind the e2e tag; without it
+  # they are invisible to the linter.
+  build-tags:
+    - e2e
+
+linters:
+  default: standard
+
+  exclusions:
+    rules:
+      # Ignoring an error in a test is usually a deliberate "this cannot fail
+      # here" rather than a defect, and flagging every one drowns out real
+      # findings in production code.
+      - path: (_test\.go$|^testenv/|^test/)
+        linters:
+          - errcheck

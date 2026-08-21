@@ -16,19 +16,42 @@ import (
 // Helper methods for JSON responses
 
 func (h *Handler) sendJSON(w http.ResponseWriter, status int, data interface{}) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-
-	// Marshal to log the response
+	// Marshal before writing the header. Writing the status first means a
+	// marshal failure can only append an error body to an already-committed
+	// 200, so the caller sees a success status with an error payload.
+	respStatus := status
 	body, err := json.MarshalIndent(data, "", "  ")
 	if err != nil {
 		logger.Error("failed to marshal response", zap.Error(err))
-		w.Write([]byte(`{"error":"internal server error"}`))
-		return
+		respStatus = http.StatusInternalServerError
+		body = []byte(`{"error":"internal server error"}`)
 	}
 
-	logger.Debug("sending json response", zap.Int("status", status))
-	w.Write(body)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(respStatus)
+
+	logger.Debug("sending json response", zap.Int("status", respStatus))
+	if _, err := w.Write(body); err != nil {
+		logger.Warn("failed to write json response", zap.Error(err))
+	}
+}
+
+// formatAmount renders a monetary amount the way the GateHub API does: a
+// fixed two-decimal string rather than a JSON number.
+func formatAmount(amount float64) string {
+	return fmt.Sprintf("%.2f", amount)
+}
+
+// tokenPrefix returns a leading slice of a token, short enough to correlate log
+// lines without writing a usable credential to the log. It is safe for tokens
+// shorter than the prefix length, which hand-rolled slicing at the call sites
+// was not.
+func tokenPrefix(token string) string {
+	const prefixLen = 20
+	if len(token) > prefixLen {
+		return token[:prefixLen]
+	}
+	return token
 }
 
 func (h *Handler) sendError(w http.ResponseWriter, status int, message string) {

@@ -6,7 +6,10 @@ import (
 	"time"
 
 	"mockgatehub/internal/consts"
+	"mockgatehub/internal/logger"
 	"mockgatehub/internal/models"
+
+	"go.uber.org/zap"
 )
 
 // SeedTestUsers creates pre-seeded test users with balances
@@ -28,8 +31,10 @@ func SeedTestUsersWithOrgID(store Storage, defaultOrgID string) error {
 		RiskLevel: consts.RiskLevelLow,
 	}
 
+	// A conflict here just means the seed already ran against a persistent
+	// store, so the user we want is present either way.
 	if err := store.CreateUser(user1); err != nil {
-		// User might already exist, ignore error
+		logger.Debug("seed user 1 not created; assuming it already exists", zap.Error(err))
 	}
 
 	// Add 10,000 USD balance only if not already seeded
@@ -52,7 +57,7 @@ func SeedTestUsersWithOrgID(store Storage, defaultOrgID string) error {
 	}
 
 	if err := store.CreateUser(user2); err != nil {
-		// User might already exist, ignore error
+		logger.Debug("seed user 2 not created; assuming it already exists", zap.Error(err))
 	}
 
 	// Add 10,000 EUR balance only if not already seeded

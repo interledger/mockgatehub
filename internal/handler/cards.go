@@ -18,6 +18,17 @@ import (
 	"go.uber.org/zap"
 )
 
+// defaultCardLimits returns the spending limits a new card starts with.
+func defaultCardLimits() []models.CardLimit {
+	return []models.CardLimit{
+		{Type: "dailyOverall", Limit: 1000.00, Currency: "EUR", IsDisabled: false},
+		{Type: "perTransaction", Limit: 500.00, Currency: "EUR", IsDisabled: false},
+		{Type: "monthlyOverall", Limit: 5000.00, Currency: "EUR", IsDisabled: false},
+		{Type: "dailyAtm", Limit: 300.00, Currency: "EUR", IsDisabled: false},
+		{Type: "dailyEcomm", Limit: 800.00, Currency: "EUR", IsDisabled: false},
+	}
+}
+
 // generateMaskedPan generates a realistic masked PAN with numeric-only digits
 func generateMaskedPan() string {
 	return fmt.Sprintf("%s******%s", randomDigits(6), randomDigits(4))
@@ -100,7 +111,7 @@ func (h *Handler) CreateManagedCustomer(w http.ResponseWriter, r *http.Request) 
 
 	productCode := req.Account.ProductCode
 	if productCode == "" {
-		productCode = "PWSR_DEBP_2404"
+		productCode = consts.DefaultCardProductCode
 	}
 
 	// Create customer
@@ -108,7 +119,7 @@ func (h *Handler) CreateManagedCustomer(w http.ResponseWriter, r *http.Request) 
 	customer := &models.Customer{
 		ID:        &customerID,
 		SourceID:  userID,
-		Type:      "Citizen",
+		Type:      consts.DefaultCustomerType,
 		Code:      fmt.Sprintf("CUST-%s", customerID[:8]),
 		KYCStatus: consts.KYCStateAccepted,
 		CreatedAt: time.Now(),
@@ -134,7 +145,7 @@ func (h *Handler) CreateManagedCustomer(w http.ResponseWriter, r *http.Request) 
 			PostOffice:       req.Delivery.PostOffice,
 			ZipCode:          req.Delivery.ZipCode,
 			CountryCode:      req.Delivery.CountryCode,
-			Status:           "ACTIVE",
+			Status:           consts.DefaultStatusActive,
 		}
 		if err := h.store.CreateCustomerAddress(customerID, addr); err != nil {
 			logger.Warn("failed to create delivery address", zap.Error(err))
@@ -151,8 +162,8 @@ func (h *Handler) CreateManagedCustomer(w http.ResponseWriter, r *http.Request) 
 		ProductCode:      productCode,
 		Currency:         currency,
 		AccountNumber:    fmt.Sprintf("GB29NWBK%s", utils.GenerateUUID()[:12]),
-		Type:             "DEBIT",
-		Status:           "ACTIVE",
+		Type:             consts.DefaultAccountType,
+		Status:           consts.DefaultStatusActive,
 		CreatedAt:        time.Now(),
 	}
 
@@ -176,7 +187,7 @@ func (h *Handler) CreateManagedCustomer(w http.ResponseWriter, r *http.Request) 
 		MaskedPan:        generateMaskedPan(),
 		Status:           consts.CardStatusActive,
 		ExpiryDate:       time.Now().AddDate(3, 0, 0).Format("2006-01-02"),
-		RelationType:     "PRIMARY",
+		RelationType:     consts.CardRelationPrimary,
 		IsFirstTimeLock:  false,
 		PlasticCreated:   false,
 		CreatedAt:        time.Now(),
@@ -188,14 +199,7 @@ func (h *Handler) CreateManagedCustomer(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Seed default card limits
-	defaultLimits := []models.CardLimit{
-		{Type: "dailyOverall", Limit: 1000.00, Currency: "EUR", IsDisabled: false},
-		{Type: "perTransaction", Limit: 500.00, Currency: "EUR", IsDisabled: false},
-		{Type: "monthlyOverall", Limit: 5000.00, Currency: "EUR", IsDisabled: false},
-		{Type: "dailyAtm", Limit: 300.00, Currency: "EUR", IsDisabled: false},
-		{Type: "dailyEcomm", Limit: 800.00, Currency: "EUR", IsDisabled: false},
-	}
-	if err := h.store.SetCardLimits(cardID, defaultLimits); err != nil {
+	if err := h.store.SetCardLimits(cardID, defaultCardLimits()); err != nil {
 		logger.Warn("failed to seed card limits", zap.Error(err))
 	}
 
@@ -511,13 +515,7 @@ func (h *Handler) GetCardLimits(w http.ResponseWriter, r *http.Request) {
 
 	// Seed default limits if empty
 	if len(limits) == 0 {
-		limits = []models.CardLimit{
-			{Type: "dailyOverall", Limit: 1000.00, Currency: "EUR", IsDisabled: false},
-			{Type: "perTransaction", Limit: 500.00, Currency: "EUR", IsDisabled: false},
-			{Type: "monthlyOverall", Limit: 5000.00, Currency: "EUR", IsDisabled: false},
-			{Type: "dailyAtm", Limit: 300.00, Currency: "EUR", IsDisabled: false},
-			{Type: "dailyEcomm", Limit: 800.00, Currency: "EUR", IsDisabled: false},
-		}
+		limits = defaultCardLimits()
 		_ = h.store.SetCardLimits(cardID, limits)
 	}
 
