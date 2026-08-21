@@ -54,8 +54,6 @@ services:
       - WEBHOOK_SECRET=test-webhook-secret
       - MOCKGATEHUB_ENFORCE_AUTHENTICATION=true
       - MOCKGATEHUB_ASYNC_WITHDRAWALS=true
-      - WEBHOOK_POLL_INTERVAL_MS=200
-      - WEBHOOK_BATCH_SIZE=50
     depends_on:
       - redis
     networks:

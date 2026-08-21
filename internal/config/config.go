@@ -10,18 +10,13 @@ import (
 
 // Config holds application configuration
 type Config struct {
-	Port               string
-	LogLevel           string
-	RedisURL           string
-	RedisDB            int
-	WebhookURL         string
-	WebhookSecret      string
-	WebhookMinDelaySec float64
-	// WebhookPollIntervalMS and WebhookBatchSize pace webhook delivery.
-	// Together they bound throughput, so an environment expecting many
-	// webhooks in quick succession should lower the interval.
-	WebhookPollIntervalMS int
-	WebhookBatchSize      int
+	Port                  string
+	LogLevel              string
+	RedisURL              string
+	RedisDB               int
+	WebhookURL            string
+	WebhookSecret         string
+	WebhookMinDelaySec    float64
 	UseRedis              bool
 	EnforceAuthentication bool
 	ValidCredentials      map[string]string // appID -> secret

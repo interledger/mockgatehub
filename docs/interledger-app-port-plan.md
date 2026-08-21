@@ -403,12 +403,12 @@ All six tranches landed, one commit each, in the planned order.
 
 | Tranche | Commit | What shipped |
 |---|---|---|
-| F | `4b8f4b4` | Config foundations (`PublicBaseURL`, `CardDataTokenSecret`), `sendJSON` status fix, unchecked `ParseFloat`, hosted-transfer direction, `tokenPrefix`, Redis-optional webhook queue, `.golangci.yml` at zero findings |
-| A | `ad25cf5` | 17-scenario card transaction catalogue, raw-payload storage + sequence counter, simulation API, `cards.transaction.authorization`, `cards.card.created`, card-data and PIN encryption, pagination |
-| B | `b6c5d5f` | Resubmission state, document notices, Sumsub mapping, selectable KYC outcome, quiet state override, signed 2FA callback, configurable webhook pacing |
-| D | `4d6c58d` | `/statement/v1` with per-request PDF rendering, `internal/pdf`, `ListTransactionsByUser` |
-| C | `9b39b60` | Opt-in asynchronous withdrawals, settlement endpoints, once-only settlement |
-| E | `2e20a0a` | Admin UI at `/ui`, `ListUsers`/`GetAllBalances`, shared operation core so UI and API cannot drift |
+| F | `5395f9a` | Config foundations (`PublicBaseURL`, `CardDataTokenSecret`), `sendJSON` status fix, unchecked `ParseFloat`, hosted-transfer direction, `tokenPrefix`, Redis-optional webhook queue, `.golangci.yml` at zero findings |
+| A | `6af4594` | 17-scenario card transaction catalogue, raw-payload storage + sequence counter, simulation API, `cards.transaction.authorization`, `cards.card.created`, card-data and PIN encryption, pagination |
+| B | `f91a124` | Resubmission state, document notices, Sumsub mapping, selectable KYC outcome, quiet state override, signed 2FA callback |
+| D | `0f2179c` | `/statement/v1` with per-request PDF rendering, `internal/pdf`, `ListTransactionsByUser` |
+| C | `14559ea` | Opt-in asynchronous withdrawals, settlement endpoints, once-only settlement |
+| E | `cbf3903` | Admin UI at `/ui`, `ListUsers`/`GetAllBalances`, shared operation core so UI and API cannot drift |
 
 ### Verification
 
@@ -517,7 +517,11 @@ Fixed as part of the port.
    `go run ./cmd/mockgatehub` could not start. (Confirmed while running 1.13,
    which exits immediately without Redis.)
 9. Webhook delivery was capped at 10 per 5 seconds; under the fuller suite a
-   delivery took 19.8 seconds. Now configurable, and 4.0 seconds worst case.
+   delivery took 19.8 seconds. This was originally fixed here by making the
+   poll interval and batch size configurable. That fix was **dropped during the
+   rebase** in favour of the better one that landed on main independently
+   (`04f3e7a`): the worker now blocks on a Redis stream and picks a webhook up
+   as soon as it is enqueued, so there is no polling interval to tune.
 
 ### Answers to the open questions from §12
 
@@ -535,3 +539,46 @@ Fixed as part of the port.
    reimplementing it, so its ongoing cost is low.
 4. **Reconverging with interledger-app** — still a decision to make. The six
    defects above are all live in their tree.
+
+---
+
+## 15. Rebase onto the updated main
+
+The work was originally based on `stephan/20260324-signature-fix` (`4416c45`),
+which was one commit ahead of the `main` visible at the time. Three commits then
+landed on main, two of which overlapped this work directly. All seven commits
+were rebased onto `origin/main` (`04f3e7a`); the resulting branch is
+`5395f9a..e54a3c3`.
+
+| Commit on main | Overlap | Resolution |
+|---|---|---|
+| `8e97a42` panic recovery (#41) | This is the squashed merge of the branch this work was based on | Absorbed by the rebase; no longer carried separately |
+| `6428bed` removed the pending deposit webhook (#42) | Tranche F touched the same block and would have reinstated the webhook | Took main's side — the pending webhook stays removed |
+| `04f3e7a` hosted transfers credit and debit (#43) | Implements the same fix as Tranche F, and refactors the webhook queue to Redis Streams | Took main's side throughout; see below |
+
+### What was dropped in favour of main
+
+- **Hosted transfer direction.** Implemented independently on both sides.
+  Main's version is canonical and this branch's duplicate was discarded, along
+  with its two e2e scenarios, which duplicated main's. One scenario was kept
+  because it asserts something main's do not: that the transfer response echoes
+  `sending_address` back, which a consumer needs in order to reconcile.
+- **Webhook delivery pacing.** Tranche B added `WEBHOOK_POLL_INTERVAL_MS` and
+  `WEBHOOK_BATCH_SIZE` to work around a polling worker capped at 2 deliveries a
+  second. Main replaced the poller with a Redis Streams consumer group that
+  blocks until a job arrives, which addresses the same problem better. The
+  config fields, the `NewWorkerWithPacing` constructor, their tests and the
+  compose overrides were all removed.
+- **The 2-second `WEBHOOK_MIN_DELAY_SEC` clamp.** Removed on main; the value is
+  now used as configured.
+
+### One discrepancy worth noting, not changed
+
+Main debits a hosted transfer by `amount - fee`; this branch had debited
+`amount + fee`. A sender paying a fee should be debited more than they sent, not
+less, so `amount + fee` is arguably the correct reading. It makes no difference
+today because hosted transfers carry no fee — `feePercent` is only assigned for
+external deposits and withdrawals, so `amount - fee == amount` for every hosted
+transfer. Main's version was kept rather than quietly changing behaviour that
+has no live effect. If a hosted-transfer fee is ever introduced, this is the
+line to revisit.

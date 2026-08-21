@@ -57,9 +57,7 @@ The service will be available at `http://localhost:8080`
 | `MOCKGATEHUB_VALID_CREDENTIALS` | `local-test-app-id:local-test-app-secret` | Comma-separated `appId:secret` pairs |
 | `WEBHOOK_URL` | — | Application webhook endpoint URL (fallback if no org config) |
 | `WEBHOOK_SECRET` | `mock-secret` | Secret for signing outgoing webhooks |
-| `WEBHOOK_MIN_DELAY_SEC` | `0.05` | Minimum seconds before webhooks become eligible for delivery (clamped to a 2s floor) |
-| `WEBHOOK_POLL_INTERVAL_MS` | `5000` | How often the delivery worker polls for due webhooks |
-| `WEBHOOK_BATCH_SIZE` | `10` | Webhooks delivered per poll. With the default pacing, a burst of webhooks drains at 2/second; lower the interval in a test environment |
+| `WEBHOOK_MIN_DELAY_SEC` | `0.05` | Minimum seconds before webhooks become eligible for delivery |
 | `DEFAULT_ORGANIZATION_ID` | `default-org` | Organization ID for callback routing |
 | `MOCKGATEHUB_PUBLIC_BASE_URL` | `http://localhost:8080` | Externally reachable base URL, used for absolute links a browser follows directly (card-data and PIN) |
 | `MOCKGATEHUB_CARD_DATA_TOKEN_SECRET` | random per process | HMAC secret signing card-data and PIN tokens. Set it only if tokens must survive a restart |
@@ -237,9 +235,9 @@ A browser UI for driving the mock by hand. Needs no credentials.
 
 ## Webhook Events
 
-MockGatehub delivers webhooks via a Redis-backed job queue with configurable minimum delay, 10 retry attempts, and 30-second fixed retry backoff. Webhooks are signed with `X-GH-Webhook-Signature` using HMAC-SHA256.
+MockGatehub delivers webhooks via a Redis Streams consumer group with configurable minimum delay, 10 retry attempts, and a 3-second retry backoff. Webhooks are signed with `X-GH-Webhook-Signature` using HMAC-SHA256.
 
-Delivery is paced by `WEBHOOK_POLL_INTERVAL_MS` and `WEBHOOK_BATCH_SIZE`. The defaults are unhurried; an environment that generates webhooks in bursts should lower the interval so it is not waiting on the queue.
+The worker blocks on the Redis stream rather than polling, so a webhook is picked up as soon as it is enqueued.
 
 ### Supported Event Types
 
