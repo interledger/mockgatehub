@@ -63,6 +63,10 @@ type TestContext struct {
 	// Card transaction simulation state
 	simulatedTxID  string
 	simulatedTxIDs []string
+
+	// statementPeriod records the period a statement was requested for, so a
+	// later step can assert the document names it.
+	statementPeriod time.Time
 }
 
 // Reset initializes the test context to a clean state
@@ -103,4 +107,5 @@ func (tc *TestContext) Reset() {
 	tc.decryptedPAN = ""
 	tc.simulatedTxID = ""
 	tc.simulatedTxIDs = nil
+	tc.statementPeriod = time.Time{}
 }

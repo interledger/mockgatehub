@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"mockgatehub/internal/models"
 
@@ -248,6 +249,73 @@ func TestRawCardTransaction_IsPerTransaction(t *testing.T) {
 				assert.Equal(t, txID, fields["transactionId"])
 				assert.EqualValues(t, i, fields["id"])
 			}
+		})
+	}
+}
+
+func TestListTransactionsByUser_ReturnsOnlyThatUsersTransactions(t *testing.T) {
+	for name, store := range storesUnderTest(t) {
+		t.Run(name, func(t *testing.T) {
+			require.NoError(t, store.CreateTransaction(&models.Transaction{
+				ID: "tx-a", UserID: "user-1", Amount: "1.00", Currency: "EUR",
+			}))
+			require.NoError(t, store.CreateTransaction(&models.Transaction{
+				ID: "tx-b", UserID: "user-2", Amount: "2.00", Currency: "EUR",
+			}))
+			require.NoError(t, store.CreateTransaction(&models.Transaction{
+				ID: "tx-c", UserID: "user-1", Amount: "3.00", Currency: "EUR",
+			}))
+
+			got, err := store.ListTransactionsByUser("user-1")
+			require.NoError(t, err)
+
+			ids := make([]string, 0, len(got))
+			for _, tx := range got {
+				ids = append(ids, tx.ID)
+			}
+			assert.ElementsMatch(t, []string{"tx-a", "tx-c"}, ids,
+				"one user's statement must not show another's transactions")
+		})
+	}
+}
+
+func TestListTransactionsByUser_IsMostRecentFirst(t *testing.T) {
+	for name, store := range storesUnderTest(t) {
+		t.Run(name, func(t *testing.T) {
+			base := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
+			// Insert out of order so the ordering cannot come from insertion.
+			for _, spec := range []struct {
+				id string
+				at time.Time
+			}{
+				{"tx-middle", base.AddDate(0, 0, 1)},
+				{"tx-oldest", base},
+				{"tx-newest", base.AddDate(0, 0, 2)},
+			} {
+				require.NoError(t, store.CreateTransaction(&models.Transaction{
+					ID: spec.id, UserID: "ordered-user", Amount: "1.00", Currency: "EUR",
+					CreatedAt: spec.at,
+				}))
+			}
+
+			got, err := store.ListTransactionsByUser("ordered-user")
+			require.NoError(t, err)
+			require.Len(t, got, 3)
+
+			for i := 1; i < len(got); i++ {
+				assert.False(t, got[i].CreatedAt.After(got[i-1].CreatedAt),
+					"expected newest first, but %s precedes %s", got[i-1].ID, got[i].ID)
+			}
+		})
+	}
+}
+
+func TestListTransactionsByUser_UnknownUserIsEmptyNotAnError(t *testing.T) {
+	for name, store := range storesUnderTest(t) {
+		t.Run(name, func(t *testing.T) {
+			got, err := store.ListTransactionsByUser("nobody")
+			require.NoError(t, err, "an account with no history is not an error")
+			assert.Empty(t, got)
 		})
 	}
 }

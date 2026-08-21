@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
@@ -734,7 +735,43 @@ func (s *RedisStorage) CreateTransaction(tx *models.Transaction) error {
 		return fmt.Errorf("failed to store transaction: %w", err)
 	}
 
+	// Index by user so the account's transactions can be listed without
+	// scanning every key.
+	if tx.UserID != "" {
+		if err := s.client.LPush(s.ctx, s.userTransactionsKey(tx.UserID), tx.ID).Err(); err != nil {
+			return fmt.Errorf("failed to index transaction by user: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// ListTransactionsByUser returns the user's transactions, most recent first.
+func (s *RedisStorage) ListTransactionsByUser(userID string) ([]*models.Transaction, error) {
+	ids, err := s.client.LRange(s.ctx, s.userTransactionsKey(userID), 0, -1).Result()
+	if err == redis.Nil {
+		return []*models.Transaction{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to list user transactions: %w", err)
+	}
+
+	out := make([]*models.Transaction, 0, len(ids))
+	for _, id := range ids {
+		tx, err := s.GetTransaction(id)
+		if err != nil {
+			// An indexed id with no transaction behind it is stale rather than
+			// fatal; skipping it is better than failing the whole listing.
+			logger.Debug("skipping stale transaction index entry", zap.String("tx_id", id))
+			continue
+		}
+		out = append(out, tx)
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
 }
 
 func (s *RedisStorage) GetTransaction(id string) (*models.Transaction, error) {
@@ -1049,6 +1086,10 @@ func (s *RedisStorage) cardTransactionRawKey(id string) string {
 
 func (s *RedisStorage) cardTransactionSeqKey() string {
 	return "cardtx:seq"
+}
+
+func (s *RedisStorage) userTransactionsKey(userID string) string {
+	return fmt.Sprintf("user:%s:transactions", userID)
 }
 
 func (s *RedisStorage) cardPINKey(cardID string) string {

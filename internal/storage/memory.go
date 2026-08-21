@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,6 +31,7 @@ type MemoryStorage struct {
 	threeDSChallenges      map[string]*models.ThreeDSChallenge          // transactionID -> ThreeDSChallenge
 	wallets                map[string]*models.Wallet                    // address -> Wallet
 	transactions           map[string]*models.Transaction               // txID -> Transaction
+	transactionsByUser     map[string][]string                          // userID -> txIDs
 	balances               map[string]map[string]float64                // userID -> currency -> amount
 	organizations          map[string]*models.Organization              // orgID -> Organization
 }
@@ -52,6 +54,7 @@ func NewMemoryStorage() *MemoryStorage {
 		threeDSChallenges:      make(map[string]*models.ThreeDSChallenge),
 		wallets:                make(map[string]*models.Wallet),
 		transactions:           make(map[string]*models.Transaction),
+		transactionsByUser:     make(map[string][]string),
 		balances:               make(map[string]map[string]float64),
 		organizations:          make(map[string]*models.Organization),
 	}
@@ -594,7 +597,27 @@ func (s *MemoryStorage) CreateTransaction(tx *models.Transaction) error {
 	}
 
 	s.transactions[tx.ID] = tx
+	s.transactionsByUser[tx.UserID] = append(s.transactionsByUser[tx.UserID], tx.ID)
 	return nil
+}
+
+// ListTransactionsByUser returns the user's transactions, most recent first.
+func (s *MemoryStorage) ListTransactionsByUser(userID string) ([]*models.Transaction, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	ids := s.transactionsByUser[userID]
+	out := make([]*models.Transaction, 0, len(ids))
+	for _, id := range ids {
+		if tx, ok := s.transactions[id]; ok {
+			out = append(out, tx)
+		}
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
 }
 
 // GetTransaction retrieves a transaction by ID

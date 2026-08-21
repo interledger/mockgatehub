@@ -227,6 +227,23 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the stored transaction reports txStatus "([^"]*)"$`, tc.storedTransactionStatusIs)
 	ctx.Step(`^the error names the valid scenarios$`, tc.errorNamesTheValidScenarios)
 
+	// Statement steps
+	ctx.Step(`^I GET the account confirmation for the user wallet$`, tc.getAccountConfirmation)
+	ctx.Step(`^I GET the account confirmation for the user wallet without any HMAC headers$`, tc.getAccountConfirmationUnauthenticated)
+	ctx.Step(`^I GET the account statement for the user wallet for the current month$`, tc.getAccountStatementForCurrentMonth)
+	ctx.Step(`^I GET the account statement for the user wallet for "([^"]*)"$`, tc.getAccountStatementForPeriod)
+	ctx.Step(`^I GET the transfer confirmation for that transaction$`, tc.getTransferConfirmationForLastTransaction)
+	ctx.Step(`^I GET the transfer confirmation for transaction "([^"]*)"$`, tc.getTransferConfirmationFor)
+	ctx.Step(`^the response is a PDF attachment named "([^"]*)"$`, tc.responseIsPDFAttachment)
+	ctx.Step(`^the response is not a PDF$`, tc.responseIsNotAPDF)
+	ctx.Step(`^the statement reads "([^"]*)"$`, tc.statementReads)
+	ctx.Step(`^the statement names the user wallet$`, tc.statementNamesTheUserWallet)
+	ctx.Step(`^the statement names the current month$`, tc.statementNamesTheCurrentMonth)
+	ctx.Step(`^the statement lists at least one transaction$`, tc.statementListsATransaction)
+	ctx.Step(`^the statement reports the transaction amount "([^"]*)"$`, tc.statementReportsAmount)
+	ctx.Step(`^the user has made an external deposit of ([\d.]+) ([A-Z]+)$`, tc.userMadeExternalDeposit)
+	ctx.Step(`^the user has made a hosted transfer of ([\d.]+) ([A-Z]+)$`, tc.userMadeHostedTransfer)
+
 	// Webhook assertions
 	ctx.Step(`^the webhook sink is empty$`, tc.clearReceivedWebhooks)
 	ctx.Step(`^a "([^"]*)" webhook is delivered$`, tc.webhookIsDelivered)
