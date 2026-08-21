@@ -889,3 +889,35 @@ func simulatedTransaction(t *testing.T, w *httptest.ResponseRecorder) map[string
 	require.NotNil(t, resp.Transaction)
 	return resp.Transaction
 }
+
+// ---------- consumer path aliases ----------
+
+func TestListCards_ServesBothConsumerPaths(t *testing.T) {
+	// Consumers list a customer's cards under the customer. The same handler
+	// serves both spellings, so they must agree.
+	h, store := setupCardsHandler(t)
+	customerID, _, cardID := seedCard(t, store)
+
+	byCustomerPath := listCardsVia(t, h, "/cards/v1/customers/"+customerID+"/cards", customerID)
+	byCardsPath := listCardsVia(t, h, "/cards/v1/cards/"+customerID, customerID)
+
+	require.NotEmpty(t, byCustomerPath)
+	assert.Equal(t, byCardsPath, byCustomerPath, "both paths must return the same cards")
+	assert.Equal(t, cardID, byCustomerPath[0]["id"])
+}
+
+func listCardsVia(t *testing.T, h *Handler, path, customerID string) []map[string]interface{} {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	req = cardChiParams(req, map[string]string{"customerID": customerID})
+
+	w := httptest.NewRecorder()
+	h.ListCards(w, req)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var resp struct {
+		Data []map[string]interface{} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	return resp.Data
+}

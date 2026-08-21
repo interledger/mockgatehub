@@ -227,6 +227,12 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the stored transaction reports txStatus "([^"]*)"$`, tc.storedTransactionStatusIs)
 	ctx.Step(`^the error names the valid scenarios$`, tc.errorNamesTheValidScenarios)
 
+	// Consumer contract steps
+	ctx.Step(`^(GET|PUT|POST|DELETE) (\S+) is served$`, tc.endpointIsServed)
+	ctx.Step(`^the card object carries the fields consumers read$`, tc.cardObjectCarriesConsumerFields)
+	ctx.Step(`^each listed card transaction carries the fields consumers read$`, tc.cardTransactionsCarryConsumerFields)
+	ctx.Step(`^the user state carries the profile and verifications consumers read$`, tc.userStateCarriesConsumerFields)
+
 	// Admin UI steps
 	ctx.Step(`^I browse to "([^"]*)"$`, tc.browseTo)
 	ctx.Step(`^I browse to the user detail page$`, tc.browseToUserDetail)

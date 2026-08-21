@@ -229,6 +229,16 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		r.Post("/transactions", h.CreateTransaction)
 		r.Get("/transactions/{txID}", h.GetTransaction)
 	})
+	// Some consumers address the card endpoints without the /cards prefix,
+	// because GateHub serves them under a bare /v1 as well. These are aliases
+	// of the /cards/v1 handlers below, not separate behaviour.
+	r.Route("/v1", func(r chi.Router) {
+		logger.Info("REGISTERING /v1 CARD ALIAS ROUTES")
+		r.Get("/cards/{cardID}/limits", h.GetCardLimits)
+		r.Put("/cards/{cardID}/limits", h.UpdateCardLimits)
+		r.Post("/cards/{cardID}/limits", h.UpdateCardLimits)
+		r.Get("/card-applications/{appID}/card-products", h.GetCardApplicationProducts)
+	})
 	r.Route("/ui", func(r chi.Router) {
 		logger.Info("REGISTERING /ui ROUTES")
 		r.Get("/", h.UIDashboard)
@@ -268,6 +278,9 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 
 		// Card handlers - note: order matters for chi routing
 		r.Get("/cards/{customerID}", h.ListCards)
+		// Consumers list a customer's cards under the customer, which is how
+		// GateHub exposes it. Alias of the handler above.
+		r.Get("/customers/{customerID}/cards", h.ListCards)
 		r.Post("/cards", h.CreateCard)
 		r.Get("/cards/{cardID}/card", h.GetCard)
 		r.Delete("/cards/{cardID}/card", h.DeleteCard)

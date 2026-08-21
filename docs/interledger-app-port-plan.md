@@ -1,6 +1,8 @@
 # Porting interledger-app's mockgatehub features into the standalone mockgatehub
 
-**Status:** proposal — awaiting review, no code written yet
+**Status:** complete — all six tranches implemented, verified against the
+published image with zero regressions. See §13 for the outcome and §14 for what
+the work uncovered.
 **Date:** 2026-08-21
 **Driver:** upcoming testnet expansion for GateHub cards support
 **Fork source:** `interledger-app/go/mock/mockgatehub` (migrated out of this repo at
@@ -392,3 +394,144 @@ commit, and the testnet gate run at each tranche boundary.
 4. **Divergence going forward** — should we offer these back to interledger-app so the
    two trees reconverge, or accept a permanent fork? Several fixes here (A4's event name,
    E's preview drift, C's payload inconsistency) are bugs on their side.
+
+---
+
+## 13. Outcome
+
+All six tranches landed, one commit each, in the planned order.
+
+| Tranche | Commit | What shipped |
+|---|---|---|
+| F | `4b8f4b4` | Config foundations (`PublicBaseURL`, `CardDataTokenSecret`), `sendJSON` status fix, unchecked `ParseFloat`, hosted-transfer direction, `tokenPrefix`, Redis-optional webhook queue, `.golangci.yml` at zero findings |
+| A | `ad25cf5` | 17-scenario card transaction catalogue, raw-payload storage + sequence counter, simulation API, `cards.transaction.authorization`, `cards.card.created`, card-data and PIN encryption, pagination |
+| B | `b6c5d5f` | Resubmission state, document notices, Sumsub mapping, selectable KYC outcome, quiet state override, signed 2FA callback, configurable webhook pacing |
+| D | `4d6c58d` | `/statement/v1` with per-request PDF rendering, `internal/pdf`, `ListTransactionsByUser` |
+| C | `9b39b60` | Opt-in asynchronous withdrawals, settlement endpoints, once-only settlement |
+| E | `2e20a0a` | Admin UI at `/ui`, `ListUsers`/`GetAllBalances`, shared operation core so UI and API cannot drift |
+
+### Verification
+
+| Gate | Result |
+|---|---|
+| `gofmt` + `go vet` + `golangci-lint` | 0 findings (errcheck and staticcheck kept on) |
+| Unit tests | 10 packages green, all backed by both storage backends where applicable |
+| E2E (godog) | **144 scenarios / 1044 steps**, up from 72 scenarios at baseline |
+| Mutation checks | Each tranche's headline behaviour was deliberately broken and confirmed to fail the suite — hosted-transfer direction, card webhook payload, resubmission classification, statement content, withdrawal charge timing, UI settlement path |
+| testnet regression gate | **0 regressions** across all 28 endpoints testnet calls |
+
+The e2e harness now runs with `Strict: true`, so a scenario whose steps have no
+definition fails instead of silently reporting success — worth knowing, because
+that is how the pre-existing "user balance increases by" step had come to assert
+only an HTTP status.
+
+### How the regression gate was run
+
+testnet's own Playwright suite needs the full stack, and that checkout has no
+`node_modules` and no `local/.env`; bringing it up unsupervised would have taken
+hours and most likely produced a misleading result. Instead the gate was run
+directly against container images:
+
+1. Build this branch as an image; run `ghcr.io/interledger/mockgatehub:1.13`
+   (what testnet runs today) alongside it.
+2. Drive every one of the 28 endpoints testnet's GateHub client calls against
+   both, with valid HMAC signatures, and diff the status codes.
+3. Treat `404 → 2xx` as a new capability and any `2xx → 404/5xx` as a regression.
+
+Signing matters: the auth middleware runs before routing, so an unsigned request
+returns 401 for a route that does not exist. An unsigned probe cannot tell a
+missing endpoint from a rejected one, and initially suggested — wrongly — that
+the new routes were already present in 1.13.
+
+The durable version of this gate lives in the repo as
+`features/consumer_contract.feature`, which asserts every path, method and
+response field testnet depends on. It runs with `make e2e-tests`.
+
+---
+
+## 14. What the work uncovered
+
+### Seven endpoints testnet calls that this service never routed
+
+All seven are identical on `main` — none was introduced by this port. Three are
+card features and were fixed here as pure route aliases; four are outside the
+cards scope and are left for a decision.
+
+| Endpoint | Status |
+|---|---|
+| `GET/POST /v1/cards/{cardId}/limits` | **Fixed** — aliased. Card limits could not work against the mock at all. |
+| `GET /v1/card-applications/{appId}/card-products` | **Fixed** — aliased. |
+| `GET /cards/v1/customers/{customerId}/cards` | **Fixed** — aliased. The card listing call. |
+| `GET /auth/v1/users/organization/{orgId}` | Open — only `PATCH` is routed. |
+| `PUT /auth/v1/users/managed` | Open — only `POST` and `GET` are routed. |
+| `PUT /core/v1/transactions/{uuid}/serviceStatus` | Open — pending-transaction approval. |
+| `POST /core/v1/gateways/{uuid}/transactions` | Open — pending-transaction listing. |
+| `POST /core/v1/users/{orgUuid}/accounts` | Open — SEPA details. |
+
+`GATEHUB_API_BASE_URL` is a bare host with no path prefix, so the `/v1/...`
+paths really did resolve to unrouted URLs rather than being folded under
+`/cards/v1`.
+
+### Defects found in interledger-app's fork
+
+Worth passing back to that team; none was copied.
+
+1. **The card transaction webhook cannot be consumed.** The fork emits
+   `cards.transaction.event` with a notification payload of
+   `{title, body, transactionId, cardId}`. Consumers switch on
+   `cards.transaction.authorization` and read `data.authorizationData`, so the
+   fork's event is silently dropped by the very consumer it is for.
+2. **The FX field never deserializes.** Its fixtures spell the scheme
+   conversion object `MastercardConversion`; consumers read
+   `mastercardConversion`.
+3. **The two withdrawal webhooks disagree with each other.** Completion uses
+   snake_case (`tx_uuid`, `total_fees`), rejection uses camelCase (`txUuid`,
+   `userUuid`), and the rejection payload reports `"status": "PENDING"` on a
+   rejection.
+4. **The card-tx preview can drift from what is sent.** The preview payload and
+   the delivered payload are built by two separate code paths.
+5. **Statements are indistinguishable.** All three endpoints return the same
+   bytes, differing only in `Content-Disposition` filename.
+6. **The module rename damaged string literals.** `/health` reports
+   `"service":"github.com/interledger/interledger-app/go/mock/mockgatehub"`, and
+   several log messages carry the module path where the service name belongs.
+
+### Defects found in this repository
+
+Fixed as part of the port.
+
+1. `sendJSON` wrote the status header before marshalling, so an unencodable body
+   returned `200` carrying an error payload.
+2. `auth.go` sliced `token[:20]` with no length guard — a panic waiting for a
+   short token.
+3. Deposit and withdrawal amount parsing discarded the `ParseFloat` error.
+4. Hosted transfers always credited, whichever way the money moved.
+5. `models.CardTransaction` had no `id` field and never populated `cardId`,
+   both of which consumers key off.
+6. The card transaction listing ignored `pageNumber` and `pageSize` and always
+   reported a single page.
+7. `WEBHOOK_URL` in the e2e environment pointed at `/test-webhook`, a route that
+   did not exist, so every webhook delivery 404'd and no webhook assertion could
+   be anything but a no-op.
+8. In-memory mode called `logger.Fatal` when Redis was absent, so a plain
+   `go run ./cmd/mockgatehub` could not start. (Confirmed while running 1.13,
+   which exits immediately without Redis.)
+9. Webhook delivery was capped at 10 per 5 seconds; under the fuller suite a
+   delivery took 19.8 seconds. Now configurable, and 4.0 seconds worst case.
+
+### Answers to the open questions from §12
+
+1. **PIN encryption direction** — resolved from the code. The read direction is
+   symmetric with card-data: the consumer sends `publicKeyBase64` and decrypts
+   the returned `cypher` with PKCS#1 v1.5. The change direction is not live —
+   testnet's change-PIN frontend is entirely commented out — so it is
+   implemented the natural symmetric way, with the service publishing its own
+   key at `GET /cards/v1/token/pin/public-key`. That half is unverified against
+   a live consumer and should be confirmed before anyone relies on it.
+2. **Withdrawal payload shapes** — still unconfirmed against real GateHub. Both
+   payloads are snake_case here and a rejection reports `REJECTED`. If the real
+   API differs, this is a one-line change in `rejectWithdrawal`.
+3. **Admin UI scope** — built. It shares the API's code path rather than
+   reimplementing it, so its ongoing cost is low.
+4. **Reconverging with interledger-app** — still a decision to make. The six
+   defects above are all live in their tree.
