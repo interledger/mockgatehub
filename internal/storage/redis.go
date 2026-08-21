@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"mockgatehub/internal/logger"
@@ -1023,6 +1024,80 @@ func (s *RedisStorage) UpdateOrganization(org *models.Organization) error {
 }
 
 // Key helpers
+
+// GetAllBalances returns the user's non-zero balances by currency. Balances are
+// stored one key per currency, so this scans the user's balance namespace.
+func (s *RedisStorage) GetAllBalances(userID string) (map[string]float64, error) {
+	pattern := s.balanceKey(userID, "*")
+	out := make(map[string]float64)
+
+	var cursor uint64
+	for {
+		keys, next, err := s.client.Scan(s.ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan balances: %w", err)
+		}
+		for _, key := range keys {
+			currency := key[strings.LastIndex(key, ":")+1:]
+			amount, err := s.client.Get(s.ctx, key).Float64()
+			if err != nil {
+				logger.Debug("skipping unreadable balance key", zap.String("key", key))
+				continue
+			}
+			if amount != 0 {
+				out[currency] = amount
+			}
+		}
+		if next == 0 {
+			break
+		}
+		cursor = next
+	}
+	return out, nil
+}
+
+// ListUsers returns every known user, ordered by creation time so a listing is
+// stable between calls.
+func (s *RedisStorage) ListUsers() ([]*models.User, error) {
+	out := make([]*models.User, 0)
+
+	var cursor uint64
+	for {
+		keys, next, err := s.client.Scan(s.ctx, cursor, "user:*", 100).Result()
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan users: %w", err)
+		}
+		for _, key := range keys {
+			// The user namespace also holds per-user index keys such as
+			// user:{id}:wallets, which are not user records.
+			if strings.Count(key, ":") != 1 {
+				continue
+			}
+			data, err := s.client.Get(s.ctx, key).Result()
+			if err != nil {
+				continue
+			}
+			var user models.User
+			if err := json.Unmarshal([]byte(data), &user); err != nil {
+				logger.Debug("skipping unparseable user record", zap.String("key", key))
+				continue
+			}
+			out = append(out, &user)
+		}
+		if next == 0 {
+			break
+		}
+		cursor = next
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
+}
 
 func (s *RedisStorage) userKey(id string) string {
 	return fmt.Sprintf("user:%s", id)

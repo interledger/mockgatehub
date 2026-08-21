@@ -97,37 +97,8 @@ func (h *Handler) TriggerWithdrawalEvent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	switch req.Event {
-	case consts.WebhookEventWithdrawalCompleted, consts.WebhookEventWithdrawalRejected:
-	default:
-		h.sendError(w, http.StatusBadRequest,
-			"unsupported event "+req.Event+"; use "+consts.WebhookEventWithdrawalCompleted+
-				" or "+consts.WebhookEventWithdrawalRejected)
-		return
-	}
-
-	tx, err := h.store.GetTransaction(txID)
-	if err != nil {
-		h.sendError(w, http.StatusNotFound, "transaction not found")
-		return
-	}
-	if tx.DepositType != consts.DepositTypeWithdrawal {
-		h.sendError(w, http.StatusBadRequest, "transaction is not a withdrawal")
-		return
-	}
-
-	// Settling twice would double-charge a completion or contradict an
-	// already-published outcome.
-	if tx.Status != consts.TransactionStatusPending {
-		h.sendError(w, http.StatusConflict, "withdrawal is not pending; it has already been settled")
-		return
-	}
-
-	if req.Event == consts.WebhookEventWithdrawalCompleted {
-		if err := h.completeWithdrawal(w, tx); err != nil {
-			return
-		}
-	} else if err := h.rejectWithdrawal(w, tx); err != nil {
+	if err := h.settleWithdrawal(txID, req.Event); err != nil {
+		h.sendAPIError(w, err)
 		return
 	}
 
@@ -137,29 +108,56 @@ func (h *Handler) TriggerWithdrawalEvent(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// settleWithdrawal is the shared implementation behind both the settlement
+// endpoint and the admin UI, so the two cannot drift apart.
+func (h *Handler) settleWithdrawal(txID, event string) error {
+	switch event {
+	case consts.WebhookEventWithdrawalCompleted, consts.WebhookEventWithdrawalRejected:
+	default:
+		return badRequest("unsupported event " + event + "; use " +
+			consts.WebhookEventWithdrawalCompleted + " or " + consts.WebhookEventWithdrawalRejected)
+	}
+
+	tx, err := h.store.GetTransaction(txID)
+	if err != nil {
+		return notFound("transaction not found")
+	}
+	if tx.DepositType != consts.DepositTypeWithdrawal {
+		return badRequest("transaction is not a withdrawal")
+	}
+
+	// Settling twice would double-charge a completion or contradict an
+	// already-published outcome.
+	if tx.Status != consts.TransactionStatusPending {
+		return conflict("withdrawal is not pending; it has already been settled")
+	}
+
+	if event == consts.WebhookEventWithdrawalCompleted {
+		return h.completeWithdrawal(tx)
+	}
+	return h.rejectWithdrawal(tx)
+}
+
 // completeWithdrawal charges the balance and announces the completion. The
 // balance moves here rather than at request time so that a rejection leaves it
 // untouched.
-func (h *Handler) completeWithdrawal(w http.ResponseWriter, tx *models.Transaction) error {
+func (h *Handler) completeWithdrawal(tx *models.Transaction) error {
 	totalAmount, err := strconv.ParseFloat(tx.TotalAmount, 64)
 	if err != nil {
 		logger.Error("withdrawal has an unparseable total", zap.String("tx_id", tx.ID), zap.String("total", tx.TotalAmount), zap.Error(err))
-		h.sendError(w, http.StatusInternalServerError, "transaction total is not a number")
-		return err
+		return internalErr("transaction total is not a number")
 	}
 
 	// Charge before publishing the outcome: announcing a completion we could
 	// not charge would leave the consumer's ledger ahead of ours.
 	if err := h.store.DeductBalance(tx.UserID, tx.Currency, totalAmount); err != nil {
 		logger.Error("failed to deduct balance for withdrawal", zap.String("tx_id", tx.ID), zap.Error(err))
-		h.sendError(w, http.StatusConflict, "could not deduct balance: "+err.Error())
-		return err
+		return conflict("could not deduct balance: " + err.Error())
 	}
 
 	if err := h.store.UpdateTransactionStatus(tx.ID, consts.TransactionStatusCompleted); err != nil {
 		logger.Error("failed to complete withdrawal", zap.String("tx_id", tx.ID), zap.Error(err))
-		h.sendError(w, http.StatusInternalServerError, "failed to update transaction status")
-		return err
+		return internalErr("failed to update transaction status")
 	}
 
 	h.webhookManager.SendAsync(consts.WebhookEventWithdrawalCompleted, tx.UserID, map[string]interface{}{
@@ -180,11 +178,10 @@ func (h *Handler) completeWithdrawal(w http.ResponseWriter, tx *models.Transacti
 
 // rejectWithdrawal marks the withdrawal failed and announces it. No balance
 // moves: the money was never taken.
-func (h *Handler) rejectWithdrawal(w http.ResponseWriter, tx *models.Transaction) error {
+func (h *Handler) rejectWithdrawal(tx *models.Transaction) error {
 	if err := h.store.UpdateTransactionStatus(tx.ID, consts.TransactionStatusFailed); err != nil {
 		logger.Error("failed to reject withdrawal", zap.String("tx_id", tx.ID), zap.Error(err))
-		h.sendError(w, http.StatusInternalServerError, "failed to update transaction status")
-		return err
+		return internalErr("failed to update transaction status")
 	}
 
 	h.webhookManager.SendAsync(consts.WebhookEventWithdrawalRejected, tx.UserID, map[string]interface{}{

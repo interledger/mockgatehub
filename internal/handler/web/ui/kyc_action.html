@@ -1,0 +1,25 @@
+{{define "content"}}
+<h2>Send a KYC event</h2>
+<p class="muted">Emits the verification webhook for the chosen outcome and moves the user into the matching state.</p>
+<form method="post" action="/ui/actions/kyc">
+  <label for="userID">User</label>
+  <select id="userID" name="userID" required>
+    <option value="">Choose a user…</option>
+    {{range .Users}}
+      <option value="{{.User.ID}}" {{if eq .User.ID $.SelectedUserID}}selected{{end}}>{{.User.Email}} — {{.User.KYCState}}</option>
+    {{end}}
+  </select>
+
+  <label for="outcome">Outcome</label>
+  <select id="outcome" name="outcome" required>
+    {{range .Outcomes}}
+      <option value="{{.Value}}">{{.Label}}</option>
+    {{end}}
+  </select>
+
+  <label for="message">Message</label>
+  <input type="text" id="message" name="message" value="Sent from the MockGatehub admin UI">
+
+  <button type="submit">Send event</button>
+</form>
+{{end}}

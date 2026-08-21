@@ -79,6 +79,14 @@ func Middleware(validCredentials map[string]string) func(next http.Handler) http
 				return
 			}
 
+			// Skip authentication for the admin UI. It is a browser-facing
+			// developer tool with no credentials to present, and it drives the
+			// same operations the test-support endpoints expose.
+			if r.URL.Path == "/ui" || strings.HasPrefix(r.URL.Path, "/ui/") {
+				next.ServeHTTP(w, r)
+				return
+			}
+
 			// Skip authentication for public endpoint patterns
 			if matchesPublicPattern(r.URL.Path) {
 				next.ServeHTTP(w, r)

@@ -650,6 +650,40 @@ func (s *MemoryStorage) UpdateTransactionStatus(id string, status int) error {
 }
 
 // GetBalance retrieves balance for a user and currency
+// GetAllBalances returns the user's non-zero balances by currency.
+func (s *MemoryStorage) GetAllBalances(userID string) (map[string]float64, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make(map[string]float64)
+	for currency, amount := range s.balances[userID] {
+		if amount != 0 {
+			out[currency] = amount
+		}
+	}
+	return out, nil
+}
+
+// ListUsers returns every known user, ordered by creation time so a listing is
+// stable between calls.
+func (s *MemoryStorage) ListUsers() ([]*models.User, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make([]*models.User, 0, len(s.users))
+	for _, user := range s.users {
+		out = append(out, user)
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
 func (s *MemoryStorage) GetBalance(userID, currency string) (float64, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

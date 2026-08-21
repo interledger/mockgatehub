@@ -70,6 +70,9 @@ type TestContext struct {
 
 	// withdrawalID is the withdrawal a scenario is settling.
 	withdrawalID string
+
+	// lastRedirect is where the admin UI last sent the browser.
+	lastRedirect string
 }
 
 // Reset initializes the test context to a clean state
@@ -112,4 +115,5 @@ func (tc *TestContext) Reset() {
 	tc.simulatedTxIDs = nil
 	tc.statementPeriod = time.Time{}
 	tc.withdrawalID = ""
+	tc.lastRedirect = ""
 }

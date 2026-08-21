@@ -51,6 +51,9 @@ type Storage interface {
 	StoreRawCardTransaction(txID string, data json.RawMessage) error
 	GetRawCardTransaction(txID string) (json.RawMessage, error)
 
+	// ListUsers enumerates known users for the admin views.
+	ListUsers() ([]*models.User, error)
+
 	// Card PINs. Stored separately from the card because a PIN is set through
 	// its own encrypted endpoint, not as part of the card object.
 	SetCardPIN(cardID string, pin string) error
@@ -76,6 +79,9 @@ type Storage interface {
 
 	// Balances (per user, per currency)
 	GetBalance(userID, currency string) (float64, error)
+	// GetAllBalances returns every non-zero balance the user holds, so a view
+	// can show an account at a glance without probing each currency.
+	GetAllBalances(userID string) (map[string]float64, error)
 	AddBalance(userID, currency string, amount float64) error
 	DeductBalance(userID, currency string, amount float64) error
 

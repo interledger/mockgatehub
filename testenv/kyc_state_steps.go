@@ -26,9 +26,11 @@ func (tc *TestContext) submitKYCFormWithOutcome(outcome string) error {
 }
 
 // setKYCStateQuietly arranges a starting state without the arrangement itself
-// looking like an event to the consumer.
+// looking like an event to the consumer. A risk level is set alongside it: a
+// user the provider has ruled on always carries one, so arranging the state
+// without it would produce a user the real flows could never produce.
 func (tc *TestContext) setKYCStateQuietly(state string) error {
-	body := map[string]string{"kyc_state": state}
+	body := map[string]string{"kyc_state": state, "risk_level": "low"}
 	_, err := tc.request(http.MethodPut, "/admin/users/"+tc.userID+"/kyc-state", body, nil)
 	return err
 }

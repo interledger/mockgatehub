@@ -70,6 +70,15 @@ func (h *Handler) ListCardTxScenarios(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// SimulateCardTransactionResult describes what a simulation produced.
+type SimulateCardTransactionResult struct {
+	Scenario      string
+	Event         string
+	TransactionID string
+	// Transaction is the stored payload, verbatim.
+	Transaction json.RawMessage
+}
+
 // SimulateCardTransaction creates a card transaction from a catalogue scenario
 // and emits the corresponding webhook.
 // POST /admin/card-transactions/simulate
@@ -80,38 +89,46 @@ func (h *Handler) SimulateCardTransaction(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if req.UserID == "" {
-		h.sendError(w, http.StatusBadRequest, "userId is required")
-		return
-	}
-	if req.CardID == "" {
-		h.sendError(w, http.StatusBadRequest, "cardId is required")
-		return
-	}
-	if req.Scenario == "" {
-		h.sendError(w, http.StatusBadRequest, "scenario is required; GET /admin/card-transactions/scenarios lists the available keys")
+	result, err := h.simulateCardTransaction(req)
+	if err != nil {
+		h.sendAPIError(w, err)
 		return
 	}
 
+	h.sendJSON(w, http.StatusCreated, map[string]interface{}{
+		"scenario":      result.Scenario,
+		"event":         result.Event,
+		"transactionId": result.TransactionID,
+		"transaction":   result.Transaction,
+	})
+}
+
+// simulateCardTransaction is the shared implementation behind both the
+// simulation endpoint and the admin UI, so the two cannot drift apart.
+func (h *Handler) simulateCardTransaction(req SimulateCardTransactionRequest) (*SimulateCardTransactionResult, error) {
+	if req.UserID == "" {
+		return nil, badRequest("userId is required")
+	}
+	if req.CardID == "" {
+		return nil, badRequest("cardId is required")
+	}
+	if req.Scenario == "" {
+		return nil, badRequest("scenario is required; GET /admin/card-transactions/scenarios lists the available keys")
+	}
+
 	if _, err := h.store.GetUser(req.UserID); err != nil {
-		h.sendError(w, http.StatusNotFound, "user not found")
-		return
+		return nil, notFound("user not found")
 	}
 	card, err := h.store.GetCard(req.CardID)
 	if err != nil {
-		h.sendError(w, http.StatusNotFound, "card not found")
-		return
+		return nil, notFound("card not found")
 	}
 
 	scenario, ok := findCardScenario(req.Scenario)
 	if !ok {
 		// Name the valid options rather than making the caller guess.
-		h.sendJSON(w, http.StatusBadRequest, map[string]interface{}{
-			"error":          http.StatusText(http.StatusBadRequest),
-			"message":        "unknown scenario " + req.Scenario,
-			"validScenarios": scenarioKeys(),
-		})
-		return
+		return nil, badRequest("unknown scenario " + req.Scenario).
+			withDetails(map[string]interface{}{"validScenarios": scenarioKeys()})
 	}
 
 	event := req.Event
@@ -119,34 +136,29 @@ func (h *Handler) SimulateCardTransaction(w http.ResponseWriter, r *http.Request
 		event = consts.WebhookEventCardTransactionAuthorization
 	}
 	if event != consts.WebhookEventCardTransactionAuthorization && event != consts.WebhookEventCardTransaction {
-		h.sendError(w, http.StatusBadRequest,
-			"unsupported event "+event+"; use "+consts.WebhookEventCardTransactionAuthorization+" or "+consts.WebhookEventCardTransaction)
-		return
+		return nil, badRequest("unsupported event " + event + "; use " +
+			consts.WebhookEventCardTransactionAuthorization + " or " + consts.WebhookEventCardTransaction)
 	}
 
 	seqID, err := h.store.NextCardTransactionSeqID()
 	if err != nil {
 		logger.Error("failed to allocate card transaction sequence id", zap.Error(err))
-		h.sendError(w, http.StatusInternalServerError, "failed to allocate transaction id")
-		return
+		return nil, internalErr("failed to allocate transaction id")
 	}
 
 	tx, raw, txID, err := materialiseCardTransaction(scenario.Payload, req.Overrides, seqID, req.CardID)
 	if err != nil {
 		logger.Error("failed to materialise card transaction", zap.String("scenario", scenario.Key), zap.Error(err))
-		h.sendError(w, http.StatusInternalServerError, "failed to build transaction from scenario")
-		return
+		return nil, internalErr("failed to build transaction from scenario")
 	}
 
 	if err := h.store.CreateCardTransaction(tx); err != nil {
 		logger.Error("failed to create simulated card transaction", zap.Error(err))
-		h.sendError(w, http.StatusInternalServerError, "failed to create transaction")
-		return
+		return nil, internalErr("failed to create transaction")
 	}
 	if err := h.store.StoreRawCardTransaction(txID, raw); err != nil {
 		logger.Error("failed to store raw simulated card transaction", zap.Error(err))
-		h.sendError(w, http.StatusInternalServerError, "failed to store transaction payload")
-		return
+		return nil, internalErr("failed to store transaction payload")
 	}
 	if err := h.store.AddCardTransactionIndex(req.CardID, txID); err != nil {
 		logger.Warn("failed to index simulated card transaction", zap.String("card_id", req.CardID), zap.Error(err))
@@ -164,12 +176,12 @@ func (h *Handler) SimulateCardTransaction(w http.ResponseWriter, r *http.Request
 		zap.String("card_status", card.Status),
 	)
 
-	h.sendJSON(w, http.StatusCreated, map[string]interface{}{
-		"scenario":      scenario.Key,
-		"event":         event,
-		"transactionId": txID,
-		"transaction":   raw,
-	})
+	return &SimulateCardTransactionResult{
+		Scenario:      scenario.Key,
+		Event:         event,
+		TransactionID: txID,
+		Transaction:   raw,
+	}, nil
 }
 
 // emitCardTransactionWebhook sends the webhook for a simulated transaction.

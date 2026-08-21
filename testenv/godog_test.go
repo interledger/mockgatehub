@@ -227,6 +227,22 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the stored transaction reports txStatus "([^"]*)"$`, tc.storedTransactionStatusIs)
 	ctx.Step(`^the error names the valid scenarios$`, tc.errorNamesTheValidScenarios)
 
+	// Admin UI steps
+	ctx.Step(`^I browse to "([^"]*)"$`, tc.browseTo)
+	ctx.Step(`^I browse to the user detail page$`, tc.browseToUserDetail)
+	ctx.Step(`^I browse to the card transaction form for the user$`, tc.browseToCardTxFormForUser)
+	ctx.Step(`^the response is an HTML page$`, tc.responseIsHTML)
+	ctx.Step(`^the page shows "([^"]*)"$`, tc.pageShows)
+	ctx.Step(`^the page does not show "([^"]*)"$`, tc.pageDoesNotShow)
+	ctx.Step(`^the page offers every card transaction scenario$`, tc.pageOffersEveryCardScenario)
+	ctx.Step(`^I submit the UI KYC action with outcome "([^"]*)"$`, tc.submitUIKYCAction)
+	ctx.Step(`^I submit the UI card transaction for scenario "([^"]*)"$`, tc.submitUICardTransaction)
+	ctx.Step(`^I submit the UI withdrawal settlement "([^"]*)"$`, tc.submitUIWithdrawalSettlement)
+	ctx.Step(`^the UI redirects reporting success$`, tc.uiRedirectedWithSuccess)
+	ctx.Step(`^the UI redirects reporting failure$`, tc.uiRedirectedWithFailure)
+	ctx.Step(`^the redirect reports "([^"]*)"$`, tc.uiRedirectReports)
+	ctx.Step(`^I follow the UI redirect$`, tc.followUIRedirect)
+
 	// Withdrawal settlement steps
 	ctx.Step(`^requests go to the asynchronous withdrawals instance$`, tc.usingTheAsyncWithdrawalsInstance)
 	ctx.Step(`^I request a withdrawal of "([^"]*)" ([A-Z]+)$`, tc.requestWithdrawal)

@@ -229,6 +229,16 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		r.Post("/transactions", h.CreateTransaction)
 		r.Get("/transactions/{txID}", h.GetTransaction)
 	})
+	r.Route("/ui", func(r chi.Router) {
+		logger.Info("REGISTERING /ui ROUTES")
+		r.Get("/", h.UIDashboard)
+		r.Get("/users/{userID}", h.UIUserDetail)
+		r.Get("/actions/kyc", h.UIKYCForm)
+		r.Post("/actions/kyc", h.UIKYCAction)
+		r.Get("/actions/card-transaction", h.UICardTxForm)
+		r.Post("/actions/card-transaction", h.UICardTxAction)
+		r.Post("/actions/withdrawal/settle", h.UIWithdrawalSettle)
+	})
 	r.Route("/statement/v1", func(r chi.Router) {
 		logger.Info("REGISTERING /statement/v1 ROUTES")
 		r.Get("/statements/account-confirmation/{walletAddress}", h.GetAccountConfirmation)
