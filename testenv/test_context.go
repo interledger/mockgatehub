@@ -52,6 +52,17 @@ type TestContext struct {
 	// recordedBalances holds balance snapshots taken mid-scenario so later
 	// steps can assert on the change rather than on an absolute figure.
 	recordedBalances map[string]float64
+
+	// Card token / crypto state
+	keys            *callerKeys
+	cardToken       string
+	cardTokenHref   string
+	cardTokenMethod string
+	decryptedPAN    string
+
+	// Card transaction simulation state
+	simulatedTxID  string
+	simulatedTxIDs []string
 }
 
 // Reset initializes the test context to a clean state
@@ -85,4 +96,11 @@ func (tc *TestContext) Reset() {
 	tc.lastError = nil
 	tc.savedRates = make(map[string]float64)
 	tc.recordedBalances = nil
+	tc.keys = nil
+	tc.cardToken = ""
+	tc.cardTokenHref = ""
+	tc.cardTokenMethod = ""
+	tc.decryptedPAN = ""
+	tc.simulatedTxID = ""
+	tc.simulatedTxIDs = nil
 }

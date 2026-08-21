@@ -11,11 +11,23 @@ import (
 	"github.com/cucumber/godog/colors"
 )
 
+// defaultTags excludes scenarios that are deliberately not runnable.
+const defaultTags = "~@skip && ~@stubbed"
+
+// tagFilter allows narrowing a run while developing, e.g.
+// GODOG_TAGS='@cards' go test -tags e2e ./testenv/ -run TestFeatures
+func tagFilter() string {
+	if custom := os.Getenv("GODOG_TAGS"); custom != "" {
+		return defaultTags + " && " + custom
+	}
+	return defaultTags
+}
+
 var opts = godog.Options{
 	Output: colors.Colored(os.Stdout),
 	Format: "progress",
 	Paths:  []string{"../features"},
-	Tags:   "~@skip && ~@stubbed",
+	Tags:   tagFilter(),
 	// Without Strict, a scenario whose steps have no matching definition is
 	// reported as undefined and the suite still exits 0 — a new scenario could
 	// look green while never running. Treat undefined and pending as failures.
@@ -176,6 +188,43 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the response returns the updated limits array$`, tc.responseReturnsUpdatedLimits)
 	ctx.Step(`^the dailyOverall limit is changed to (\d+)$`, tc.dailyOverallLimitChanged)
 	ctx.Step(`^the card no longer appears in list cards query \(filtered out\)$`, tc.cardNotInListCardsQuery)
+
+	// Card token, card data and PIN steps
+	ctx.Step(`^the caller has generated an RSA key pair$`, tc.callerGeneratesRSAKeyPair)
+	ctx.Step(`^I POST /cards/v1/token/([a-z-]+) with the cardId and the caller's public key$`, tc.postCardTokenWithPublicKey)
+	ctx.Step(`^the token link is an absolute URL$`, tc.tokenLinkIsAbsolute)
+	ctx.Step(`^the token link path is "([^"]*)"$`, tc.tokenLinkPathIs)
+	ctx.Step(`^the token link method is "([^"]*)"$`, tc.tokenLinkMethodIs)
+	ctx.Step(`^the browser follows the card-data link with "([^"]*)"$`, tc.browserFollowsTheCardDataLink)
+	ctx.Step(`^the browser follows the pin link with "([^"]*)"$`, tc.browserFollowsThePinLink)
+	ctx.Step(`^the payload decrypts with the caller's private key to card details$`, tc.payloadDecryptsToCardDetails)
+	ctx.Step(`^the decrypted card number matches the previous read$`, tc.decryptedPANMatchesPrevious)
+	ctx.Step(`^no card data is disclosed$`, tc.noCardDataIsDisclosed)
+	ctx.Step(`^the caller sets the card PIN to "([^"]*)"$`, tc.callerSetsTheCardPIN)
+	ctx.Step(`^the caller reads the card PIN$`, tc.callerReadsTheCardPIN)
+	ctx.Step(`^the decrypted PIN is "([^"]*)"$`, tc.decryptedPINIs)
+	ctx.Step(`^the decrypted PIN looks like a PIN$`, tc.decryptedPINLooksLikeAPIN)
+
+	// Card transaction catalogue and simulation steps
+	ctx.Step(`^I GET the card transaction scenario catalogue$`, tc.getCardTxScenarioCatalogue)
+	ctx.Step(`^the catalogue lists (\d+) scenarios$`, tc.catalogueListsScenarios)
+	ctx.Step(`^the catalogue includes the scenario "([^"]*)"$`, tc.catalogueIncludesScenario)
+	ctx.Step(`^I simulate the card transaction scenario "([^"]*)"$`, tc.simulateCardTransaction)
+	ctx.Step(`^I simulate the card transaction scenario "([^"]*)" emitting "([^"]*)"$`, tc.simulateCardTransactionWithEvent)
+	ctx.Step(`^I simulate (\d+) card transactions of scenario "([^"]*)"$`, tc.simulateNCardTransactions)
+	ctx.Step(`^the simulated transaction has a numeric id and cardId$`, tc.simulatedTransactionHasNumericIdentifiers)
+	ctx.Step(`^I GET the card transactions page "([^"]*)"$`, tc.getCardTransactionsPage)
+	ctx.Step(`^the listing contains the simulated transaction with its unmodelled fields intact$`, tc.simulatedTransactionAppearsInListingWithUnmodelledFields)
+	ctx.Step(`^the listing holds (\d+) of (\d+) transactions across (\d+) pages$`, tc.listingHoldsPage)
+	ctx.Step(`^I set the simulated transaction status to "([^"]*)"$`, tc.setSimulatedTransactionStatus)
+	ctx.Step(`^the stored transaction reports txStatus "([^"]*)"$`, tc.storedTransactionStatusIs)
+	ctx.Step(`^the error names the valid scenarios$`, tc.errorNamesTheValidScenarios)
+
+	// Webhook assertions
+	ctx.Step(`^the webhook sink is empty$`, tc.clearReceivedWebhooks)
+	ctx.Step(`^a "([^"]*)" webhook is delivered$`, tc.webhookIsDelivered)
+	ctx.Step(`^the "([^"]*)" webhook carries the full transaction$`, tc.cardTransactionWebhookCarriesTheTransaction)
+	ctx.Step(`^a "cards.card.created" webhook reports the assigned identifiers$`, tc.cardCreatedWebhookCarriesTheIdentifiers)
 
 	// Transaction steps
 	ctx.Step(`^a managed user with at least one wallet address$`, tc.managedUserWithWalletAddress)

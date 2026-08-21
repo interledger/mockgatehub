@@ -210,6 +210,13 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 	r.Get("/admin/users/{userID}/fees", h.GetUserFees)
 	r.Put("/admin/users/{userID}/fees", h.SetUserFees)
 	r.Delete("/admin/users/{userID}/fees", h.ClearUserFees)
+	// Test-support webhook sink: lets a harness assert on what was delivered.
+	r.Post("/test-webhook", h.TestWebhookSink)
+	r.Get("/admin/received-webhooks", h.ListReceivedWebhooks)
+	r.Delete("/admin/received-webhooks", h.ClearReceivedWebhooks)
+	r.Get("/admin/card-transactions/scenarios", h.ListCardTxScenarios)
+	r.Post("/admin/card-transactions/simulate", h.SimulateCardTransaction)
+	r.Post("/admin/card-transactions/{txID}/status", h.SetCardTransactionStatus)
 	r.Route("/core/v1", func(r chi.Router) {
 		logger.Info("REGISTERING /core/v1 ROUTES")
 		r.Get("/users/{userID}", h.GetUserWallets)
@@ -254,8 +261,17 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		r.Put("/cards/{cardID}/limits", h.UpdateCardLimits)
 		r.Post("/cards/{cardID}/limits", h.UpdateCardLimits)
 
-		// Card tokenization and security
+		// Card tokenization and security. The {tokenType} wildcard serves
+		// card-data, pin and pin-change; consumers call all three.
 		r.Post("/token/{tokenType}", h.GetCardToken)
+
+		// Browser-facing endpoints exchanged for the token above. Excluded
+		// from HMAC auth in auth.PublicEndpoints, since the browser holds only
+		// the token.
+		r.Get("/token/card-data/data", h.GetCardData)
+		r.Get("/token/pin/data", h.GetCardPin)
+		r.Post("/token/pin/data", h.SetCardPin)
+		r.Get("/token/pin/public-key", h.GetCardPinPublicKey)
 
 		// Card transactions
 		r.Post("/transactions", h.CreateCardTransaction)

@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"mockgatehub/internal/models"
@@ -19,6 +21,9 @@ type MemoryStorage struct {
 	accounts               map[string]*models.Account                   // accountID -> Account
 	cards                  map[string]*models.Card                      // cardID -> Card
 	cardTransactions       map[string]*models.CardTransaction           // transactionID -> CardTransaction
+	rawCardTransactions    map[string]json.RawMessage                   // transactionID -> verbatim JSON payload
+	cardPINs               map[string]string                            // cardID -> PIN
+	cardTxSeqID            atomic.Int64                                 // monotonic card transaction sequence id
 	cardTransactionsByCard map[string][]string                          // cardID -> transactionIDs
 	cardLimits             map[string][]models.CardLimit                // cardID -> limits
 	customerAddresses      map[string][]*models.CustomerDeliveryAddress // customerID -> addresses
@@ -39,6 +44,8 @@ func NewMemoryStorage() *MemoryStorage {
 		accounts:               make(map[string]*models.Account),
 		cards:                  make(map[string]*models.Card),
 		cardTransactions:       make(map[string]*models.CardTransaction),
+		rawCardTransactions:    make(map[string]json.RawMessage),
+		cardPINs:               make(map[string]string),
 		cardTransactionsByCard: make(map[string][]string),
 		cardLimits:             make(map[string][]models.CardLimit),
 		customerAddresses:      make(map[string][]*models.CustomerDeliveryAddress),
@@ -408,6 +415,94 @@ func (s *MemoryStorage) GetCardTransaction(id string) (*models.CardTransaction, 
 	}
 
 	return tx, nil
+}
+
+// UpdateCardTransactionStatus changes a transaction's txStatus. The raw payload
+// is updated in step with the typed record; otherwise a reader that prefers the
+// raw JSON would keep seeing the old status.
+func (s *MemoryStorage) UpdateCardTransactionStatus(txID string, status string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	tx, exists := s.cardTransactions[txID]
+	if !exists {
+		return fmt.Errorf("card transaction not found")
+	}
+	tx.TxStatus = &status
+
+	if raw, ok := s.rawCardTransactions[txID]; ok {
+		var m map[string]interface{}
+		if err := json.Unmarshal(raw, &m); err == nil {
+			m["txStatus"] = status
+			if updated, err := json.Marshal(m); err == nil {
+				s.rawCardTransactions[txID] = updated
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *MemoryStorage) StoreRawCardTransaction(txID string, data json.RawMessage) error {
+	if txID == "" {
+		return fmt.Errorf("txID is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Copy: the caller's slice may be reused or mutated after this returns.
+	cloned := make([]byte, len(data))
+	copy(cloned, data)
+	s.rawCardTransactions[txID] = cloned
+	return nil
+}
+
+func (s *MemoryStorage) GetRawCardTransaction(txID string) (json.RawMessage, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	data, ok := s.rawCardTransactions[txID]
+	if !ok {
+		return nil, fmt.Errorf("raw card transaction not found")
+	}
+	cloned := make([]byte, len(data))
+	copy(cloned, data)
+	return cloned, nil
+}
+
+func (s *MemoryStorage) SetCardPIN(cardID string, pin string) error {
+	if cardID == "" {
+		return fmt.Errorf("cardID is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.cards[cardID]; !exists {
+		return fmt.Errorf("card not found")
+	}
+	s.cardPINs[cardID] = pin
+	return nil
+}
+
+func (s *MemoryStorage) GetCardPIN(cardID string) (string, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	pin, ok := s.cardPINs[cardID]
+	if !ok {
+		return "", fmt.Errorf("card pin not set")
+	}
+	return pin, nil
+}
+
+func (s *MemoryStorage) NextCardTransactionSeqID() (int, error) {
+	return int(s.cardTxSeqID.Add(1)), nil
+}
+
+func (s *MemoryStorage) PeekCardTransactionSeqID() (int, error) {
+	return int(s.cardTxSeqID.Load()), nil
 }
 
 func (s *MemoryStorage) AddCardTransactionIndex(cardID string, transactionID string) error {

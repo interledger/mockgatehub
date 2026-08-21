@@ -539,6 +539,102 @@ func (s *RedisStorage) GetCardTransaction(id string) (*models.CardTransaction, e
 	return &tx, nil
 }
 
+// UpdateCardTransactionStatus changes a transaction's txStatus, keeping the raw
+// payload in step so a reader that prefers the raw JSON sees the new status too.
+func (s *RedisStorage) UpdateCardTransactionStatus(txID string, status string) error {
+	tx, err := s.GetCardTransaction(txID)
+	if err != nil {
+		return err
+	}
+	tx.TxStatus = &status
+
+	data, err := json.Marshal(tx)
+	if err != nil {
+		return fmt.Errorf("failed to marshal card transaction: %w", err)
+	}
+	if err := s.client.Set(s.ctx, s.cardTransactionKey(txID), data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to update card transaction: %w", err)
+	}
+
+	if rawData, err := s.GetRawCardTransaction(txID); err == nil {
+		var m map[string]interface{}
+		if err := json.Unmarshal(rawData, &m); err == nil {
+			m["txStatus"] = status
+			if updated, err := json.Marshal(m); err == nil {
+				_ = s.StoreRawCardTransaction(txID, updated)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *RedisStorage) StoreRawCardTransaction(txID string, data json.RawMessage) error {
+	if txID == "" {
+		return errors.New("txID is required")
+	}
+	if err := s.client.Set(s.ctx, s.cardTransactionRawKey(txID), []byte(data), 0).Err(); err != nil {
+		return fmt.Errorf("failed to store raw card transaction: %w", err)
+	}
+	return nil
+}
+
+func (s *RedisStorage) GetRawCardTransaction(txID string) (json.RawMessage, error) {
+	data, err := s.client.Get(s.ctx, s.cardTransactionRawKey(txID)).Bytes()
+	if err == redis.Nil {
+		return nil, errors.New("raw card transaction not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get raw card transaction: %w", err)
+	}
+	return json.RawMessage(data), nil
+}
+
+func (s *RedisStorage) SetCardPIN(cardID string, pin string) error {
+	if cardID == "" {
+		return errors.New("cardID is required")
+	}
+	if _, err := s.GetCard(cardID); err != nil {
+		return err
+	}
+	if err := s.client.Set(s.ctx, s.cardPINKey(cardID), pin, 0).Err(); err != nil {
+		return fmt.Errorf("failed to store card pin: %w", err)
+	}
+	return nil
+}
+
+func (s *RedisStorage) GetCardPIN(cardID string) (string, error) {
+	pin, err := s.client.Get(s.ctx, s.cardPINKey(cardID)).Result()
+	if err == redis.Nil {
+		return "", errors.New("card pin not set")
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get card pin: %w", err)
+	}
+	return pin, nil
+}
+
+// NextCardTransactionSeqID atomically increments the shared counter, so
+// concurrent simulations never receive the same sequence id.
+func (s *RedisStorage) NextCardTransactionSeqID() (int, error) {
+	next, err := s.client.Incr(s.ctx, s.cardTransactionSeqKey()).Result()
+	if err != nil {
+		return 0, fmt.Errorf("failed to increment card transaction sequence: %w", err)
+	}
+	return int(next), nil
+}
+
+func (s *RedisStorage) PeekCardTransactionSeqID() (int, error) {
+	val, err := s.client.Get(s.ctx, s.cardTransactionSeqKey()).Int64()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to read card transaction sequence: %w", err)
+	}
+	return int(val), nil
+}
+
 func (s *RedisStorage) AddCardTransactionIndex(cardID string, transactionID string) error {
 	if cardID == "" || transactionID == "" {
 		return errors.New("cardID and transactionID are required")
@@ -945,6 +1041,18 @@ func (s *RedisStorage) cardTransactionKey(id string) string {
 
 func (s *RedisStorage) cardTransactionsKey(cardID string) string {
 	return fmt.Sprintf("card:%s:transactions", cardID)
+}
+
+func (s *RedisStorage) cardTransactionRawKey(id string) string {
+	return fmt.Sprintf("cardtx:%s:raw", id)
+}
+
+func (s *RedisStorage) cardTransactionSeqKey() string {
+	return "cardtx:seq"
+}
+
+func (s *RedisStorage) cardPINKey(cardID string) string {
+	return fmt.Sprintf("card:%s:pin", cardID)
 }
 
 func (s *RedisStorage) walletKey(address string) string {

@@ -147,8 +147,17 @@ const (
 	WebhookEventKYCActionRequired = "id.verification.action_required"
 	WebhookEventDepositCompleted  = "core.deposit.completed"
 	WebhookEventCardCreated       = "cards.card.created"
-	WebhookEventCardTransaction   = "cards.transaction.event"
-	WebhookEventCard3DS           = "cards.3ds.auth_3ds_confirmation"
+
+	// WebhookEventCardTransactionAuthorization carries a full card
+	// transaction under an "authorizationData" key. This is the event
+	// consumers listen for when they mirror card spend into their own ledger.
+	WebhookEventCardTransactionAuthorization = "cards.transaction.authorization"
+
+	// WebhookEventCardTransaction is the lighter notification-shaped event
+	// (title/body/ids). It does not carry the transaction itself, so a
+	// consumer that needs the amounts cannot use it.
+	WebhookEventCardTransaction = "cards.transaction.event"
+	WebhookEventCard3DS         = "cards.3ds.auth_3ds_confirmation"
 )
 
 // Card status values (GateHub Cards)

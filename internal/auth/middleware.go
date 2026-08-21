@@ -20,11 +20,26 @@ var PublicEndpoints = map[string]bool{
 	"/transaction/complete": true, // Iframe completion callback
 	"/api/user-currencies":  true, // Iframe currency lookup
 	"/admin/fees":           true, // Admin fee configuration (test support)
+
+	// Card data and PIN are fetched straight from the browser, which holds a
+	// short-lived token and none of the HMAC credentials. Real GateHub
+	// authenticates these with the token alone, so HMAC must be skipped.
+	"/cards/v1/token/card-data/data": true,
+	"/cards/v1/token/pin/data":       true,
+	"/cards/v1/token/pin/public-key": true,
+	// Webhook sink and its inspection endpoints. The sink is called by our own
+	// webhook worker, which signs with the webhook secret rather than the HMAC
+	// credentials, so it authenticates by signature instead.
+	"/test-webhook":                      true,
+	"/admin/received-webhooks":           true,
+	"/admin/card-transactions/scenarios": true, // Card transaction catalogue (test support)
+	"/admin/card-transactions/simulate":  true, // Card transaction simulation (test support)
 }
 
 // PublicEndpointPatterns are path patterns (with placeholders) that don't require authentication
 var PublicEndpointPatterns = []string{
-	"/admin/users/*/fees", // User-specific fee configuration (test support)
+	"/admin/users/*/fees",               // User-specific fee configuration (test support)
+	"/admin/card-transactions/*/status", // Card transaction status transitions (test support)
 }
 
 // matchesPublicPattern checks if a path matches any of the public endpoint patterns

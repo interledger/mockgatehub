@@ -177,7 +177,10 @@ type CardTransactionsResponse struct {
 }
 
 type CreateCardTransactionArgs struct {
+	// CardID is the card's UUID. CardGUID is accepted as an alias so payloads
+	// written against either naming work.
 	CardID          string  `json:"cardId"`
+	CardGUID        string  `json:"cardGuid"`
 	Amount          string  `json:"amount"`
 	Currency        string  `json:"currency"`
 	Type            int     `json:"type"`
@@ -186,7 +189,12 @@ type CreateCardTransactionArgs struct {
 	MerchantCountry *string `json:"merchantCountry,omitempty"`
 }
 
+// CardTransaction mirrors the card transaction object GateHub returns. Field
+// names and casing match the wire format consumers parse.
 type CardTransaction struct {
+	// ID is GateHub's monotonic integer transaction id, separate from the
+	// TransactionID UUID. Consumers key off it, so it must be populated.
+	ID                        *int    `json:"id"`
 	VaultID                   *int    `json:"vaultId"`
 	CardID                    *int    `json:"cardId"`
 	TransactionID             string  `json:"transactionId"`
@@ -224,6 +232,19 @@ type CardTransaction struct {
 	TransactionClassification *string `json:"transactionClassification"`
 	SpendExchangeRate         *string `json:"spendExchangeRate"`
 	SpendCurrency             *string `json:"spendCurrency"`
+
+	// MastercardConversion carries the scheme conversion rate on a foreign
+	// currency transaction. Note the lower-case JSON name: that is what
+	// consumers read, regardless of how the upstream fixtures spell it.
+	MastercardConversion *MastercardConversion `json:"mastercardConversion"`
+}
+
+// MastercardConversion is the scheme FX detail attached to a converted
+// card transaction.
+type MastercardConversion struct {
+	ConvRate        *string `json:"convRate"`
+	RefConRate      *string `json:"refConRate"`
+	RefConfRateDiff *string `json:"refConfRateDiff"`
 }
 
 // 3DS-related models
