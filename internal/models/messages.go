@@ -4,17 +4,24 @@ import "time"
 
 // GetUserResponse represents the user state response from /id/v1/users/{userID}.
 type GetUserResponse struct {
-	ID            string             `json:"id"`
-	Email         string             `json:"email"`
-	Activated     bool               `json:"activated"`
-	Managed       bool               `json:"managed"`
-	Role          string             `json:"role"`
-	Features      []string           `json:"features"`
-	KYCState      string             `json:"kyc_state"`
-	RiskLevel     string             `json:"risk_level"`
-	CreatedAt     time.Time          `json:"created_at"`
-	Profile       UserProfile        `json:"profile"`
-	Verifications []UserVerification `json:"verifications"`
+	// ID and UUID carry the same value. The provider names this field "uuid";
+	// this service has always emitted "id". Both are sent so neither spelling
+	// of a consumer breaks.
+	ID   string `json:"id"`
+	UUID string `json:"uuid"`
+
+	Email     string   `json:"email"`
+	Activated bool     `json:"activated"`
+	Managed   bool     `json:"managed"`
+	Role      string   `json:"role"`
+	Features  []string `json:"features"`
+	KYCState  string   `json:"kyc_state"`
+	RiskLevel string   `json:"risk_level"`
+
+	IsProfileCreationDisabled bool               `json:"is_profile_creation_disabled"`
+	CreatedAt                 time.Time          `json:"created_at"`
+	Profile                   UserProfile        `json:"profile"`
+	Verifications             []UserVerification `json:"verifications"`
 }
 
 // UserProfile represents the profile payload returned by GateHub user state.
@@ -42,9 +49,12 @@ type UserProfile struct {
 
 // UserVerification represents a verification entry in the user response.
 type UserVerification struct {
-	UUID         string `json:"uuid"`
-	Status       int    `json:"status"`
-	State        int    `json:"state"`
+	UUID   string `json:"uuid"`
+	Status int    `json:"status"`
+	State  int    `json:"state"`
+	// Provider is the human-readable provider name; ProviderType is its
+	// machine identifier. Consumers read one or the other.
+	Provider     string `json:"provider"`
 	ProviderType string `json:"provider_type"`
 }
 

@@ -1,3 +1,4 @@
+@transactions
 Feature: Transaction handling
   As an application consuming MockGatehub
   I want deposits and hosted transfers to complete predictably

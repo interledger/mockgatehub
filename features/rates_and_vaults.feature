@@ -1,3 +1,4 @@
+@rates
 Feature: Rates and vault metadata
   As a client application
   I want to retrieve exchange rates and vault details

@@ -1,3 +1,4 @@
+@signature
 Feature: HMAC signature authentication
   As a wallet integrator
   I want MockGatehub to verify request signatures using the real Gatehub format

@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 
+	"mockgatehub/internal/auth"
 	"mockgatehub/internal/consts"
 	"mockgatehub/internal/logger"
 	"mockgatehub/internal/models"
@@ -35,14 +36,11 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build response with verifications array matching production GateHub API
-	// Verification status should reflect actual KYC state: only status=1 if accepted
-	verificationStatus := 0
-	if user.KYCState == consts.KYCStateAccepted {
-		verificationStatus = 1
-	}
+	verificationStatus, verificationState := sumsubVerificationStatusState(user)
 
 	response := models.GetUserResponse{
 		ID:        user.ID,
+		UUID:      user.ID,
 		Email:     user.Email,
 		Activated: user.Activated,
 		Managed:   user.Managed,
@@ -50,7 +48,9 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 		Features:  user.Features,
 		KYCState:  user.KYCState,
 		RiskLevel: user.RiskLevel,
-		CreatedAt: user.CreatedAt,
+
+		IsProfileCreationDisabled: user.IsProfileCreationDisabled,
+		CreatedAt:                 user.CreatedAt,
 		Profile: models.UserProfile{
 			UUID:               user.ID,
 			BirthDay:           user.BirthDay,
@@ -76,7 +76,8 @@ func (h *Handler) GetUser(w http.ResponseWriter, r *http.Request) {
 			{
 				UUID:         "mock-verification-uuid",
 				Status:       verificationStatus,
-				State:        1,
+				State:        verificationState,
+				Provider:     "Sumsub",
 				ProviderType: "sumsub",
 			},
 		},
@@ -331,6 +332,8 @@ func (h *Handler) KYCIframeSubmit(w http.ResponseWriter, r *http.Request) {
 		zap.String("user_email", user.Email),
 		zap.String("current_kyc_state", user.KYCState))
 
+	previousKYCState := user.KYCState
+
 	// Parse KYC form data
 	user.FirstName = r.FormValue("first_name")
 	user.LastName = r.FormValue("last_name")
@@ -364,17 +367,30 @@ func (h *Handler) KYCIframeSubmit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	user.KYCState = consts.KYCStateAccepted
+	// The outcome is selectable so a consumer can be exercised against a
+	// rejection or a request for more information, not only the happy path.
+	// Absent, it stays accepted, which is what every existing caller expects.
+	kycOutcome := r.FormValue("kyc_outcome")
+	if kycOutcome == "" {
+		kycOutcome = consts.KYCStateAccepted
+	}
+
 	riskLevel := r.FormValue("risk_level")
 	if riskLevel == "" {
 		riskLevel = consts.RiskLevelLow
 	}
 	user.RiskLevel = riskLevel
 
-	logger.Info("persisting kyc acceptance to storage",
+	webhookEvent, responseMessage, err := applyKYCOutcome(user, kycOutcome)
+	if err != nil {
+		h.sendError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	logger.Info("persisting kyc outcome to storage",
 		zap.String("user_id", userID),
 		zap.String("new_kyc_state", user.KYCState),
-		zap.String("user_email", user.Email))
+		zap.String("webhook_event", webhookEvent))
 
 	if err := h.store.UpdateUser(user); err != nil {
 		logger.Error("failed to update user after kyc submission", zap.String("user_id", userID), zap.Error(err))
@@ -386,13 +402,17 @@ func (h *Handler) KYCIframeSubmit(w http.ResponseWriter, r *http.Request) {
 		zap.String("user_id", userID),
 		zap.String("kyc_state", user.KYCState))
 
-	go h.webhookManager.SendAsync(consts.WebhookEventKYCAccepted, userID, map[string]interface{}{
-		"message": "User verification accepted",
-	}, 2.0)
+	// A user coming back from a resubmission request is driven onward by the
+	// consumer itself, so an accepted webhook here would race that transition.
+	if !shouldSkipAcceptedWebhook(previousKYCState, webhookEvent) {
+		h.webhookManager.SendAsync(webhookEvent, userID, map[string]interface{}{
+			"message": responseMessage,
+		}, 2.0)
+	}
 
 	h.sendJSON(w, http.StatusOK, map[string]string{
-		"status":  consts.KYCStateAccepted,
-		"message": "KYC verification completed successfully",
+		"status":  user.KYCState,
+		"message": responseMessage,
 	})
 }
 
@@ -452,7 +472,19 @@ func (h *Handler) call2FAVerify(endpoint, code string) (bool, error) {
 		return false, fmt.Errorf("failed to marshal payload: %w", err)
 	}
 
-	resp, err := h.httpClient.Post(endpoint, "application/json", bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewReader(body))
+	if err != nil {
+		return false, fmt.Errorf("failed to build callback request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	// Sign the callback the same way webhooks are signed, so the integrator can
+	// tell a genuine verification request from an arbitrary POST to the same
+	// endpoint. Without this the receiver has no way to authenticate it.
+	req.Header.Set("X-GH-Webhook-Signature",
+		auth.GenerateGateHubWebhookSignature(string(body), h.config.WebhookSecret))
+
+	resp, err := h.httpClient.Do(req)
 	if err != nil {
 		return false, fmt.Errorf("callback request failed: %w", err)
 	}
@@ -470,4 +502,114 @@ func (h *Handler) call2FAVerify(endpoint, code string) (bool, error) {
 	}
 
 	return result.Success, nil
+}
+
+// applyKYCOutcome sets the user's KYC state from a requested outcome and reports
+// the webhook and message that go with it.
+func applyKYCOutcome(user *models.User, outcome string) (webhookEvent, responseMessage string, err error) {
+	switch outcome {
+	case consts.KYCStateAccepted:
+		user.KYCState = consts.KYCStateAccepted
+		return consts.WebhookEventKYCAccepted, "KYC verification completed successfully", nil
+	case consts.KYCStateRejected:
+		user.KYCState = consts.KYCStateRejected
+		return consts.WebhookEventKYCRejected, "KYC verification rejected", nil
+	case consts.KYCStateActionRequired:
+		user.KYCState = consts.KYCStateActionRequired
+		return consts.WebhookEventKYCActionRequired, "KYC verification requires additional action", nil
+	case consts.KYCStateResubmission:
+		user.KYCState = consts.KYCStateResubmission
+		return consts.WebhookEventKYCResubmission, "KYC documents must be resubmitted", nil
+	default:
+		return "", "", fmt.Errorf("unknown kyc_outcome %q: expected accepted, rejected, action_required or resubmission", outcome)
+	}
+}
+
+// shouldSkipAcceptedWebhook reports whether the accepted webhook must be
+// suppressed. Only a resubmission needs it: the consumer moves that user back
+// to pending itself, and an accepted webhook would race that transition.
+func shouldSkipAcceptedWebhook(previousKYCState, webhookEvent string) bool {
+	return webhookEvent == consts.WebhookEventKYCAccepted &&
+		previousKYCState == consts.KYCStateResubmission
+}
+
+// sumsubVerificationStatusState maps our KYC state onto the (status, state)
+// pair the provider reports. Consumers branch on these numbers, so a state
+// they do not recognise must not be reported as verified.
+func sumsubVerificationStatusState(user *models.User) (status, state int) {
+	switch user.KYCState {
+	case consts.KYCStateAccepted:
+		return 1, 1
+	case consts.KYCStateRejected:
+		return 2, 0
+	case consts.KYCStateResubmission:
+		return 10, 0
+	default:
+		return 0, 0
+	}
+}
+
+// SetUserKYCStateQuiet sets a user's KYC state without emitting a webhook.
+// This exists for test setup: it puts a user into a given state so a scenario
+// can start from there, without the state change itself being observable as an
+// event the consumer would react to.
+// PUT /admin/users/{userID}/kyc-state
+func (h *Handler) SetUserKYCStateQuiet(w http.ResponseWriter, r *http.Request) {
+	userID := chi.URLParam(r, "userID")
+	if userID == "" {
+		h.sendError(w, http.StatusBadRequest, "user ID is required")
+		return
+	}
+
+	var req struct {
+		KYCState  string `json:"kyc_state"`
+		RiskLevel string `json:"risk_level,omitempty"`
+	}
+	if err := h.decodeJSON(r, &req); err != nil {
+		h.sendError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.KYCState == "" {
+		h.sendError(w, http.StatusBadRequest, "kyc_state is required")
+		return
+	}
+	if !isKnownKYCState(req.KYCState) {
+		h.sendError(w, http.StatusBadRequest,
+			fmt.Sprintf("unknown kyc_state %q: expected accepted, rejected, action_required or resubmission", req.KYCState))
+		return
+	}
+
+	user, err := h.store.GetUser(userID)
+	if err != nil {
+		h.sendError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	user.KYCState = req.KYCState
+	if req.RiskLevel != "" {
+		user.RiskLevel = req.RiskLevel
+	}
+	if err := h.store.UpdateUser(user); err != nil {
+		logger.Error("failed to set user kyc state", zap.String("user_id", userID), zap.Error(err))
+		h.sendError(w, http.StatusInternalServerError, "failed to update user")
+		return
+	}
+
+	logger.Info("kyc state set without webhook",
+		zap.String("user_id", userID),
+		zap.String("kyc_state", user.KYCState),
+	)
+	h.sendJSON(w, http.StatusOK, map[string]string{
+		"kyc_state":  user.KYCState,
+		"risk_level": user.RiskLevel,
+	})
+}
+
+func isKnownKYCState(state string) bool {
+	switch state {
+	case consts.KYCStateAccepted, consts.KYCStateRejected,
+		consts.KYCStateActionRequired, consts.KYCStateResubmission:
+		return true
+	}
+	return false
 }

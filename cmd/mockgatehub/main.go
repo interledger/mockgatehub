@@ -210,6 +210,7 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 	r.Get("/admin/users/{userID}/fees", h.GetUserFees)
 	r.Put("/admin/users/{userID}/fees", h.SetUserFees)
 	r.Delete("/admin/users/{userID}/fees", h.ClearUserFees)
+	r.Put("/admin/users/{userID}/kyc-state", h.SetUserKYCStateQuiet)
 	// Test-support webhook sink: lets a harness assert on what was delivered.
 	r.Post("/test-webhook", h.TestWebhookSink)
 	r.Get("/admin/received-webhooks", h.ListReceivedWebhooks)

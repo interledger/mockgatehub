@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"mockgatehub/internal/auth"
+	"mockgatehub/internal/consts"
 	"mockgatehub/internal/logger"
 	"mockgatehub/internal/models"
 	"mockgatehub/internal/storage"
@@ -216,18 +217,28 @@ func normalizeVerificationPayload(eventType string, data any) map[string]interfa
 	converted := coerceToMap(data)
 
 	switch eventType {
-	case "id.verification.accepted", "id.verification.rejected", "id.verification.action_required":
+	case consts.WebhookEventKYCAccepted, consts.WebhookEventKYCRejected, consts.WebhookEventKYCActionRequired,
+		consts.WebhookEventKYCResubmission, consts.WebhookEventDocumentNoticeExpired, consts.WebhookEventDocumentNoticeWarning:
+
 		if _, ok := converted["gateway"]; !ok {
 			converted["gateway"] = "paywiser"
+		}
+
+		// The "verified" summary only makes sense for the three terminal
+		// verification outcomes. A resubmission request or a document notice is
+		// not a verdict, and synthesising one would tell the consumer the
+		// verification had concluded when it has not.
+		if !isVerificationOutcome(eventType) {
+			break
 		}
 		if _, ok := converted["verified"]; !ok {
 			short := "action_required"
 			status := 0
 			switch eventType {
-			case "id.verification.accepted":
+			case consts.WebhookEventKYCAccepted:
 				short = "accepted"
 				status = 1
-			case "id.verification.rejected":
+			case consts.WebhookEventKYCRejected:
 				short = "rejected"
 				status = 2
 			}
@@ -239,6 +250,16 @@ func normalizeVerificationPayload(eventType string, data any) map[string]interfa
 	}
 
 	return converted
+}
+
+// isVerificationOutcome reports whether the event states a final verification
+// verdict, as opposed to asking for more input or flagging a document.
+func isVerificationOutcome(eventType string) bool {
+	switch eventType {
+	case consts.WebhookEventKYCAccepted, consts.WebhookEventKYCRejected, consts.WebhookEventKYCActionRequired:
+		return true
+	}
+	return false
 }
 
 func coerceToMap(data any) map[string]interface{} {

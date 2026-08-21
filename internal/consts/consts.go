@@ -57,6 +57,10 @@ const (
 	KYCStateAccepted       = "accepted"
 	KYCStateRejected       = "rejected"
 	KYCStateActionRequired = "action_required"
+	// KYCStateResubmission means the provider has asked for documents to be
+	// supplied again. It is distinct from action_required: the consumer drives
+	// the user back through the flow itself.
+	KYCStateResubmission = "resubmission"
 )
 
 // Risk levels
@@ -145,8 +149,15 @@ const (
 	WebhookEventKYCAccepted       = "id.verification.accepted"
 	WebhookEventKYCRejected       = "id.verification.rejected"
 	WebhookEventKYCActionRequired = "id.verification.action_required"
-	WebhookEventDepositCompleted  = "core.deposit.completed"
-	WebhookEventCardCreated       = "cards.card.created"
+	WebhookEventKYCResubmission   = "id.verification.resubmission"
+
+	// Document notices are not verification outcomes: they tell the consumer an
+	// identity document is expiring or has expired while the user stays
+	// verified.
+	WebhookEventDocumentNoticeExpired = "id.document_notice.expired"
+	WebhookEventDocumentNoticeWarning = "id.document_notice.warning"
+	WebhookEventDepositCompleted      = "core.deposit.completed"
+	WebhookEventCardCreated           = "cards.card.created"
 
 	// WebhookEventCardTransactionAuthorization carries a full card
 	// transaction under an "authorizationData" key. This is the event

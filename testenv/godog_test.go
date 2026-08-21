@@ -86,6 +86,13 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	// KYC 2FA steps
 	ctx.Step(`^I submit the KYC form for user \{userId\} without 2FA$`, tc.submitKYCFormWithout2FA)
 	ctx.Step(`^I submit the KYC form for user \{userId\} with 2FA and code "([^"]*)"$`, tc.submitKYCFormWith2FA)
+	ctx.Step(`^I submit the KYC form for user \{userId\} with outcome "([^"]*)"$`, tc.submitKYCFormWithOutcome)
+	ctx.Step(`^the user KYC state is quietly set to "([^"]*)"$`, tc.setKYCStateQuietly)
+	ctx.Step(`^the user verification reports status (\d+) and state (\d+)$`, tc.userVerificationReports)
+	ctx.Step(`^the user reports the same identifier as both id and uuid$`, tc.userReportsSameIdUnderBothNames)
+	ctx.Step(`^the "([^"]*)" webhook reports verdict "([^"]*)" with status (\d+)$`, tc.kycWebhookCarriesVerdict)
+	ctx.Step(`^the "([^"]*)" webhook carries no verification verdict$`, tc.kycWebhookCarriesNoVerdict)
+	ctx.Step(`^no webhook is delivered for the user$`, tc.noWebhookIsDelivered)
 
 	// Signature auth steps
 	ctx.Step(`^a clean MockGatehub instance with authentication enforced$`, tc.cleanMockGatehubInstanceWithAuthenticationEnforced)

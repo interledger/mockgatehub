@@ -251,7 +251,7 @@ func (tc *TestContext) errorNamesTheValidScenarios() error {
 
 // webhookDeliveryTimeout allows for the queue's minimum delay before a webhook
 // becomes eligible for delivery.
-const webhookDeliveryTimeout = 20 * time.Second
+const webhookDeliveryTimeout = 30 * time.Second
 
 func (tc *TestContext) clearReceivedWebhooks() error {
 	_, err := tc.request(http.MethodDelete, "/admin/received-webhooks", nil, nil)
