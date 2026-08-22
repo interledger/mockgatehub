@@ -1,0 +1,13 @@
+{{- if eq (toString .Values.ports.http) (toString .Values.ports.admin) }}
+{{- fail "ports.http and ports.admin must differ: MockGatehub refuses to start when the application and admin listeners share a port" }}
+{{- end }}
+{{- if and (not .Values.valkey.enabled) (not .Values.externalRedis.url) }}
+{{- /*
+  Not fatal: MockGatehub runs with in-memory storage in this mode. Warn loudly
+  so it is a choice rather than an accident.
+*/}}
+{{- $msg := "mockgatehub: neither valkey.enabled nor externalRedis.url is set — running with in-memory storage and webhook delivery disabled" }}
+{{- if .Values.config.webhookUrl }}
+{{- fail (printf "%s, but config.webhookUrl is set and would never be delivered to" $msg) }}
+{{- end }}
+{{- end }}

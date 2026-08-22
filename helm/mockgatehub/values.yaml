@@ -1,0 +1,244 @@
+# Default values for MockGatehub.
+
+# -- Number of MockGatehub replicas. State lives in Valkey, so more than one is
+# safe, with one exception: the test-support webhook sink records deliveries in
+# process memory, so a harness asserting on received webhooks needs a single
+# replica to see them all.
+replicaCount: 1
+
+image:
+  repository: ghcr.io/interledger/mockgatehub
+  pullPolicy: IfNotPresent
+  # -- Overrides the image tag. Defaults to the chart's appVersion.
+  # The admin listener requires 1.14.0 or later.
+  tag: ""
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+serviceAccount:
+  create: true
+  automount: true
+  annotations: {}
+  # -- Name to use. Generated from the fullname template when empty.
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop:
+      - ALL
+
+# -- Ports MockGatehub listens on. It serves two: the GateHub API and, on a
+# separate port, the admin UI and test-support endpoints. See adminService.
+ports:
+  # -- Application API, iframes, and the browser-facing card-data and PIN endpoints.
+  http: 8080
+  # -- Admin UI (/ui) and test-support endpoints (/admin/*, /test-webhook).
+  # Unauthenticated by design; guard it at the network level.
+  admin: 8081
+
+# -- Service for the application API.
+service:
+  type: ClusterIP
+  port: 8080
+  annotations: {}
+  labels: {}
+
+# -- Separate Service for the admin listener, so it can be exposed to nothing,
+# to an internal namespace, or to a jump host — independently of the API.
+adminService:
+  enabled: true
+  type: ClusterIP
+  port: 8081
+  annotations: {}
+  labels: {}
+
+ingress:
+  # -- Ingress for the application API.
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: mockgatehub.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+  # -- Ingress for the admin listener. Off by default and left that way unless
+  # you have put authentication in front of it: the admin surface has none of
+  # its own and can settle withdrawals and change KYC state.
+  admin:
+    enabled: false
+    className: ""
+    annotations: {}
+    hosts: []
+    tls: []
+
+# -- NetworkPolicy restricting who may reach each port. This is the intended way
+# to guard the admin listener.
+networkPolicy:
+  # -- Create the policy. Requires a CNI that enforces NetworkPolicy.
+  enabled: false
+  # -- Selectors allowed to reach the application port. Empty means any pod in
+  # any namespace, which is usually what a shared mock wants.
+  apiIngress: []
+  #  - namespaceSelector:
+  #      matchLabels:
+  #        kubernetes.io/metadata.name: my-app
+  # -- Selectors allowed to reach the admin port. Empty means nothing may reach
+  # it from inside the cluster, which is the safe default.
+  adminIngress: []
+
+# -- Wait for Valkey before starting. MockGatehub exits when it cannot reach
+# Redis at startup, so without this the pod crash-loops for the few seconds
+# Valkey takes to accept connections. Cosmetic, but it makes a fresh install
+# look like a success rather than a failure.
+waitForRedis:
+  enabled: true
+  image:
+    repository: busybox
+    tag: "1.37"
+    pullPolicy: IfNotPresent
+  timeoutSeconds: 120
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 20
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 2
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+# -- MockGatehub configuration. These become environment variables.
+config:
+  # -- Zap log level: debug, info, warn, error.
+  logLevel: info
+
+  # -- Redis database index used inside Valkey.
+  redisDb: 0
+
+  # -- Enable HMAC signature validation on the application listener. The admin
+  # listener is never authenticated.
+  enforceAuthentication: true
+
+  # -- Organization used for webhook callback routing.
+  defaultOrganizationId: default-org
+
+  # -- Where MockGatehub delivers webhooks. Point this at your application.
+  webhookUrl: ""
+
+  # -- Minimum seconds before a webhook becomes eligible for delivery.
+  webhookMinDelaySec: 0.05
+
+  # -- Externally reachable base URL, without a trailing slash. Used for absolute
+  # links a browser follows directly (card-data and PIN). Defaults to the
+  # in-cluster service address, which is correct for server-side callers but not
+  # for a browser — set it to your ingress host if you use the card UI.
+  publicBaseUrl: ""
+
+  # -- When true, withdrawals stay pending until settled through the admin API
+  # instead of completing immediately. Consumers that do not handle withdrawal
+  # webhooks should leave this off.
+  asyncWithdrawals: false
+
+  # -- Extra environment variables, as name/value pairs.
+  extraEnv: []
+  # - name: SOMETHING
+  #   value: "value"
+
+# -- Credentials. Rendered into a Secret unless existingSecret is set.
+credentials:
+  # -- Use an existing Secret instead of creating one. It must provide the keys
+  # MOCKGATEHUB_VALID_CREDENTIALS, WEBHOOK_SECRET and
+  # MOCKGATEHUB_CARD_DATA_TOKEN_SECRET.
+  existingSecret: ""
+
+  # -- Accepted API credentials, as "appId:secret" pairs separated by commas.
+  validCredentials: "local-test-app-id:local-test-app-secret"
+
+  # -- Secret used to sign outgoing webhooks.
+  webhookSecret: "mock-secret"
+
+  # -- Secret signing the short-lived card-data and PIN tokens. Leave empty and
+  # MockGatehub generates one per process, which is fine unless tokens must
+  # survive a restart or be valid across replicas.
+  cardDataTokenSecret: ""
+
+# -- Connection to an external Redis or Valkey. Only used when valkey.enabled is
+# false. Without either, MockGatehub runs with in-memory storage and no webhook
+# delivery.
+externalRedis:
+  # -- Full connection URL, for example redis://my-valkey:6379.
+  url: ""
+
+# -- Bundled Valkey (groundhog2k/valkey). A single persistent instance, which is
+# what a mock's state and webhook stream need.
+valkey:
+  enabled: true
+
+  # Single pod. HA mode would deploy a sentinel cluster.
+  haMode:
+    enabled: false
+
+  service:
+    type: ClusterIP
+    serverPort: 6379
+
+  # Persistent by default, so a restart does not drop wallets, balances and
+  # queued webhooks.
+  storage:
+    requestedSize: 1Gi
+    accessModes:
+      - ReadWriteOnce
+    # className: ""
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+  # Keep memory bounded and let Valkey evict rather than refuse writes.
+  settings:
+    maxMemory: "200mb"
+    maxMemoryPolicy: "allkeys-lru"

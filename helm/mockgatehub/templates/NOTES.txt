@@ -1,0 +1,41 @@
+MockGatehub {{ .Chart.AppVersion }} is installed as {{ include "mockgatehub.fullname" . }}.
+
+Two listeners are exposed, deliberately separated:
+
+  Application API   {{ include "mockgatehub.fullname" . }}:{{ .Values.service.port }}
+{{- if .Values.adminService.enabled }}
+  Admin UI          {{ include "mockgatehub.fullname" . }}-admin:{{ .Values.adminService.port }}
+{{- else }}
+  Admin UI          not exposed (adminService.enabled=false)
+{{- end }}
+
+Point your application at the API service:
+
+  GATEHUB_API_BASE_URL=http://{{ include "mockgatehub.fullname" . }}.{{ .Release.Namespace }}.svc.cluster.local:{{ .Values.service.port }}
+
+{{ if .Values.adminService.enabled -}}
+Reach the admin UI without exposing it:
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "mockgatehub.fullname" . }}-admin {{ .Values.adminService.port }}:{{ .Values.adminService.port }}
+  open http://localhost:{{ .Values.adminService.port }}/ui
+
+{{ end -}}
+State:
+{{- if .Values.valkey.enabled }}
+  Valkey at {{ include "mockgatehub.valkeyServiceName" . }}:{{ .Values.valkey.service.serverPort }}, single instance{{ if .Values.valkey.storage.requestedSize }}, {{ .Values.valkey.storage.requestedSize }} persistent volume{{ else }}, NO persistence — set valkey.storage.requestedSize{{ end }}.
+{{- else if .Values.externalRedis.url }}
+  External Redis or Valkey at {{ .Values.externalRedis.url }}.
+{{- else }}
+  In-memory. Data is lost on restart and webhooks are not delivered.
+{{- end }}
+
+{{ if not .Values.networkPolicy.enabled -}}
+WARNING: networkPolicy.enabled is false. The admin listener has no
+authentication of its own — any pod that can reach port {{ .Values.ports.admin }} can settle
+withdrawals and change KYC state. Set networkPolicy.enabled=true, or make sure
+that port is unreachable by other means.
+{{- end }}
+{{- if .Values.ingress.admin.enabled }}
+
+WARNING: the admin ingress is enabled. Put authentication in front of it.
+{{- end }}

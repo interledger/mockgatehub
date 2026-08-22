@@ -1,0 +1,11 @@
+.DS_Store
+.git/
+.gitignore
+*.swp
+*.tmp
+*.orig
+*.bak
+.idea/
+.vscode/
+# helm-unittest suites are not part of the packaged chart
+tests/

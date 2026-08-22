@@ -1,0 +1,35 @@
+{{- if .Values.networkPolicy.enabled -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mockgatehub.fullname" . }}
+  labels:
+    {{- include "mockgatehub.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "mockgatehub.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Application port. An empty apiIngress leaves `from` unset, which allows
+    # any source — usually what a shared mock wants. Listing selectors narrows it.
+    - ports:
+        - port: http
+          protocol: TCP
+      {{- with .Values.networkPolicy.apiIngress }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    # Admin port. A rule is emitted only when adminIngress names a source: an
+    # empty `from` would mean "allow all", the opposite of what guarding this
+    # port is for. With nothing listed, no rule permits the admin port and the
+    # policy denies it.
+    {{- with .Values.networkPolicy.adminIngress }}
+    - ports:
+        - port: admin
+          protocol: TCP
+      from:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+{{- end }}

@@ -1,0 +1,33 @@
+apiVersion: v2
+name: mockgatehub
+description: |
+  MockGatehub — a mock of the GateHub API for local development and testing,
+  with a bundled single-instance Valkey for state and webhook delivery.
+home: https://github.com/interledger/mockgatehub
+sources:
+  - https://github.com/interledger/mockgatehub
+
+type: application
+
+# version is the chart version; appVersion is the MockGatehub image tag used
+# when image.tag is left unset.
+version: 0.1.0
+appVersion: "1.14.0"
+
+keywords:
+  - gatehub
+  - mock
+  - interledger
+  - testing
+
+dependencies:
+  # A deliberately small, non-Bitnami Valkey chart: a single StatefulSet with an
+  # optional PVC, which is all a mock's state needs.
+  - name: valkey
+    version: 2.3.3
+    repository: https://groundhog2k.github.io/helm-charts/
+    condition: valkey.enabled
+
+maintainers:
+  - name: Interledger Foundation
+    url: https://interledger.org
