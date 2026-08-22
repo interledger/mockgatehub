@@ -68,9 +68,9 @@ type Transaction struct {
 	VaultUUID        string    `json:"vault_uuid"`
 	SendingAddress   string    `json:"sending_address"`
 	ReceivingAddress string    `json:"receiving_address"`
-	Type             int       `json:"type"`         // 1=deposit, 2=hosted
+	Type             int       `json:"type"`         // 0=withdrawal, 1=deposit, 2=hosted
 	DepositType      string    `json:"deposit_type"` // external/hosted
-	Status           int       `json:"status"`       // 0=pending, 1=completed, 2=failed
+	Status           int       `json:"status"`       // 1=pending, 100=completed, 3=failed
 	CreatedAt        time.Time `json:"created_at"`
 
 	// Withdrawal settlement details. A withdrawal leaves the platform for a

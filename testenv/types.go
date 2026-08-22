@@ -1,5 +1,7 @@
 package main
 
+import "time"
+
 const (
 	mockGatehubURL = "http://localhost:25151"
 
@@ -15,4 +17,8 @@ const (
 	asyncWithdrawalsAdminURL = "http://localhost:25154"
 
 	maxWaitSeconds = 60
+
+	// healthProbeTimeout bounds a single startup health probe, so one hung
+	// connection cannot outlast the whole maxWaitSeconds budget.
+	healthProbeTimeout = 3 * time.Second
 )

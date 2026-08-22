@@ -140,8 +140,30 @@ func TestSplitString(t *testing.T) {
 
 func TestLoad_PublicBaseURLDefault(t *testing.T) {
 	t.Setenv("MOCKGATEHUB_PUBLIC_BASE_URL", "")
+	t.Setenv("MOCKGATEHUB_PORT", "")
 	cfg := Load()
 	assert.Equal(t, "http://localhost:8080", cfg.PublicBaseURL)
+}
+
+func TestLoad_PublicBaseURLFollowsThePort(t *testing.T) {
+	// The links built from this are followed by a browser. Defaulting to 8080
+	// while the server listens on 9090 would point them at nothing.
+	t.Setenv("MOCKGATEHUB_PUBLIC_BASE_URL", "")
+	t.Setenv("MOCKGATEHUB_PORT", "9090")
+
+	cfg := Load()
+
+	assert.Equal(t, "9090", cfg.Port)
+	assert.Equal(t, "http://localhost:9090", cfg.PublicBaseURL)
+}
+
+func TestLoad_ExplicitPublicBaseURLWinsOverThePort(t *testing.T) {
+	// Behind a proxy the externally reachable URL has nothing to do with the
+	// port the process binds.
+	t.Setenv("MOCKGATEHUB_PORT", "9090")
+	t.Setenv("MOCKGATEHUB_PUBLIC_BASE_URL", "https://mock.example.com")
+
+	assert.Equal(t, "https://mock.example.com", Load().PublicBaseURL)
 }
 
 func TestLoad_PublicBaseURLTrimsTrailingSlash(t *testing.T) {

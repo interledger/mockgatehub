@@ -16,6 +16,8 @@ import (
 
 	"mockgatehub/internal/consts"
 	"mockgatehub/internal/models"
+	"mockgatehub/internal/storage"
+	"mockgatehub/internal/webhook"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -920,4 +922,22 @@ func listCardsVia(t *testing.T, h *Handler, path, customerID string) []map[strin
 	}
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
 	return resp.Data
+}
+
+func TestGetCardToken_LinkFollowsTheConfiguredPort(t *testing.T) {
+	// The link is handed to a browser to follow. If the default base URL
+	// ignored the port the process is listening on, the browser would be sent
+	// somewhere nothing is served.
+	t.Setenv("MOCKGATEHUB_PUBLIC_BASE_URL", "")
+	t.Setenv("MOCKGATEHUB_PORT", "9090")
+
+	store := storage.NewMemoryStorage()
+	require.NoError(t, storage.SeedTestUsers(store))
+	h := NewHandler(store, webhook.NewManager("", "s", nil, store, ""))
+
+	pub, _ := newTestRSAKeys(t)
+	resp := postCardTokenRequest(t, h, cardTokenTypeCardData, "card-123", &pub)
+
+	require.Len(t, resp.Links, 1)
+	assert.Equal(t, "http://localhost:9090/cards/v1/token/card-data/data", resp.Links[0].Href)
 }

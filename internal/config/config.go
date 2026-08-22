@@ -60,13 +60,20 @@ func Load() *Config {
 		EnforceAuthentication: getEnvBool("MOCKGATEHUB_ENFORCE_AUTHENTICATION", true),
 		ValidCredentials:      parseCredentials(getEnv("MOCKGATEHUB_VALID_CREDENTIALS", "local-test-app-id:local-test-app-secret")),
 		DefaultOrganizationID: getEnv("DEFAULT_ORGANIZATION_ID", "default-org"),
-		PublicBaseURL:         getEnv("MOCKGATEHUB_PUBLIC_BASE_URL", "http://localhost:8080"),
+		PublicBaseURL:         getEnv("MOCKGATEHUB_PUBLIC_BASE_URL", ""),
 		CardDataTokenSecret:   getEnv("MOCKGATEHUB_CARD_DATA_TOKEN_SECRET", ""),
 		AsyncWithdrawals:      getEnvBool("MOCKGATEHUB_ASYNC_WITHDRAWALS", false),
 	}
 
 	// The 2-second minimum delay clamp was removed upstream so webhooks can be
 	// delivered promptly; the value is used as configured.
+
+	// Default PublicBaseURL from the port actually in use. Hard-coding 8080
+	// here would generate links pointing at a port nothing is listening on
+	// whenever MOCKGATEHUB_PORT is changed and this is left unset.
+	if cfg.PublicBaseURL == "" {
+		cfg.PublicBaseURL = "http://localhost:" + cfg.Port
+	}
 
 	// Callers concatenate PublicBaseURL with rooted paths, so a trailing
 	// slash would produce a double slash in the generated URL.

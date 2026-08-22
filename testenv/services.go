@@ -58,8 +58,13 @@ func waitForServices() error {
 }
 
 func waitForService(baseURL string) error {
+	// http.Get uses http.DefaultClient, which has no timeout. A hanging
+	// connection would then block far longer than maxWaitSeconds and leave the
+	// harness looking stuck rather than reporting a failed startup.
+	client := &http.Client{Timeout: healthProbeTimeout}
+
 	for i := 0; i < maxWaitSeconds; i++ {
-		resp, err := http.Get(baseURL + "/health")
+		resp, err := client.Get(baseURL + "/health")
 		if err == nil && resp.StatusCode == 200 {
 			_ = resp.Body.Close()
 			return nil
