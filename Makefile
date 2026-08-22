@@ -9,7 +9,7 @@ help:
 	@echo "helm-test         Lint, unit test and schema-validate the Helm chart"
 	@echo "coverage          Run unit tests with coverage report"
 	@echo "build             Build the mockgatehub binary"
-	@echo "lint              Run linter (gofmt, go vet)"
+	@echo "lint              Run linter (gofmt, go vet, golangci-lint)"
 	@echo "clean             Clean up build artifacts and test binaries"
 	@echo ""
 
