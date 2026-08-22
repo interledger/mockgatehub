@@ -12,6 +12,9 @@ import (
 // immediately.
 func (tc *TestContext) usingTheAsyncWithdrawalsInstance() error {
 	tc.baseURL = asyncWithdrawalsURL
+	// Its admin listener has to move with it, or admin calls would land on the
+	// other instance and see none of this one's state.
+	tc.adminBaseURL = asyncWithdrawalsAdminURL
 	return nil
 }
 

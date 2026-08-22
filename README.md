@@ -49,7 +49,8 @@ The service will be available at `http://localhost:8080`
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MOCKGATEHUB_PORT` | `8080` | HTTP server port |
+| `MOCKGATEHUB_PORT` | `8080` | Application API port — the GateHub API and the iframes |
+| `MOCKGATEHUB_ADMIN_PORT` | `8081` | Admin UI and test-support port. Must differ from `MOCKGATEHUB_PORT`; the process refuses to start otherwise |
 | `LOG_LEVEL` | `info` | Log level (`debug`, `info`, `warn`, `error`) |
 | `MOCKGATEHUB_REDIS_URL` | — | Redis connection URL (enables Redis storage) |
 | `MOCKGATEHUB_REDIS_DB` | `0` | Redis database number |
@@ -77,6 +78,28 @@ Two test users are automatically created at startup:
 | **User ID** | `00000000-0000-0000-0000-000000000001` | `00000000-0000-0000-0000-000000000002` |
 | **Balance** | 10,000 USD | 10,000 EUR |
 | **KYC State** | `action_required` | `action_required` |
+
+## Two listeners
+
+MockGatehub serves two separate ports:
+
+| Port | Serves | Authentication |
+|------|--------|----------------|
+| `MOCKGATEHUB_PORT` (`8080`) | The GateHub API, the iframes, and the browser-facing card-data and PIN endpoints | HMAC, except the iframe and token-data paths listed under [Public Endpoints](#public-endpoints-no-auth-required) |
+| `MOCKGATEHUB_ADMIN_PORT` (`8081`) | The admin UI and the test-support endpoints | **None** |
+
+The split exists so the admin surface can be closed off at the network level.
+It carries no authentication of its own and several of its endpoints mutate
+state — settling a withdrawal, setting a KYC state, simulating a card
+transaction — so it is guarded by not being reachable rather than by being
+authenticated. Publish only `8080` and the admin surface is unreachable from
+outside; the separation is structural, so it holds even with
+`MOCKGATEHUB_ENFORCE_AUTHENTICATION=false`.
+
+The process refuses to start if the two ports are equal, so a misconfiguration
+cannot silently merge the surfaces back onto one listener.
+
+`/health` is served on both, so each listener can be probed independently.
 
 ## API Endpoints
 
@@ -191,8 +214,9 @@ than one indistinguishable placeholder.
 
 ### Test Support (Admin)
 
-Not part of the GateHub API. These exist so an automated test can arrange state
-and observe what was emitted.
+Not part of the GateHub API, and served on the **admin port** (`8081` by
+default), not alongside the application API. These exist so an automated test
+can arrange state and observe what was emitted.
 
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -208,7 +232,8 @@ and observe what was emitted.
 
 ### Admin UI (`/ui`)
 
-A browser UI for driving the mock by hand. Needs no credentials.
+A browser UI for driving the mock by hand. Served on the **admin port**, so by
+default <http://localhost:8081/ui>. Needs no credentials.
 
 | Path | Description |
 |------|-------------|
@@ -397,7 +422,9 @@ curl -X POST http://localhost:8080/auth/v1/tokens \
 
 ### Public Endpoints (No Auth Required)
 
-`/health`, `/`, `/iframe/onboarding`, `/iframe/submit`, `/transaction/complete`, `/api/user-currencies`, `/admin/fees`, the `/admin/*` test-support endpoints, `/test-webhook`, and all of `/ui`.
+On the application port: `/health`, `/`, `/iframe/onboarding`, `/iframe/submit`, `/transaction/complete`, `/api/user-currencies`.
+
+The whole admin port is unauthenticated by design — see [Two listeners](#two-listeners).
 
 The card-data and PIN data endpoints (`/cards/v1/token/card-data/data`,
 `/cards/v1/token/pin/data`, `/cards/v1/token/pin/public-key`) are also exempt
@@ -439,7 +466,7 @@ MOCKGATEHUB_REDIS_URL=redis://localhost:6379 ./mockgatehub
 MOCKGATEHUB_ENFORCE_AUTHENTICATION=false ./mockgatehub
 ```
 
-Then open <http://localhost:8080/ui>.
+Then open <http://localhost:8081/ui> — the admin UI is on the admin port.
 
 ### Testing
 

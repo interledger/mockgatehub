@@ -248,6 +248,9 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the UI redirects reporting failure$`, tc.uiRedirectedWithFailure)
 	ctx.Step(`^the redirect reports "([^"]*)"$`, tc.uiRedirectReports)
 	ctx.Step(`^I follow the UI redirect$`, tc.followUIRedirect)
+	ctx.Step(`^I request "([^"]*)" on the application port$`, tc.requestOnApplicationPort)
+	ctx.Step(`^I request "([^"]*)" on the admin port$`, tc.requestOnAdminPort)
+	ctx.Step(`^the path is not served there$`, tc.pathIsNotServedThere)
 
 	// Withdrawal settlement steps
 	ctx.Step(`^requests go to the asynchronous withdrawals instance$`, tc.usingTheAsyncWithdrawalsInstance)

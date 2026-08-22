@@ -145,9 +145,40 @@ func main() {
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 	}))
 
+	// The admin surface gets its own router and listener. Sharing a port with
+	// the application API would make it impossible to expose one without the
+	// other.
+	if cfg.AdminPort == cfg.Port {
+		logger.Fatal("admin port must differ from the application port",
+			zap.String("port", cfg.Port),
+			zap.String("admin_port", cfg.AdminPort),
+		)
+	}
+
+	adminRouter := chi.NewRouter()
+	adminRouter.Use(middleware.RequestID)
+	adminRouter.Use(middleware.RealIP)
+	adminRouter.Use(middleware.Recoverer)
+	adminRouter.Use(middleware.Timeout(60 * time.Second))
+	adminRouter.Use(func(next http.Handler) http.Handler {
+		return h.RequestLogger(next)
+	})
+	// Deliberately no HMAC middleware: a browser has no credentials to sign
+	// with, and these endpoints are meant to be guarded by not being reachable
+	// rather than by being authenticated.
+	setupAdminRoutes(adminRouter, h)
+
 	srv := &http.Server{
 		Addr:         ":" + cfg.Port,
 		Handler:      r,
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
+	adminSrv := &http.Server{
+		Addr:         ":" + cfg.AdminPort,
+		Handler:      adminRouter,
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
@@ -157,6 +188,13 @@ func main() {
 		logger.Info("mockgatehub listening", zap.String("port", cfg.Port))
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Fatal("server failed to start", zap.Error(err))
+		}
+	}()
+
+	go func() {
+		logger.Info("mockgatehub admin listening", zap.String("admin_port", cfg.AdminPort))
+		if err := adminSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logger.Fatal("admin server failed to start", zap.Error(err))
 		}
 	}()
 
@@ -174,6 +212,10 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
+
+	if err := adminSrv.Shutdown(ctx); err != nil {
+		logger.Error("admin server forced to shutdown", zap.Error(err))
+	}
 
 	if err := srv.Shutdown(ctx); err != nil {
 		logger.Fatal("server forced to shutdown", zap.Error(err))
@@ -205,21 +247,6 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 	})
 	r.Get("/iframe/onboarding", h.KYCIframe)
 	r.Post("/iframe/submit", h.KYCIframeSubmit)
-	r.Get("/admin/fees", h.GetFees)
-	r.Put("/admin/fees", h.SetFees)
-	r.Get("/admin/users/{userID}/fees", h.GetUserFees)
-	r.Put("/admin/users/{userID}/fees", h.SetUserFees)
-	r.Delete("/admin/users/{userID}/fees", h.ClearUserFees)
-	r.Put("/admin/users/{userID}/kyc-state", h.SetUserKYCStateQuiet)
-	r.Get("/admin/users/{userID}/withdrawals", h.ListWithdrawals)
-	r.Post("/admin/withdrawals/{txID}/trigger-event", h.TriggerWithdrawalEvent)
-	// Test-support webhook sink: lets a harness assert on what was delivered.
-	r.Post("/test-webhook", h.TestWebhookSink)
-	r.Get("/admin/received-webhooks", h.ListReceivedWebhooks)
-	r.Delete("/admin/received-webhooks", h.ClearReceivedWebhooks)
-	r.Get("/admin/card-transactions/scenarios", h.ListCardTxScenarios)
-	r.Post("/admin/card-transactions/simulate", h.SimulateCardTransaction)
-	r.Post("/admin/card-transactions/{txID}/status", h.SetCardTransactionStatus)
 	r.Route("/core/v1", func(r chi.Router) {
 		logger.Info("REGISTERING /core/v1 ROUTES")
 		r.Get("/users/{userID}", h.GetUserWallets)
@@ -238,16 +265,6 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		r.Put("/cards/{cardID}/limits", h.UpdateCardLimits)
 		r.Post("/cards/{cardID}/limits", h.UpdateCardLimits)
 		r.Get("/card-applications/{appID}/card-products", h.GetCardApplicationProducts)
-	})
-	r.Route("/ui", func(r chi.Router) {
-		logger.Info("REGISTERING /ui ROUTES")
-		r.Get("/", h.UIDashboard)
-		r.Get("/users/{userID}", h.UIUserDetail)
-		r.Get("/actions/kyc", h.UIKYCForm)
-		r.Post("/actions/kyc", h.UIKYCAction)
-		r.Get("/actions/card-transaction", h.UICardTxForm)
-		r.Post("/actions/card-transaction", h.UICardTxAction)
-		r.Post("/actions/withdrawal/settle", h.UIWithdrawalSettle)
 	})
 	r.Route("/statement/v1", func(r chi.Router) {
 		logger.Info("REGISTERING /statement/v1 ROUTES")
@@ -322,6 +339,59 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		logger.Info("========== /cards/v1 ROUTES REGISTERED ==========")
 	})
 	logger.Info("========== ALL ROUTES REGISTERED SUCCESSFULLY ==========")
+}
+
+// setupAdminRoutes registers the admin UI and the test-support endpoints.
+//
+// These live on their own listener rather than alongside the application API.
+// They are not part of the GateHub API, they carry no authentication of their
+// own, and several of them mutate state — settling a withdrawal, setting a KYC
+// state, simulating a card transaction. Serving them on a separate port is what
+// makes it possible to reach them from a developer machine while keeping them
+// closed off wherever the application API is exposed.
+func setupAdminRoutes(r chi.Router, h *handler.Handler) {
+	logger.Info("========== SETTING UP ADMIN ROUTES ==========")
+
+	// Health, so the admin listener itself can be probed.
+	r.Get("/health", h.HealthCheck)
+
+	// Fee configuration
+	r.Get("/admin/fees", h.GetFees)
+	r.Put("/admin/fees", h.SetFees)
+	r.Get("/admin/users/{userID}/fees", h.GetUserFees)
+	r.Put("/admin/users/{userID}/fees", h.SetUserFees)
+	r.Delete("/admin/users/{userID}/fees", h.ClearUserFees)
+
+	// User state
+	r.Put("/admin/users/{userID}/kyc-state", h.SetUserKYCStateQuiet)
+
+	// Withdrawal settlement
+	r.Get("/admin/users/{userID}/withdrawals", h.ListWithdrawals)
+	r.Post("/admin/withdrawals/{txID}/trigger-event", h.TriggerWithdrawalEvent)
+
+	// Card transaction catalogue and simulation
+	r.Get("/admin/card-transactions/scenarios", h.ListCardTxScenarios)
+	r.Post("/admin/card-transactions/simulate", h.SimulateCardTransaction)
+	r.Post("/admin/card-transactions/{txID}/status", h.SetCardTransactionStatus)
+
+	// Webhook sink, so a harness can assert on what was delivered. The webhook
+	// worker posts here when WEBHOOK_URL points at this listener.
+	r.Post("/test-webhook", h.TestWebhookSink)
+	r.Get("/admin/received-webhooks", h.ListReceivedWebhooks)
+	r.Delete("/admin/received-webhooks", h.ClearReceivedWebhooks)
+
+	// Admin UI
+	r.Route("/ui", func(r chi.Router) {
+		r.Get("/", h.UIDashboard)
+		r.Get("/users/{userID}", h.UIUserDetail)
+		r.Get("/actions/kyc", h.UIKYCForm)
+		r.Post("/actions/kyc", h.UIKYCAction)
+		r.Get("/actions/card-transaction", h.UICardTxForm)
+		r.Post("/actions/card-transaction", h.UICardTxAction)
+		r.Post("/actions/withdrawal/settle", h.UIWithdrawalSettle)
+	})
+
+	logger.Info("========== ADMIN ROUTES REGISTERED ==========")
 }
 
 // getAppIDList returns a list of registered app IDs for logging

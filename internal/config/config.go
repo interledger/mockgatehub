@@ -10,7 +10,11 @@ import (
 
 // Config holds application configuration
 type Config struct {
-	Port                  string
+	Port string
+	// AdminPort serves the admin UI and the test-support endpoints on their own
+	// listener, so that surface can be closed off at the network level while
+	// the application API stays reachable. It must differ from Port.
+	AdminPort             string
 	LogLevel              string
 	RedisURL              string
 	RedisDB               int
@@ -46,6 +50,7 @@ type Config struct {
 func Load() *Config {
 	cfg := &Config{
 		Port:                  getEnv("MOCKGATEHUB_PORT", "8080"),
+		AdminPort:             getEnv("MOCKGATEHUB_ADMIN_PORT", "8081"),
 		LogLevel:              getEnv("LOG_LEVEL", "info"),
 		RedisURL:              getEnv("MOCKGATEHUB_REDIS_URL", ""),
 		RedisDB:               getEnvInt("MOCKGATEHUB_REDIS_DB", 0),

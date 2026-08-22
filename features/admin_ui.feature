@@ -33,6 +33,32 @@ Feature: Admin developer UI
     When I browse to "/ui"
     Then the response status is 200
 
+  # The admin surface is served on its own listener so it can be closed off at
+  # the network level. If any of it were reachable on the application port, a
+  # firewall on the admin port alone would not actually close the hole.
+  Scenario Outline: The admin surface is not served on the application port
+    When I request "<path>" on the application port
+    Then the path is not served there
+
+    Examples:
+      | path                                     |
+      | /ui                                      |
+      | /ui/actions/kyc                          |
+      | /admin/fees                              |
+      | /admin/card-transactions/scenarios       |
+      | /admin/received-webhooks                 |
+      | /test-webhook                            |
+
+  Scenario Outline: The application API is not served on the admin port
+    When I request "<path>" on the admin port
+    Then the path is not served there
+
+    Examples:
+      | path                              |
+      | /iframe/onboarding                |
+      | /cards/v1/token/pin/public-key    |
+      | /rates/v1/liquidity_provider/vaults |
+
   Scenario: The KYC form offers every outcome
     When I browse to "/ui/actions/kyc"
     Then the response status is 200

@@ -10,8 +10,10 @@ type TestContext struct {
 	// HTTP client
 	client *http.Client
 
-	// Base configuration
-	baseURL string
+	// Base configuration. adminBaseURL addresses the separate listener that
+	// serves the admin UI and the test-support endpoints.
+	baseURL      string
+	adminBaseURL string
 
 	// Authentication
 	appID     string
@@ -78,7 +80,8 @@ type TestContext struct {
 // Reset initializes the test context to a clean state
 func (tc *TestContext) Reset() {
 	tc.client = &http.Client{Timeout: 10 * time.Second}
-	tc.baseURL = "http://localhost:25151"
+	tc.baseURL = mockGatehubURL
+	tc.adminBaseURL = mockGatehubAdminURL
 	tc.appID = ""
 	tc.appSecret = ""
 	tc.signatureTime = ""

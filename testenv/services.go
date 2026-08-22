@@ -44,7 +44,12 @@ func cleanup() {
 }
 
 func waitForServices() error {
-	for _, url := range []string{mockGatehubURL, asyncWithdrawalsURL} {
+	// Both listeners on both instances: a scenario that reaches the admin
+	// surface before it is up would fail for the wrong reason.
+	for _, url := range []string{
+		mockGatehubURL, mockGatehubAdminURL,
+		asyncWithdrawalsURL, asyncWithdrawalsAdminURL,
+	} {
 		if err := waitForService(url); err != nil {
 			return err
 		}

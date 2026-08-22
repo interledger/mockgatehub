@@ -582,3 +582,68 @@ external deposits and withdrawals, so `amount - fee == amount` for every hosted
 transfer. Main's version was kept rather than quietly changing behaviour that
 has no live effect. If a hosted-transfer fee is ever introduced, this is the
 line to revisit.
+
+---
+
+## 16. Splitting the admin surface onto its own port
+
+The admin UI and the test-support endpoints now listen on
+`MOCKGATEHUB_ADMIN_PORT` (default `8081`), separate from the application API on
+`MOCKGATEHUB_PORT` (default `8080`). The point is to make that surface
+guardable: publish only `8080` and it is unreachable from outside.
+
+### Why the whole admin surface moved, not just the UI
+
+Moving only `/ui` would not have achieved anything. The thirteen `/admin/*`
+routes are HMAC-exempt by design, and several of them mutate state:
+
+- `POST /admin/withdrawals/{txID}/trigger-event` settles a withdrawal
+- `PUT /admin/users/{userID}/kyc-state` changes a user's verification state
+- `POST /admin/card-transactions/simulate` creates transactions and emits webhooks
+- `PUT /admin/fees` changes fee configuration
+
+A firewall on the UI port alone would have left all of those open on the public
+port. `/test-webhook` moved too, so `WEBHOOK_URL` now points at the admin
+listener in the test environment.
+
+### The separation is structural
+
+The admin routes are registered on a different router, not merely exempted from
+authentication. With `MOCKGATEHUB_ENFORCE_AUTHENTICATION=false` — how some local
+setups run — admin paths return **404** on the application port rather than
+falling through to a handler. Verified both ways:
+
+| Path | App port (auth on) | App port (auth off) | Admin port |
+|---|---|---|---|
+| `/ui` | 401 | 404 | 200 |
+| `/admin/fees` | 401 | 404 | 200 |
+| `/admin/card-transactions/scenarios` | 401 | 404 | 200 |
+| `/iframe/onboarding` | 200 | 200 | 404 |
+| `/cards/v1/token/pin/public-key` | 200 | 200 | 404 |
+
+The process also refuses to start when both ports are equal, so the surfaces
+cannot be silently merged back onto one listener.
+
+The dead auth exemptions were removed rather than left behind: `PublicEndpoints`
+no longer lists `/admin/fees`, the `/ui` bypass is gone, and
+`PublicEndpointPatterns` is now empty. Keeping them would have widened the
+application listener's public surface for paths it no longer serves.
+
+### testnet impact: none
+
+This was investigated before making the change, because a break here would land
+on the testnet integration.
+
+| Checked | Result |
+|---|---|
+| `packages/wallet/backend` — the GateHub client and everything else | No `/admin`, `/test-webhook` or `/ui` reference |
+| `e2e/` — features, steps and helpers | Drives MockGatehub only through the deposit iframe and through the wallet backend. No admin usage |
+| `local/mockgatehub.yaml` | Publishes `8080:8080` only; traefik routes `mockgatehub.testnet.test` to container port 8080 |
+| `local/` scripts and `helm/` | No admin references; helm does not deploy MockGatehub at all |
+| Wallet env (`GATEHUB_API_BASE_URL`, the three iframe URLs, `CARD_DATA_HREF`, `CARD_PIN_HREF`) | All resolve to paths that stay on the application port |
+
+So nothing in testnet needs to change for its tests to keep passing. The only
+follow-up is **optional**: a developer who wants the admin UI locally should add
+`- '8081:8081'` to the `ports` list in `local/mockgatehub.yaml`. That is an
+enhancement, not a fix. Anyone deploying MockGatehub should make sure the admin
+port is not published to the internet.

@@ -19,7 +19,6 @@ var PublicEndpoints = map[string]bool{
 	"/iframe/submit":        true, // Iframe form submission
 	"/transaction/complete": true, // Iframe completion callback
 	"/api/user-currencies":  true, // Iframe currency lookup
-	"/admin/fees":           true, // Admin fee configuration (test support)
 
 	// Card data and PIN are fetched straight from the browser, which holds a
 	// short-lived token and none of the HMAC credentials. Real GateHub
@@ -27,20 +26,16 @@ var PublicEndpoints = map[string]bool{
 	"/cards/v1/token/card-data/data": true,
 	"/cards/v1/token/pin/data":       true,
 	"/cards/v1/token/pin/public-key": true,
-	// Webhook sink and its inspection endpoints. The sink is called by our own
-	// webhook worker, which signs with the webhook secret rather than the HMAC
-	// credentials, so it authenticates by signature instead.
-	"/test-webhook":                      true,
-	"/admin/received-webhooks":           true,
-	"/admin/card-transactions/scenarios": true, // Card transaction catalogue (test support)
-	"/admin/card-transactions/simulate":  true, // Card transaction simulation (test support)
 }
 
-// PublicEndpointPatterns are path patterns (with placeholders) that don't require authentication
-var PublicEndpointPatterns = []string{
-	"/admin/users/*/fees",               // User-specific fee configuration (test support)
-	"/admin/card-transactions/*/status", // Card transaction status transitions (test support)
-}
+// PublicEndpointPatterns are path patterns (with placeholders) that don't
+// require authentication.
+//
+// The admin and test-support endpoints used to be listed here. They now live on
+// their own listener, which has no authentication middleware at all, so
+// exempting them on this one would only widen the application API's public
+// surface for paths it no longer serves.
+var PublicEndpointPatterns = []string{}
 
 // matchesPublicPattern checks if a path matches any of the public endpoint patterns
 func matchesPublicPattern(path string) bool {
@@ -75,14 +70,6 @@ func Middleware(validCredentials map[string]string) func(next http.Handler) http
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Skip authentication for public endpoints (exact match)
 			if PublicEndpoints[r.URL.Path] {
-				next.ServeHTTP(w, r)
-				return
-			}
-
-			// Skip authentication for the admin UI. It is a browser-facing
-			// developer tool with no credentials to present, and it drives the
-			// same operations the test-support endpoints expose.
-			if r.URL.Path == "/ui" || strings.HasPrefix(r.URL.Path, "/ui/") {
 				next.ServeHTTP(w, r)
 				return
 			}

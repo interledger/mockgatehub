@@ -29,6 +29,22 @@ func computeHMAC(secret, payload string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// adminPathPrefixes are the paths served by the admin listener rather than the
+// application API.
+var adminPathPrefixes = []string{"/admin/", "/admin", "/ui", "/test-webhook"}
+
+// urlFor resolves a path against the listener that serves it. Admin and
+// test-support paths live on their own port, so addressing them against the
+// application base URL would 404.
+func (tc *TestContext) urlFor(path string) string {
+	for _, prefix := range adminPathPrefixes {
+		if path == prefix || strings.HasPrefix(path, prefix) {
+			return tc.adminBaseURL + path
+		}
+	}
+	return tc.baseURL + path
+}
+
 // replacePlaceholders replaces template variables in paths
 func (tc *TestContext) replacePlaceholders(path string) string {
 	replacements := map[string]string{
@@ -65,7 +81,7 @@ func (tc *TestContext) request(method, path string, body interface{}, headers ma
 		bodyStr = string(bodyBytes)
 	}
 
-	url := tc.baseURL + path
+	url := tc.urlFor(path)
 	req, err := http.NewRequest(method, url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, err
@@ -94,7 +110,7 @@ func (tc *TestContext) request(method, path string, body interface{}, headers ma
 // requestRaw makes a raw HTTP request with full control over headers and body
 func (tc *TestContext) requestRaw(method, path, bodyStr, contentType string, headers map[string]string) (*http.Response, error) {
 	path = tc.replacePlaceholders(path)
-	url := tc.baseURL + path
+	url := tc.urlFor(path)
 
 	var bodyBytes []byte
 	if bodyStr != "" {
@@ -128,7 +144,7 @@ func (tc *TestContext) requestForm(method, path string, formData map[string]stri
 	bodyStr := strings.Join(vals, "&")
 	bodyBytes := []byte(bodyStr)
 
-	url := tc.baseURL + path
+	url := tc.urlFor(path)
 	req, err := http.NewRequest(method, url, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, err

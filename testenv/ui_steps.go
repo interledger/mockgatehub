@@ -28,7 +28,7 @@ func (tc *TestContext) browseToCardTxFormForUser() error {
 // instead of following it. Where the UI sends the user, and what it reports on
 // the way, is the behaviour under test.
 func (tc *TestContext) submitUIForm(path string, form url.Values) error {
-	req, err := http.NewRequest(http.MethodPost, tc.baseURL+path, strings.NewReader(form.Encode()))
+	req, err := http.NewRequest(http.MethodPost, tc.urlFor(path), strings.NewReader(form.Encode()))
 	if err != nil {
 		return err
 	}
@@ -189,4 +189,43 @@ func (tc *TestContext) followUIRedirect() error {
 		target = target[len(tc.baseURL):]
 	}
 	return tc.browseTo(target)
+}
+
+// requestOnApplicationPort and requestOnAdminPort bypass the usual path-based
+// routing so a scenario can prove a path is absent from a given listener.
+func (tc *TestContext) requestOnApplicationPort(path string) error {
+	return tc.requestOnPort(tc.baseURL, path)
+}
+
+func (tc *TestContext) requestOnAdminPort(path string) error {
+	return tc.requestOnPort(tc.adminBaseURL, path)
+}
+
+func (tc *TestContext) requestOnPort(base, path string) error {
+	req, err := http.NewRequest(http.MethodGet, base+path, nil)
+	if err != nil {
+		return err
+	}
+	_, err = tc.doRequest(req)
+	return err
+}
+
+// pathIsNotServedThere asserts the listener does not serve the path at all.
+//
+// It accepts 404 and 405 as "not served", and 401 as well: the application
+// listener runs authentication ahead of routing, so an unrouted path there is
+// rejected before the router is consulted. What must not happen is the request
+// succeeding.
+func (tc *TestContext) pathIsNotServedThere() error {
+	switch code := tc.lastResponse.StatusCode; code {
+	case http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusUnauthorized:
+		return nil
+	default:
+		if code >= 200 && code < 400 {
+			return fmt.Errorf("expected the path not to be served, but got %d: %.120q",
+				code, string(tc.lastResponseBody))
+		}
+		// Any other client error still means it was not served successfully.
+		return nil
+	}
 }

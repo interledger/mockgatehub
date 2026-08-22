@@ -14,13 +14,16 @@ services:
       dockerfile: Dockerfile
     # container_name: mockgatehub-test
     ports:
-      - "25151:8080"  # Use different port to avoid conflicts
+      - "25151:8080"  # Application API
+      - "25153:8081"  # Admin UI and test-support endpoints
     environment:
       - LOG_LEVEL=debug
       - MOCKGATEHUB_PORT=8080
+      - MOCKGATEHUB_ADMIN_PORT=8081
       - MOCKGATEHUB_REDIS_URL=redis://redis:6379
       - MOCKGATEHUB_REDIS_DB=0
-      - WEBHOOK_URL=http://mockgatehub:8080/test-webhook
+      # The webhook sink lives on the admin listener now.
+      - WEBHOOK_URL=http://mockgatehub:8081/test-webhook
       - WEBHOOK_SECRET=test-webhook-secret
       - MOCKGATEHUB_ENFORCE_AUTHENTICATION=true
     depends_on:
@@ -42,15 +45,17 @@ services:
       context: ..
       dockerfile: Dockerfile
     ports:
-      - "25152:8080"
+      - "25152:8080"  # Application API
+      - "25154:8081"  # Admin UI and test-support endpoints
     environment:
       - LOG_LEVEL=debug
       - MOCKGATEHUB_PORT=8080
+      - MOCKGATEHUB_ADMIN_PORT=8081
       - MOCKGATEHUB_REDIS_URL=redis://redis:6379
       # A separate Redis database so the two instances do not share state or
       # consume each other's webhook queue.
       - MOCKGATEHUB_REDIS_DB=1
-      - WEBHOOK_URL=http://mockgatehub-async:8080/test-webhook
+      - WEBHOOK_URL=http://mockgatehub-async:8081/test-webhook
       - WEBHOOK_SECRET=test-webhook-secret
       - MOCKGATEHUB_ENFORCE_AUTHENTICATION=true
       - MOCKGATEHUB_ASYNC_WITHDRAWALS=true
