@@ -180,5 +180,5 @@ asserting on received webhooks needs a single replica to see them all.
 helm dependency build helm/mockgatehub
 helm lint helm/mockgatehub
 helm unittest helm/mockgatehub
-helm template mockgatehub helm/mockgatehub | kubeconform -strict -summary -
+helm template mockgatehub helm/mockgatehub | kubeconform -strict -summary -ignore-missing-schemas -
 ```
