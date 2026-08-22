@@ -359,12 +359,15 @@ When changing the chart:
 
 ## CI/CD
 
-- **`pr-validation.yml`** — Conventional Commits title check, unit and E2E
-  tests, chart validation, a chart install on a throwaway kind cluster, and a
-  Docker build without push.
-- **`release.yml`** on push to `main` — tests, chart validation,
+- **`pr-validation.yml`** — Conventional Commits title check, lint, unit and
+  E2E tests, chart validation, a chart install on a throwaway kind cluster, and
+  a Docker build without push.
+- **`release.yml`** on push to `main` — lint, tests, chart validation,
   semantic-release, multi-arch Docker push to
   `ghcr.io/interledger/mockgatehub`.
+- The lint job runs `make lint`, and the chart job runs `make helm-test`, so CI
+  and a developer's machine check the same things. `golangci-lint` is pinned in
+  the workflow and must satisfy the `version: "2"` schema in `.golangci.yml`.
 - **Versioning**: `feat` → minor; `fix`/`perf`/`docs`/`refactor`/`build`/`ci` →
   patch; `chore`/`test` → none. Config in `.releaserc.json`.
 
