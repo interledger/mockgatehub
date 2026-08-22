@@ -80,10 +80,38 @@ jobs:
       - name: Run feature e2e tests
         run: go test -tags e2e -v -count=1 ./testenv/ -run TestFeatures
 
+  # Validate the Helm chart: lint, unit tests and schema validation of the
+  # rendered manifests. Fast and needs no cluster.
+  helm:
+    name: Validate Helm Chart
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.17.0
+
+      - name: Install helm-unittest
+        run: helm plugin install https://github.com/helm-unittest/helm-unittest --version 0.8.1
+
+      - name: Install kubeconform
+        run: |
+          curl -sSLo kubeconform.tar.gz \
+            https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
+          tar -xzf kubeconform.tar.gz kubeconform
+          sudo install -m 0755 kubeconform /usr/local/bin/kubeconform
+          kubeconform -v
+
+      - name: Lint, unit test and validate the chart
+        run: make helm-test
+
   # Semantic release to determine version and create changelog
   release:
     name: Semantic Release
-    needs: [test, e2e]
+    needs: [test, e2e, helm]
     runs-on: ubuntu-latest
     outputs:
       new_release_published: ${{ steps.semantic.outputs.new_release_published }}
