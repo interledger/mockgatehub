@@ -11,11 +11,27 @@ import (
 	"github.com/cucumber/godog/colors"
 )
 
+// defaultTags excludes scenarios that are deliberately not runnable.
+const defaultTags = "~@skip && ~@stubbed"
+
+// tagFilter allows narrowing a run while developing, e.g.
+// GODOG_TAGS='@cards' go test -tags e2e ./testenv/ -run TestFeatures
+func tagFilter() string {
+	if custom := os.Getenv("GODOG_TAGS"); custom != "" {
+		return defaultTags + " && " + custom
+	}
+	return defaultTags
+}
+
 var opts = godog.Options{
 	Output: colors.Colored(os.Stdout),
 	Format: "progress",
 	Paths:  []string{"../features"},
-	Tags:   "~@skip && ~@stubbed",
+	Tags:   tagFilter(),
+	// Without Strict, a scenario whose steps have no matching definition is
+	// reported as undefined and the suite still exits 0 — a new scenario could
+	// look green while never running. Treat undefined and pending as failures.
+	Strict: true,
 }
 
 func TestFeatures(t *testing.T) {
@@ -70,6 +86,13 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	// KYC 2FA steps
 	ctx.Step(`^I submit the KYC form for user \{userId\} without 2FA$`, tc.submitKYCFormWithout2FA)
 	ctx.Step(`^I submit the KYC form for user \{userId\} with 2FA and code "([^"]*)"$`, tc.submitKYCFormWith2FA)
+	ctx.Step(`^I submit the KYC form for user \{userId\} with outcome "([^"]*)"$`, tc.submitKYCFormWithOutcome)
+	ctx.Step(`^the user KYC state is quietly set to "([^"]*)"$`, tc.setKYCStateQuietly)
+	ctx.Step(`^the user verification reports status (\d+) and state (\d+)$`, tc.userVerificationReports)
+	ctx.Step(`^the user reports the same identifier as both id and uuid$`, tc.userReportsSameIdUnderBothNames)
+	ctx.Step(`^the "([^"]*)" webhook reports verdict "([^"]*)" with status (\d+)$`, tc.kycWebhookCarriesVerdict)
+	ctx.Step(`^the "([^"]*)" webhook carries no verification verdict$`, tc.kycWebhookCarriesNoVerdict)
+	ctx.Step(`^no webhook is delivered for the user$`, tc.noWebhookIsDelivered)
 
 	// Signature auth steps
 	ctx.Step(`^a clean MockGatehub instance with authentication enforced$`, tc.cleanMockGatehubInstanceWithAuthenticationEnforced)
@@ -173,12 +196,112 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the dailyOverall limit is changed to (\d+)$`, tc.dailyOverallLimitChanged)
 	ctx.Step(`^the card no longer appears in list cards query \(filtered out\)$`, tc.cardNotInListCardsQuery)
 
+	// Card token, card data and PIN steps
+	ctx.Step(`^the caller has generated an RSA key pair$`, tc.callerGeneratesRSAKeyPair)
+	ctx.Step(`^I POST /cards/v1/token/([a-z-]+) with the cardId and the caller's public key$`, tc.postCardTokenWithPublicKey)
+	ctx.Step(`^the token link is an absolute URL$`, tc.tokenLinkIsAbsolute)
+	ctx.Step(`^the token link path is "([^"]*)"$`, tc.tokenLinkPathIs)
+	ctx.Step(`^the token link method is "([^"]*)"$`, tc.tokenLinkMethodIs)
+	ctx.Step(`^the browser follows the card-data link with "([^"]*)"$`, tc.browserFollowsTheCardDataLink)
+	ctx.Step(`^the browser follows the pin link with "([^"]*)"$`, tc.browserFollowsThePinLink)
+	ctx.Step(`^the payload decrypts with the caller's private key to card details$`, tc.payloadDecryptsToCardDetails)
+	ctx.Step(`^the decrypted card number matches the previous read$`, tc.decryptedPANMatchesPrevious)
+	ctx.Step(`^no card data is disclosed$`, tc.noCardDataIsDisclosed)
+	ctx.Step(`^the caller sets the card PIN to "([^"]*)"$`, tc.callerSetsTheCardPIN)
+	ctx.Step(`^the caller reads the card PIN$`, tc.callerReadsTheCardPIN)
+	ctx.Step(`^the decrypted PIN is "([^"]*)"$`, tc.decryptedPINIs)
+	ctx.Step(`^the decrypted PIN looks like a PIN$`, tc.decryptedPINLooksLikeAPIN)
+
+	// Card transaction catalogue and simulation steps
+	ctx.Step(`^I GET the card transaction scenario catalogue$`, tc.getCardTxScenarioCatalogue)
+	ctx.Step(`^the catalogue lists (\d+) scenarios$`, tc.catalogueListsScenarios)
+	ctx.Step(`^the catalogue includes the scenario "([^"]*)"$`, tc.catalogueIncludesScenario)
+	ctx.Step(`^I simulate the card transaction scenario "([^"]*)"$`, tc.simulateCardTransaction)
+	ctx.Step(`^I simulate the card transaction scenario "([^"]*)" emitting "([^"]*)"$`, tc.simulateCardTransactionWithEvent)
+	ctx.Step(`^I simulate (\d+) card transactions of scenario "([^"]*)"$`, tc.simulateNCardTransactions)
+	ctx.Step(`^the simulated transaction has a numeric id and cardId$`, tc.simulatedTransactionHasNumericIdentifiers)
+	ctx.Step(`^I GET the card transactions page "([^"]*)"$`, tc.getCardTransactionsPage)
+	ctx.Step(`^the listing contains the simulated transaction with its unmodelled fields intact$`, tc.simulatedTransactionAppearsInListingWithUnmodelledFields)
+	ctx.Step(`^the listing holds (\d+) of (\d+) transactions across (\d+) pages$`, tc.listingHoldsPage)
+	ctx.Step(`^I set the simulated transaction status to "([^"]*)"$`, tc.setSimulatedTransactionStatus)
+	ctx.Step(`^the stored transaction reports txStatus "([^"]*)"$`, tc.storedTransactionStatusIs)
+	ctx.Step(`^the error names the valid scenarios$`, tc.errorNamesTheValidScenarios)
+
+	// Consumer contract steps
+	ctx.Step(`^(GET|PUT|POST|DELETE) (\S+) is served$`, tc.endpointIsServed)
+	ctx.Step(`^the card object carries the fields consumers read$`, tc.cardObjectCarriesConsumerFields)
+	ctx.Step(`^each listed card transaction carries the fields consumers read$`, tc.cardTransactionsCarryConsumerFields)
+	ctx.Step(`^the user state carries the profile and verifications consumers read$`, tc.userStateCarriesConsumerFields)
+
+	// Admin UI steps
+	ctx.Step(`^I browse to "([^"]*)"$`, tc.browseTo)
+	ctx.Step(`^I browse to the user detail page$`, tc.browseToUserDetail)
+	ctx.Step(`^I browse to the card transaction form for the user$`, tc.browseToCardTxFormForUser)
+	ctx.Step(`^the response is an HTML page$`, tc.responseIsHTML)
+	ctx.Step(`^the page shows "([^"]*)"$`, tc.pageShows)
+	ctx.Step(`^the page does not show "([^"]*)"$`, tc.pageDoesNotShow)
+	ctx.Step(`^the page offers every card transaction scenario$`, tc.pageOffersEveryCardScenario)
+	ctx.Step(`^I submit the UI KYC action with outcome "([^"]*)"$`, tc.submitUIKYCAction)
+	ctx.Step(`^I submit the UI card transaction for scenario "([^"]*)"$`, tc.submitUICardTransaction)
+	ctx.Step(`^I submit the UI withdrawal settlement "([^"]*)"$`, tc.submitUIWithdrawalSettlement)
+	ctx.Step(`^the UI redirects reporting success$`, tc.uiRedirectedWithSuccess)
+	ctx.Step(`^the UI redirects reporting failure$`, tc.uiRedirectedWithFailure)
+	ctx.Step(`^the redirect reports "([^"]*)"$`, tc.uiRedirectReports)
+	ctx.Step(`^I follow the UI redirect$`, tc.followUIRedirect)
+	ctx.Step(`^I request "([^"]*)" on the application port$`, tc.requestOnApplicationPort)
+	ctx.Step(`^I request "([^"]*)" on the admin port$`, tc.requestOnAdminPort)
+	ctx.Step(`^the path is not served there$`, tc.pathIsNotServedThere)
+
+	// Withdrawal settlement steps
+	ctx.Step(`^requests go to the asynchronous withdrawals instance$`, tc.usingTheAsyncWithdrawalsInstance)
+	ctx.Step(`^I request a withdrawal of "([^"]*)" ([A-Z]+)$`, tc.requestWithdrawal)
+	ctx.Step(`^the withdrawal status is "([^"]*)"$`, tc.withdrawalStatusIs)
+	ctx.Step(`^I GET the withdrawals filtered by "([^"]*)"$`, tc.iGETWithdrawalsFiltered)
+	ctx.Step(`^the withdrawal listing holds (\d+) withdrawals?$`, tc.withdrawalListingHolds)
+	ctx.Step(`^the withdrawal listing names the destination bank details$`, tc.withdrawalListingNamesTheBankDetails)
+	ctx.Step(`^I trigger the withdrawal event "([^"]*)"$`, tc.triggerWithdrawalEvent)
+	ctx.Step(`^I trigger the withdrawal event "([^"]*)" for transaction "([^"]*)"$`, func(event, txID string) error {
+		return tc.triggerWithdrawalEventFor(txID, event)
+	})
+	ctx.Step(`^the "([^"]*)" webhook reports the withdrawal$`, tc.withdrawalWebhookReportsTheTransaction)
+
+	// Statement steps
+	ctx.Step(`^I GET the account confirmation for the user wallet$`, tc.getAccountConfirmation)
+	ctx.Step(`^I GET the account confirmation for the user wallet without any HMAC headers$`, tc.getAccountConfirmationUnauthenticated)
+	ctx.Step(`^I GET the account statement for the user wallet for the current month$`, tc.getAccountStatementForCurrentMonth)
+	ctx.Step(`^I GET the account statement for the user wallet for "([^"]*)"$`, tc.getAccountStatementForPeriod)
+	ctx.Step(`^I GET the transfer confirmation for that transaction$`, tc.getTransferConfirmationForLastTransaction)
+	ctx.Step(`^I GET the transfer confirmation for transaction "([^"]*)"$`, tc.getTransferConfirmationFor)
+	ctx.Step(`^the response is a PDF attachment named "([^"]*)"$`, tc.responseIsPDFAttachment)
+	ctx.Step(`^the response is not a PDF$`, tc.responseIsNotAPDF)
+	ctx.Step(`^the statement reads "([^"]*)"$`, tc.statementReads)
+	ctx.Step(`^the statement names the user wallet$`, tc.statementNamesTheUserWallet)
+	ctx.Step(`^the statement names the current month$`, tc.statementNamesTheCurrentMonth)
+	ctx.Step(`^the statement lists at least one transaction$`, tc.statementListsATransaction)
+	ctx.Step(`^the statement reports the transaction amount "([^"]*)"$`, tc.statementReportsAmount)
+	ctx.Step(`^the user has made an external deposit of ([\d.]+) ([A-Z]+)$`, tc.userMadeExternalDeposit)
+	ctx.Step(`^the user has made a hosted transfer of ([\d.]+) ([A-Z]+)$`, tc.userMadeHostedTransfer)
+
+	// Webhook assertions
+	ctx.Step(`^the webhook sink is empty$`, tc.clearReceivedWebhooks)
+	ctx.Step(`^a "([^"]*)" webhook is delivered$`, tc.webhookIsDelivered)
+	ctx.Step(`^the "([^"]*)" webhook carries the full transaction$`, tc.cardTransactionWebhookCarriesTheTransaction)
+	ctx.Step(`^a "cards.card.created" webhook reports the assigned identifiers$`, tc.cardCreatedWebhookCarriesTheIdentifiers)
+
 	// Transaction steps
 	ctx.Step(`^a managed user with at least one wallet address$`, tc.managedUserWithWalletAddress)
 	ctx.Step(`^authenticated requests signed with HMAC headers$`, tc.authenticatedRequestsWithHMAC)
 	ctx.Step(`^an iframe token obtained with scope \["([^"]*)"\] and mapped to the managed user$`, tc.iframeTokenWithScope)
 	ctx.Step(`^I POST (.+) with amount "([^"]*)" and currency "([^"]*)" and Authorization header "Bearer (.+)"$`, tc.postTransactionWithAuth)
-	ctx.Step(`^the user balance for EUR increases by (\d+)\.(\d+)$`, tc.userBalanceIncreasesBy)
+	// Balance steps: assert on the observed balance, not just on the response.
+	ctx.Step(`^I record the user's ([A-Z]+) balance$`, tc.iRecordTheBalance)
+	ctx.Step(`^the user's ([A-Z]+) balance has increased by ([\d.]+)$`, tc.balanceHasIncreasedBy)
+	ctx.Step(`^the user's ([A-Z]+) balance has decreased by ([\d.]+)$`, tc.balanceHasDecreasedBy)
+	ctx.Step(`^the user's ([A-Z]+) balance is unchanged$`, tc.balanceIsUnchanged)
+	ctx.Step(`^the user has a funded ([A-Z]+) balance$`, tc.userHasFundedBalance)
+	ctx.Step(`^I POST a hosted transfer of ([\d.]+) ([A-Z]+) from the user wallet to "([^"]*)"$`, tc.postHostedTransferFromUserWallet)
+	ctx.Step(`^I POST a hosted transfer of ([\d.]+) ([A-Z]+) from "([^"]*)" to the user wallet$`, tc.postHostedTransferToUserWallet)
+	ctx.Step(`^the response reports sending_address as (.+)$`, tc.responseEchoesSendingAddress)
 	ctx.Step(`^I POST (.+) with user_id, amount (\d+)\.(\d+), currency "([^"]*)", type (\d+), and deposit_type "([^"]*)"$`, tc.postHostedTransfer)
 	ctx.Step(`^the response includes an id or uuid$`, tc.responseHasIDOrUUID)
 	ctx.Step(`^the amount echoes (\d+)\.(\d+)$`, tc.amountEchoes)

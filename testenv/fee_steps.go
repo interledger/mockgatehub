@@ -200,21 +200,6 @@ func (tc *TestContext) postHostedTransferWithFeeFields(amount float64, currency 
 	return nil
 }
 
-// responseStatusWithStatusText checks both status code and a "status" field in the body
-func (tc *TestContext) responseStatusWithStatusText(code int, status string) error {
-	if tc.lastResponse.StatusCode != code {
-		return fmt.Errorf("expected status %d, got %d. Body: %s", code, tc.lastResponse.StatusCode, string(tc.lastResponseBody))
-	}
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-	if s, ok := result["status"].(string); !ok || s != status {
-		return fmt.Errorf("expected status field %q, got %v", status, result["status"])
-	}
-	return nil
-}
-
 // mustJSON marshals a value to a JSON string, panicking on error
 func mustJSON(v interface{}) string {
 	b, err := json.Marshal(v)
@@ -272,16 +257,17 @@ func (tc *TestContext) userFeeSourceIs(feeType, expectedSource string) error {
 	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
 		return err
 	}
-	
+
 	var sourceField string
-	if feeType == "deposit" {
+	switch feeType {
+	case "deposit":
 		sourceField = "deposit_fee_source"
-	} else if feeType == "withdrawal" {
+	case "withdrawal":
 		sourceField = "withdrawal_fee_source"
-	} else {
+	default:
 		return fmt.Errorf("invalid fee type %q, must be 'deposit' or 'withdrawal'", feeType)
 	}
-	
+
 	actual, ok := result[sourceField].(string)
 	if !ok {
 		return fmt.Errorf("%s not found or not a string in response: %s", sourceField, string(tc.lastResponseBody))

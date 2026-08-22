@@ -1,3 +1,4 @@
+@wallets
 Feature: Wallet lifecycle and balances
   As a wallet developer
   I want managed users to automatically receive XRPL wallets upon creation

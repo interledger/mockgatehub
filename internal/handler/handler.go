@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"mockgatehub/internal/config"
 	"mockgatehub/internal/consts"
 	"mockgatehub/internal/logger"
 	"mockgatehub/internal/models"
@@ -25,6 +26,7 @@ import (
 
 // Handler holds dependencies for HTTP handlers
 type Handler struct {
+	config         *config.Config
 	store          storage.Storage
 	webhookManager *webhook.Manager
 	httpClient     *http.Client
@@ -40,10 +42,23 @@ type TransactionRequest struct {
 	TOTPCode   string `json:"totp_code,omitempty"`
 }
 
-// NewHandler creates a new handler with dependencies
+// NewHandler creates a new handler with configuration loaded from the
+// environment. Prefer NewHandlerWithConfig when a config is already available
+// (as it is in main) so the process loads its configuration exactly once.
 func NewHandler(store storage.Storage, webhookManager *webhook.Manager) *Handler {
+	return NewHandlerWithConfig(config.Load(), store, webhookManager)
+}
+
+// NewHandlerWithConfig creates a new handler with an explicit configuration.
+// A nil cfg falls back to loading from the environment, so tests that do not
+// care about configuration can pass nil.
+func NewHandlerWithConfig(cfg *config.Config, store storage.Storage, webhookManager *webhook.Manager) *Handler {
+	if cfg == nil {
+		cfg = config.Load()
+	}
 	logger.Info("initializing http handlers")
 	return &Handler{
+		config:         cfg,
 		store:          store,
 		webhookManager: webhookManager,
 		httpClient: &http.Client{
@@ -113,7 +128,9 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 	logger.Debug("health check requested")
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	w.Write([]byte(`{"status":"ok","service":"mockgatehub"}`))
+	if _, err := w.Write([]byte(`{"status":"ok","service":"mockgatehub"}`)); err != nil {
+		logger.Warn("failed to write health check response", zap.Error(err))
+	}
 }
 
 // RootHandler serves the main iframe page for deposit/onboarding
@@ -129,7 +146,7 @@ func (h *Handler) RootHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logger.Info("serving iframe", zap.String("payment_type", paymentType), zap.String("bearer_prefix", bearer[:min(20, len(bearer))]))
+	logger.Info("serving iframe", zap.String("payment_type", paymentType), zap.String("bearer_prefix", tokenPrefix(bearer)))
 
 	// If no paymentType is provided, treat this as onboarding and serve the KYC iframe
 	if paymentType == "" || paymentType == "onboarding" {
@@ -176,10 +193,7 @@ func (h *Handler) RootHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Otherwise, serve the payment iframe (deposit/withdrawal/exchange)
-	bearerShort := bearer
-	if len(bearer) > 20 {
-		bearerShort = bearer[:20] + "..."
-	}
+	bearerShort := tokenPrefix(bearer)
 
 	// Select the appropriate template based on payment type
 	var templateFile string
@@ -414,14 +428,20 @@ func (h *Handler) processDeposit(w http.ResponseWriter, bearer string, txReq *Tr
 	// Get vault_uuid for the currency
 	vaultUUID := consts.SandboxVaultIDs[txReq.Currency]
 
-	// Parse amount as float
-	amountFloat, _ := strconv.ParseFloat(txReq.Amount, 64)
-	amountStr := fmt.Sprintf("%.2f", amountFloat)
+	// Parse amount as float. A malformed amount must not silently become 0.00:
+	// the iframe would report a successful deposit of nothing.
+	amountFloat, err := strconv.ParseFloat(txReq.Amount, 64)
+	if err != nil {
+		logger.Error("invalid amount format in deposit request", zap.String("amount", txReq.Amount), zap.Error(err))
+		h.sendErrorWithCORS(w, http.StatusBadRequest, fmt.Sprintf("invalid amount format %q: expected a decimal number", txReq.Amount))
+		return
+	}
+	amountStr := formatAmount(amountFloat)
 
 	// Calculate deposit fee
 	feePercent, _ := h.feeConfig.GetDepositFeeForUser(userUUID)
 	feeAmount := CalculateFee(amountFloat, feePercent)
-	feeStr := fmt.Sprintf("%.2f", feeAmount)
+	feeStr := formatAmount(feeAmount)
 	// For deposits, total_amount = amount (fee is charged separately by GateHub)
 	totalAmountStr := amountStr
 
@@ -512,18 +532,24 @@ func (h *Handler) processWithdrawal(w http.ResponseWriter, bearer string, txReq 
 	// Get vault_uuid for the currency
 	vaultUUID := consts.SandboxVaultIDs[txReq.Currency]
 
-	// Parse amount as float
-	amountFloat, _ := strconv.ParseFloat(txReq.Amount, 64)
-	amountStr := fmt.Sprintf("%.2f", amountFloat)
+	// Parse amount as float. A malformed amount must not silently become 0.00:
+	// the iframe would report a successful withdrawal of nothing.
+	amountFloat, err := strconv.ParseFloat(txReq.Amount, 64)
+	if err != nil {
+		logger.Error("invalid amount format in withdrawal request", zap.String("amount", txReq.Amount), zap.Error(err))
+		h.sendErrorWithCORS(w, http.StatusBadRequest, fmt.Sprintf("invalid amount format %q: expected a decimal number", txReq.Amount))
+		return
+	}
+	amountStr := formatAmount(amountFloat)
 
 	// Calculate withdrawal fee
 	feePercent, _ := h.feeConfig.GetWithdrawalFeeForUser(userUUID)
 	feeAmount := CalculateFee(amountFloat, feePercent)
-	feeStr := fmt.Sprintf("%.2f", feeAmount)
+	feeStr := formatAmount(feeAmount)
 
 	// For withdrawals, the amount is deducted (total_amount includes the fee deducted)
 	totalAmount := amountFloat + feeAmount // Total deducted from user's balance
-	totalAmountStr := fmt.Sprintf("%.2f", totalAmount)
+	totalAmountStr := formatAmount(totalAmount)
 
 	// Check if user has sufficient balance
 	currentBalance, _ := h.store.GetBalance(userUUID, txReq.Currency)
@@ -539,6 +565,17 @@ func (h *Handler) processWithdrawal(w http.ResponseWriter, bearer string, txReq 
 
 	txID := utils.GenerateUUID()
 
+	// A real provider settles a withdrawal asynchronously, but a consumer that
+	// does not handle withdrawal webhooks would then see its withdrawals never
+	// complete. The behaviour is therefore selectable, defaulting to
+	// settling immediately.
+	status := consts.TransactionStatusCompleted
+	responseMessage := "Withdrawal completed"
+	if h.config.AsyncWithdrawals {
+		status = consts.TransactionStatusPending
+		responseMessage = "Withdrawal pending"
+	}
+
 	tx := &models.Transaction{
 		ID:               txID,
 		UserID:           userUUID,
@@ -547,10 +584,14 @@ func (h *Handler) processWithdrawal(w http.ResponseWriter, bearer string, txReq 
 		Fee:              feeStr,
 		Currency:         txReq.Currency,
 		VaultUUID:        vaultUUID,
+		SendingAddress:   walletAddress,
 		ReceivingAddress: walletAddress,
 		Type:             consts.TransactionTypeWithdrawal, // Type 0 = withdrawal
 		DepositType:      consts.DepositTypeWithdrawal,
-		Status:           consts.TransactionStatusCompleted,
+		Status:           status,
+		AccountIBAN:      consts.MockWithdrawalIBAN,
+		AccountLegalName: consts.MockWithdrawalLegalName,
+		Message:          consts.MockWithdrawalReference,
 	}
 
 	if err := h.store.CreateTransaction(tx); err != nil {
@@ -559,26 +600,36 @@ func (h *Handler) processWithdrawal(w http.ResponseWriter, bearer string, txReq 
 		return
 	}
 
-	// Note that deduct can potentially fail and then we would have to handle it somehow. For simplicity, we assume
-	// it succeeds here. In a real implementation, you would want to handle potential errors and possibly roll back
-	// the transaction creation if balance deduction fails.
+	if h.config.AsyncWithdrawals {
+		// The balance moves when the withdrawal settles, not when it is
+		// requested: a rejected withdrawal must leave the balance untouched.
+		logger.Info("withdrawal created as pending",
+			zap.String("user_id", userUUID),
+			zap.String("transaction_id", txID),
+			zap.String("amount", amountStr),
+			zap.String("currency", txReq.Currency))
+	} else {
+		// Deduct balance (including fee) from user. If this fails the
+		// transaction record is already written; the withdrawal is reported as
+		// failed rather than silently leaving an uncharged completion behind.
+		if err := h.store.DeductBalance(userUUID, txReq.Currency, totalAmount); err != nil {
+			logger.Error("failed to deduct balance for withdrawal", zap.String("user_id", userUUID), zap.Error(err))
+			if updateErr := h.store.UpdateTransactionStatus(txID, consts.TransactionStatusFailed); updateErr != nil {
+				logger.Error("failed to mark withdrawal as failed", zap.String("transaction_id", txID), zap.Error(updateErr))
+			}
+			h.sendErrorWithCORS(w, http.StatusInternalServerError, "Failed to deduct balance")
+			return
+		}
 
-	// Deduct balance (including fee) from user
-	if err := h.store.DeductBalance(userUUID, txReq.Currency, totalAmount); err != nil {
-		logger.Error("failed to deduct balance for withdrawal", zap.String("user_id", userUUID), zap.Error(err))
-		h.sendErrorWithCORS(w, http.StatusInternalServerError, "Failed to deduct balance")
-		return
+		// Settling immediately emits no webhook: the consumer learns the
+		// outcome from this response.
+		logger.Info("withdrawal completed", zap.String("user_id", userUUID), zap.String("transaction_id", txID), zap.String("amount", amountStr), zap.String("currency", txReq.Currency))
 	}
-
-	// NOTE: Unlike deposits, withdrawals do NOT send webhooks to the backend
-	// The withdrawal flow is: iframe -> postMessage -> frontend -> CreateGatehubWithdrawal RPC -> backend workflow
-	// Real GateHub does not send withdrawal webhooks either
-	logger.Info("withdrawal completed", zap.String("user_id", userUUID), zap.String("transaction_id", txID), zap.String("amount", amountStr), zap.String("currency", txReq.Currency))
 
 	// Return success response with transaction ID for iframe
 	h.sendJSONWithCORS(w, http.StatusOK, map[string]string{
 		"status":         "success",
-		"message":        "Withdrawal completed",
+		"message":        responseMessage,
 		"transaction_id": txID, // Frontend needs this for CreateGatehubWithdrawal
 		"uuid":           txID, // Alias for compatibility
 	})
@@ -593,7 +644,7 @@ func (h *Handler) extractUserFromBearer(bearer string) string {
 		}
 	}
 
-	logger.Debug("bearer token not found in mapping", zap.String("token_prefix", bearer[:min(30, len(bearer))]))
+	logger.Debug("bearer token not found in mapping", zap.String("token_prefix", tokenPrefix(bearer)))
 	return ""
 }
 

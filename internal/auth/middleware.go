@@ -19,13 +19,23 @@ var PublicEndpoints = map[string]bool{
 	"/iframe/submit":        true, // Iframe form submission
 	"/transaction/complete": true, // Iframe completion callback
 	"/api/user-currencies":  true, // Iframe currency lookup
-	"/admin/fees":           true, // Admin fee configuration (test support)
+
+	// Card data and PIN are fetched straight from the browser, which holds a
+	// short-lived token and none of the HMAC credentials. Real GateHub
+	// authenticates these with the token alone, so HMAC must be skipped.
+	"/cards/v1/token/card-data/data": true,
+	"/cards/v1/token/pin/data":       true,
+	"/cards/v1/token/pin/public-key": true,
 }
 
-// PublicEndpointPatterns are path patterns (with placeholders) that don't require authentication
-var PublicEndpointPatterns = []string{
-	"/admin/users/*/fees", // User-specific fee configuration (test support)
-}
+// PublicEndpointPatterns are path patterns (with placeholders) that don't
+// require authentication.
+//
+// The admin and test-support endpoints used to be listed here. They now live on
+// their own listener, which has no authentication middleware at all, so
+// exempting them on this one would only widen the application API's public
+// surface for paths it no longer serves.
+var PublicEndpointPatterns = []string{}
 
 // matchesPublicPattern checks if a path matches any of the public endpoint patterns
 func matchesPublicPattern(path string) bool {

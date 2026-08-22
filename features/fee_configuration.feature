@@ -1,3 +1,4 @@
+@fees
 Feature: Fee configuration and application
   As an e2e test runner
   I want to configure transaction fees dynamically via an API

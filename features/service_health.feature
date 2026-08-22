@@ -1,3 +1,4 @@
+@health
 Feature: Service health readiness
   As a developer running the test harness
   I want MockGatehub to expose a reliable health check

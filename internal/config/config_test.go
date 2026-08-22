@@ -137,3 +137,89 @@ func TestSplitString(t *testing.T) {
 	assert.Equal(t, []string{"single"}, splitString("single", ','))
 	assert.Equal(t, []string{"a", "b"}, splitString("a:b", ':'))
 }
+
+func TestLoad_PublicBaseURLDefault(t *testing.T) {
+	t.Setenv("MOCKGATEHUB_PUBLIC_BASE_URL", "")
+	t.Setenv("MOCKGATEHUB_PORT", "")
+	cfg := Load()
+	assert.Equal(t, "http://localhost:8080", cfg.PublicBaseURL)
+}
+
+func TestLoad_PublicBaseURLFollowsThePort(t *testing.T) {
+	// The links built from this are followed by a browser. Defaulting to 8080
+	// while the server listens on 9090 would point them at nothing.
+	t.Setenv("MOCKGATEHUB_PUBLIC_BASE_URL", "")
+	t.Setenv("MOCKGATEHUB_PORT", "9090")
+
+	cfg := Load()
+
+	assert.Equal(t, "9090", cfg.Port)
+	assert.Equal(t, "http://localhost:9090", cfg.PublicBaseURL)
+}
+
+func TestLoad_ExplicitPublicBaseURLWinsOverThePort(t *testing.T) {
+	// Behind a proxy the externally reachable URL has nothing to do with the
+	// port the process binds.
+	t.Setenv("MOCKGATEHUB_PORT", "9090")
+	t.Setenv("MOCKGATEHUB_PUBLIC_BASE_URL", "https://mock.example.com")
+
+	assert.Equal(t, "https://mock.example.com", Load().PublicBaseURL)
+}
+
+func TestLoad_PublicBaseURLTrimsTrailingSlash(t *testing.T) {
+	// Callers build absolute URLs by concatenating a rooted path, so a trailing
+	// slash would yield "https://host//cards/v1/...".
+	t.Setenv("MOCKGATEHUB_PUBLIC_BASE_URL", "https://mock.example.com/")
+	cfg := Load()
+	assert.Equal(t, "https://mock.example.com", cfg.PublicBaseURL)
+
+	t.Setenv("MOCKGATEHUB_PUBLIC_BASE_URL", "https://mock.example.com///")
+	cfg = Load()
+	assert.Equal(t, "https://mock.example.com", cfg.PublicBaseURL)
+}
+
+func TestLoad_CardDataTokenSecretGeneratedWhenUnset(t *testing.T) {
+	t.Setenv("MOCKGATEHUB_CARD_DATA_TOKEN_SECRET", "")
+
+	first := Load()
+	second := Load()
+
+	assert.NotEmpty(t, first.CardDataTokenSecret)
+	// A compiled-in default would let anyone mint a card-data token, so each
+	// load must produce its own secret.
+	assert.NotEqual(t, first.CardDataTokenSecret, second.CardDataTokenSecret,
+		"generated secret must not be a fixed value")
+}
+
+func TestLoad_CardDataTokenSecretHonoursEnv(t *testing.T) {
+	t.Setenv("MOCKGATEHUB_CARD_DATA_TOKEN_SECRET", "explicit-secret")
+	cfg := Load()
+	assert.Equal(t, "explicit-secret", cfg.CardDataTokenSecret)
+}
+
+func TestRandomSecret_LengthAndUniqueness(t *testing.T) {
+	a := randomSecret(32)
+	b := randomSecret(32)
+	assert.NotEmpty(t, a)
+	assert.NotEqual(t, a, b)
+	// base64 raw-url of 32 bytes is 43 chars.
+	assert.Len(t, a, 43)
+}
+
+func TestLoad_AsyncWithdrawalsDefaultsOff(t *testing.T) {
+	// Consumers that handle no withdrawal webhooks would see their withdrawals
+	// never complete, so the asynchronous behaviour must be opt-in.
+	t.Setenv("MOCKGATEHUB_ASYNC_WITHDRAWALS", "")
+	assert.False(t, Load().AsyncWithdrawals)
+}
+
+func TestLoad_AsyncWithdrawalsIsOptIn(t *testing.T) {
+	for _, truthy := range []string{"true", "1", "yes"} {
+		t.Setenv("MOCKGATEHUB_ASYNC_WITHDRAWALS", truthy)
+		assert.True(t, Load().AsyncWithdrawals, "expected %q to enable", truthy)
+	}
+	for _, falsy := range []string{"false", "0", "no"} {
+		t.Setenv("MOCKGATEHUB_ASYNC_WITHDRAWALS", falsy)
+		assert.False(t, Load().AsyncWithdrawals, "expected %q to disable", falsy)
+	}
+}

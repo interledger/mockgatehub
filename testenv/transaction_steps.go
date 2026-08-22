@@ -30,29 +30,6 @@ func (tc *TestContext) postTransactionWithAuth(path, amount, currency, authToken
 	return err
 }
 
-func (tc *TestContext) userBalanceIncreasesBy(wholeAmount, decimalAmount int) error {
-	// Simplified check - just verify the response indicates success
-	if tc.lastResponse.StatusCode != 200 {
-		// Include response body in error message for debugging
-		responseMsg := string(tc.lastResponseBody)
-		if len(responseMsg) > 200 {
-			responseMsg = responseMsg[:200] + "..."
-		}
-		return fmt.Errorf("expected status 200, got %d. Response: %s", tc.lastResponse.StatusCode, responseMsg)
-	}
-
-	var result map[string]interface{}
-	if err := json.Unmarshal(tc.lastResponseBody, &result); err != nil {
-		return err
-	}
-
-	if status, ok := result["status"].(string); !ok || status != "success" {
-		return fmt.Errorf("expected success status, got: %v", result["status"])
-	}
-
-	return nil
-}
-
 func (tc *TestContext) postHostedTransfer(path string, amount float64, decimalPart int, currency string, txType int, depositType string) error {
 	body := map[string]interface{}{
 		"user_id":      tc.userID,

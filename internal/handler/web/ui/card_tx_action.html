@@ -1,0 +1,68 @@
+{{define "content"}}
+<h2>Simulate a card transaction</h2>
+<p class="muted">
+  Materialises one of the {{len .Scenarios}} catalogue scenarios against a real card and emits the
+  chosen webhook. The scenario supplies the transaction shape; the overrides below change individual fields.
+</p>
+<form method="post" action="/ui/actions/card-transaction">
+  <div class="row">
+    <div>
+      <label for="userID">User</label>
+      <select id="userID" name="userID" required>
+        <option value="">Choose a user…</option>
+        {{range .Users}}
+          <option value="{{.User.ID}}" {{if eq .User.ID $.SelectedUserID}}selected{{end}}>{{.User.Email}}</option>
+        {{end}}
+      </select>
+
+      <label for="cardID">Card</label>
+      <select id="cardID" name="cardID" required>
+        <option value="">Choose a card…</option>
+        {{range .Cards}}
+          <option value="{{.ID}}" {{if eq .ID $.SelectedCardID}}selected{{end}}>{{.MaskedPan}} — {{.NameOnCard}}</option>
+        {{end}}
+      </select>
+      {{if not .Cards}}<p class="muted">No cards found. Pick a user with a card, or order one first.</p>{{end}}
+    </div>
+
+    <div>
+      <label for="scenario">Scenario</label>
+      <select id="scenario" name="scenario" required>
+        {{range .Scenarios}}
+          <option value="{{.Key}}">{{.Operation}}{{if .Classification}} / {{.Classification}}{{end}} — {{.Case}}</option>
+        {{end}}
+      </select>
+
+      <label for="event">Webhook</label>
+      <select id="event" name="event">
+        {{range .Events}}
+          <option value="{{.Value}}">{{.Label}}</option>
+        {{end}}
+      </select>
+
+      <label for="amount">Override amount <span class="muted">(optional)</span></label>
+      <input type="text" id="amount" name="amount" placeholder="e.g. 42.00">
+
+      <label for="merchantName">Override merchant <span class="muted">(optional)</span></label>
+      <input type="text" id="merchantName" name="merchantName" placeholder="e.g. Coffee Shop">
+    </div>
+  </div>
+
+  <button type="submit">Simulate</button>
+</form>
+
+<h2>Catalogue</h2>
+<table>
+  <thead><tr><th>Operation</th><th>Classification</th><th>Case</th><th>Key</th></tr></thead>
+  <tbody>
+  {{range .Scenarios}}
+    <tr>
+      <td>{{.Operation}}</td>
+      <td>{{if .Classification}}{{.Classification}}{{else}}<span class="muted">—</span>{{end}}</td>
+      <td>{{.Case}}</td>
+      <td class="mono muted">{{.Key}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}

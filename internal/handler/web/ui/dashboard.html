@@ -1,0 +1,19 @@
+{{define "content"}}
+<h2>Users</h2>
+<table>
+  <thead><tr><th>Email</th><th>KYC state</th><th>Risk</th><th>Balances</th><th>ID</th></tr></thead>
+  <tbody>
+  {{range .Users}}
+    <tr>
+      <td><a href="/ui/users/{{.User.ID}}">{{.User.Email}}</a></td>
+      <td>{{.User.KYCState}}</td>
+      <td>{{.User.RiskLevel}}</td>
+      <td>{{if .Balances}}{{range $currency, $amount := .Balances}}<span class="mono">{{printf "%.2f" $amount}} {{$currency}}</span><br>{{end}}{{else}}<span class="muted">none</span>{{end}}</td>
+      <td class="mono muted">{{.User.ID}}</td>
+    </tr>
+  {{else}}
+    <tr><td colspan="5" class="muted">No users yet. Create one through /auth/v1/users/managed.</td></tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}

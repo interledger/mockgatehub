@@ -654,47 +654,110 @@ func TestUpdateCardLimits_POST(t *testing.T) {
 
 // --- GetCardToken ---
 
-func TestGetCardToken_Success(t *testing.T) {
+func TestGetCardToken_CardDataReturnsSignedTokenAndAbsoluteLink(t *testing.T) {
 	h, _ := setupCardsHandler(t)
+	h.config.PublicBaseURL = "https://mock.example.com"
 
-	body := map[string]interface{}{"cardId": "card-123"}
-	b, _ := json.Marshal(body)
-	req := httptest.NewRequest(http.MethodPost, "/cards/v1/token/card-data", bytes.NewReader(b))
+	pub, _ := newTestRSAKeys(t)
+	resp := postCardTokenRequest(t, h, cardTokenTypeCardData, "card-123", &pub)
+
+	// The browser follows links[0].href itself, so it has to be absolute.
+	require.Len(t, resp.Links, 1)
+	assert.Equal(t, "https://mock.example.com/cards/v1/token/card-data/data", resp.Links[0].Href)
+	assert.Equal(t, http.MethodGet, resp.Links[0].Method)
+
+	// The token has to be verifiable and carry what the data endpoint needs.
+	claims, err := parseCardToken(h.config.CardDataTokenSecret, resp.Token)
+	require.NoError(t, err, "token must verify against the configured secret")
+	assert.Equal(t, cardTokenTypeCardData, claims.TokenType)
+	assert.Equal(t, "card-123", claims.CardID)
+	assert.Equal(t, pub, claims.PublicKey)
+	assert.Greater(t, claims.ExpiresAt, claims.IssuedAt, "token must expire")
+}
+
+func TestGetCardToken_PinChangeLinkIsAPost(t *testing.T) {
+	h, _ := setupCardsHandler(t)
+	h.config.PublicBaseURL = "https://mock.example.com"
+
+	// pin-change writes a value, so the advertised method must be POST.
+	resp := postCardTokenRequest(t, h, cardTokenTypePinChange, "card-123", nil)
+
+	require.Len(t, resp.Links, 1)
+	assert.Equal(t, "https://mock.example.com/cards/v1/token/pin/data", resp.Links[0].Href)
+	assert.Equal(t, http.MethodPost, resp.Links[0].Method)
+}
+
+func TestGetCardToken_RequiresPublicKeyWhenResponseIsEncrypted(t *testing.T) {
+	// card-data and pin encrypt their response to the caller, so a token
+	// issued without a key would be unusable. Fail early instead.
+	for _, tokenType := range []string{cardTokenTypeCardData, cardTokenTypePin} {
+		t.Run(tokenType, func(t *testing.T) {
+			h, _ := setupCardsHandler(t)
+			w := rawCardTokenRequest(t, h, tokenType, map[string]interface{}{"cardId": "card-123"})
+			assert.Equal(t, http.StatusBadRequest, w.Code)
+			assert.Contains(t, w.Body.String(), "publicKey")
+		})
+	}
+}
+
+func TestGetCardToken_PinChangeNeedsNoPublicKey(t *testing.T) {
+	// The pin-change flow sends data in, so there is nothing to encrypt back.
+	h, _ := setupCardsHandler(t)
+	w := rawCardTokenRequest(t, h, cardTokenTypePinChange, map[string]interface{}{"cardId": "card-123"})
+	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestGetCardToken_RequiresCardID(t *testing.T) {
+	h, _ := setupCardsHandler(t)
+	w := rawCardTokenRequest(t, h, cardTokenTypeCardData, map[string]interface{}{})
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "cardId")
+}
+
+func TestGetCardToken_UnimplementedTypesKeepPlaceholderResponse(t *testing.T) {
+	// These have no encrypted data endpoint behind them. Callers still expect a
+	// token-shaped response, so they must not start failing.
+	for _, tokenType := range []string{"apple-provisioning", "google-provisioning", "pai"} {
+		t.Run(tokenType, func(t *testing.T) {
+			h, _ := setupCardsHandler(t)
+			resp := postCardTokenRequest(t, h, tokenType, "card-123", nil)
+
+			assert.Equal(t, "mock-"+tokenType+"-card-123", resp.Token)
+			require.Len(t, resp.Links, 1)
+			assert.Contains(t, resp.Links[0].Href, tokenType)
+		})
+	}
+}
+
+// postCardTokenRequest mints a token and returns the decoded response, failing
+// the test if the request itself was rejected.
+func postCardTokenRequest(t *testing.T, h *Handler, tokenType, cardID string, publicKey *string) models.CardTokenResponse {
+	t.Helper()
+	body := map[string]interface{}{"cardId": cardID}
+	if publicKey != nil {
+		body["publicKey"] = *publicKey
+	}
+
+	w := rawCardTokenRequest(t, h, tokenType, body)
+	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+
+	var resp models.CardTokenResponse
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
+	return resp
+}
+
+func rawCardTokenRequest(t *testing.T, h *Handler, tokenType string, body map[string]interface{}) *httptest.ResponseRecorder {
+	t.Helper()
+	b, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/cards/v1/token/"+tokenType, bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
+	req = cardChiParams(req, map[string]string{"tokenType": tokenType})
 
 	w := httptest.NewRecorder()
 	h.GetCardToken(w, req)
-
-	assert.Equal(t, http.StatusOK, w.Code)
-	var resp models.CardTokenResponse
-	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-	assert.Contains(t, resp.Token, "mock-card-data-card-123")
-	assert.Len(t, resp.Links, 1)
-}
-
-func TestGetCardToken_AllTokenTypes(t *testing.T) {
-	tokenTypes := []string{"card-data", "pin", "pin-change", "apple-provisioning", "google-provisioning", "pai"}
-	for _, tt := range tokenTypes {
-		t.Run(tt, func(t *testing.T) {
-			h, _ := setupCardsHandler(t)
-			body := map[string]interface{}{"cardId": "card-123"}
-			b, _ := json.Marshal(body)
-			req := httptest.NewRequest(http.MethodPost, "/cards/v1/token/"+tt, bytes.NewReader(b))
-			req.Header.Set("Content-Type", "application/json")
-			req = cardChiParams(req, map[string]string{"tokenType": tt})
-
-			w := httptest.NewRecorder()
-			h.GetCardToken(w, req)
-
-			assert.Equal(t, http.StatusOK, w.Code, "token type %s failed", tt)
-			var resp models.CardTokenResponse
-			require.NoError(t, json.Unmarshal(w.Body.Bytes(), &resp))
-			expectedToken := "mock-" + tt + "-card-123"
-			assert.Equal(t, expectedToken, resp.Token, "token type %s", tt)
-			assert.Len(t, resp.Links, 1)
-			assert.Contains(t, resp.Links[0].Href, tt)
-		})
-	}
+	return w
 }
 
 // --- CreateCardTransaction ---

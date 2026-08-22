@@ -4,15 +4,18 @@ import "time"
 
 // User represents a Gatehub user
 type User struct {
-	ID        string    `json:"id"`
-	Email     string    `json:"email"`
-	Activated bool      `json:"activated"`
-	Managed   bool      `json:"managed"`
-	Role      string    `json:"role"`
-	Features  []string  `json:"features"`
-	KYCState  string    `json:"kyc_state"`  // accepted/rejected/action_required
-	RiskLevel string    `json:"risk_level"` // low/medium/high
-	CreatedAt time.Time `json:"created_at"`
+	ID        string   `json:"id"`
+	Email     string   `json:"email"`
+	Activated bool     `json:"activated"`
+	Managed   bool     `json:"managed"`
+	Role      string   `json:"role"`
+	Features  []string `json:"features"`
+	KYCState  string   `json:"kyc_state"`  // accepted/rejected/action_required/resubmission
+	RiskLevel string   `json:"risk_level"` // low/medium/high
+	// IsProfileCreationDisabled mirrors the provider flag that stops a user
+	// from creating a profile.
+	IsProfileCreationDisabled bool      `json:"is_profile_creation_disabled"`
+	CreatedAt                 time.Time `json:"created_at"`
 	// Profile fields
 	FirstName          string `json:"first_name"`
 	MiddleName         string `json:"middle_name"`
@@ -65,8 +68,14 @@ type Transaction struct {
 	VaultUUID        string    `json:"vault_uuid"`
 	SendingAddress   string    `json:"sending_address"`
 	ReceivingAddress string    `json:"receiving_address"`
-	Type             int       `json:"type"`         // 1=deposit, 2=hosted
+	Type             int       `json:"type"`         // 0=withdrawal, 1=deposit, 2=hosted
 	DepositType      string    `json:"deposit_type"` // external/hosted
-	Status           int       `json:"status"`       // 0=pending, 1=completed, 2=failed
+	Status           int       `json:"status"`       // 1=pending, 100=completed, 3=failed
 	CreatedAt        time.Time `json:"created_at"`
+
+	// Withdrawal settlement details. A withdrawal leaves the platform for a
+	// bank account, so a consumer displaying one needs to say where it went.
+	AccountIBAN      string `json:"account_iban,omitempty"`
+	AccountLegalName string `json:"account_legal_name,omitempty"`
+	Message          string `json:"message,omitempty"`
 }

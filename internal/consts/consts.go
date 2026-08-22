@@ -57,6 +57,10 @@ const (
 	KYCStateAccepted       = "accepted"
 	KYCStateRejected       = "rejected"
 	KYCStateActionRequired = "action_required"
+	// KYCStateResubmission means the provider has asked for documents to be
+	// supplied again. It is distinct from action_required: the consumer drives
+	// the user back through the flow itself.
+	KYCStateResubmission = "resubmission"
 )
 
 // Risk levels
@@ -97,15 +101,79 @@ const (
 	NetworkXRPLedger = 30
 )
 
+// Card defaults, matching what the GateHub sandbox returns for a new card.
+const (
+	DefaultCardProductCode = "PWSR_DEBP_2404"
+	DefaultCustomerType    = "Citizen"
+	DefaultAccountType     = "DEBIT"
+	CardRelationPrimary    = "PRIMARY"
+	DefaultStatusActive    = "ACTIVE"
+)
+
+// Card transaction types. These are the numeric `type` values GateHub puts on a
+// card transaction; the set mirrors the consumer-side CardTrxTypeEnum so a
+// simulated transaction is classified the same way a real one would be.
+const (
+	CardTxTypePurchase                   = 0
+	CardTxTypeATMWithdrawal              = 1
+	CardTxTypeCardVerificationInquiry    = 6
+	CardTxTypeCashAdvance                = 17
+	CardTxTypeRefundCreditPayment        = 20
+	CardTxTypeBalanceInquiryOnATM        = 30
+	CardTxTypePINUnblock                 = 91
+	CardTxTypePINChange                  = 92
+	CardTxTypePreauthorization           = 101
+	CardTxTypePreauthorizationIncrement  = 102
+	CardTxTypePreauthorizationCompletion = 103
+	CardTxTypeTransferToAccount          = 107
+	CardTxTypeTransferFromAccount        = 108
+)
+
+// Card transaction operations, describing which way money moves.
+const (
+	CardTxOperationWithdrawal = 0
+	CardTxOperationDeposit    = 1
+	CardTxOperationNone       = 2
+)
+
+// Card transaction statuses.
+const (
+	CardTxStatusProcessing = "PROCESSING"
+	CardTxStatusCompleted  = "COMPLETED"
+	CardTxStatusReversed   = "REVERSED"
+	CardTxStatusDeclined   = "DECLINED"
+)
+
 // Webhook event types
 const (
 	WebhookEventKYCAccepted       = "id.verification.accepted"
 	WebhookEventKYCRejected       = "id.verification.rejected"
 	WebhookEventKYCActionRequired = "id.verification.action_required"
-	WebhookEventDepositCompleted  = "core.deposit.completed"
-	WebhookEventCardCreated       = "cards.card.created"
-	WebhookEventCardTransaction   = "cards.transaction.event"
-	WebhookEventCard3DS           = "cards.3ds.auth_3ds_confirmation"
+	WebhookEventKYCResubmission   = "id.verification.resubmission"
+
+	// Document notices are not verification outcomes: they tell the consumer an
+	// identity document is expiring or has expired while the user stays
+	// verified.
+	WebhookEventDocumentNoticeExpired = "id.document_notice.expired"
+	WebhookEventDocumentNoticeWarning = "id.document_notice.warning"
+	WebhookEventDepositCompleted      = "core.deposit.completed"
+
+	// Withdrawal outcomes. Note the differing namespaces: completion comes
+	// from core, rejection from the bridge that settles it.
+	WebhookEventWithdrawalCompleted = "core.withdrawal.completed"
+	WebhookEventWithdrawalRejected  = "more-bridge.withdrawal.rejected"
+	WebhookEventCardCreated         = "cards.card.created"
+
+	// WebhookEventCardTransactionAuthorization carries a full card
+	// transaction under an "authorizationData" key. This is the event
+	// consumers listen for when they mirror card spend into their own ledger.
+	WebhookEventCardTransactionAuthorization = "cards.transaction.authorization"
+
+	// WebhookEventCardTransaction is the lighter notification-shaped event
+	// (title/body/ids). It does not carry the transaction itself, so a
+	// consumer that needs the amounts cannot use it.
+	WebhookEventCardTransaction = "cards.transaction.event"
+	WebhookEventCard3DS         = "cards.3ds.auth_3ds_confirmation"
 )
 
 // Card status values (GateHub Cards)
@@ -117,6 +185,14 @@ const (
 	CardStatusSoftDelete       = "SoftDelete"
 	CardStatusAccountBlocked   = "AccountBlocked"
 	CardStatusInCreation       = "InCreation"
+)
+
+// Placeholder bank details attached to a mock withdrawal, so a consumer
+// displaying one has something to show for where the money went.
+const (
+	MockWithdrawalIBAN      = "GB29NWBK60161331926819"
+	MockWithdrawalLegalName = "Jane Smith"
+	MockWithdrawalReference = "Mock Reference"
 )
 
 // Pre-seeded test user IDs

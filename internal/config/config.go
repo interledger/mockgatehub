@@ -1,13 +1,20 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Config holds application configuration
 type Config struct {
-	Port                  string
+	Port string
+	// AdminPort serves the admin UI and the test-support endpoints on their own
+	// listener, so that surface can be closed off at the network level while
+	// the application API stays reachable. It must differ from Port.
+	AdminPort             string
 	LogLevel              string
 	RedisURL              string
 	RedisDB               int
@@ -18,12 +25,32 @@ type Config struct {
 	EnforceAuthentication bool
 	ValidCredentials      map[string]string // appID -> secret
 	DefaultOrganizationID string
+
+	// PublicBaseURL is the externally reachable base URL of this mockgatehub
+	// instance, without a trailing slash. It is used to build absolute URLs in
+	// API responses that a browser follows directly rather than going back
+	// through the calling backend — currently the card-data tokenisation link.
+	PublicBaseURL string
+
+	// AsyncWithdrawals switches withdrawals from settling immediately to
+	// staying pending until an outcome is triggered, which is how a real
+	// provider behaves. It defaults to off: a consumer that does not handle
+	// withdrawal webhooks would see its withdrawals never complete.
+	AsyncWithdrawals bool
+
+	// CardDataTokenSecret is the HMAC secret used to sign the short-lived
+	// card-data JWTs returned by POST /cards/v1/token/card-data. It is
+	// deliberately not a compiled-in constant: the endpoint those tokens
+	// unlock is not HMAC-authenticated, so a shared hard-coded key would let
+	// anyone mint tokens. When unset we generate a random secret per process.
+	CardDataTokenSecret string
 }
 
 // Load reads configuration from environment variables
 func Load() *Config {
 	cfg := &Config{
 		Port:                  getEnv("MOCKGATEHUB_PORT", "8080"),
+		AdminPort:             getEnv("MOCKGATEHUB_ADMIN_PORT", "8081"),
 		LogLevel:              getEnv("LOG_LEVEL", "info"),
 		RedisURL:              getEnv("MOCKGATEHUB_REDIS_URL", ""),
 		RedisDB:               getEnvInt("MOCKGATEHUB_REDIS_DB", 0),
@@ -33,12 +60,45 @@ func Load() *Config {
 		EnforceAuthentication: getEnvBool("MOCKGATEHUB_ENFORCE_AUTHENTICATION", true),
 		ValidCredentials:      parseCredentials(getEnv("MOCKGATEHUB_VALID_CREDENTIALS", "local-test-app-id:local-test-app-secret")),
 		DefaultOrganizationID: getEnv("DEFAULT_ORGANIZATION_ID", "default-org"),
+		PublicBaseURL:         getEnv("MOCKGATEHUB_PUBLIC_BASE_URL", ""),
+		CardDataTokenSecret:   getEnv("MOCKGATEHUB_CARD_DATA_TOKEN_SECRET", ""),
+		AsyncWithdrawals:      getEnvBool("MOCKGATEHUB_ASYNC_WITHDRAWALS", false),
+	}
+
+	// The 2-second minimum delay clamp was removed upstream so webhooks can be
+	// delivered promptly; the value is used as configured.
+
+	// Default PublicBaseURL from the port actually in use. Hard-coding 8080
+	// here would generate links pointing at a port nothing is listening on
+	// whenever MOCKGATEHUB_PORT is changed and this is left unset.
+	if cfg.PublicBaseURL == "" {
+		cfg.PublicBaseURL = "http://localhost:" + cfg.Port
+	}
+
+	// Callers concatenate PublicBaseURL with rooted paths, so a trailing
+	// slash would produce a double slash in the generated URL.
+	cfg.PublicBaseURL = strings.TrimRight(cfg.PublicBaseURL, "/")
+
+	if cfg.CardDataTokenSecret == "" {
+		cfg.CardDataTokenSecret = randomSecret(32)
 	}
 
 	// Use Redis if URL is provided
 	cfg.UseRedis = cfg.RedisURL != ""
 
 	return cfg
+}
+
+// randomSecret returns a URL-safe base64 encoding of nBytes of cryptographically
+// random data. If the system RNG is unavailable we still return a non-empty
+// value: an unguessable secret is preferable, but an empty signing key would
+// silently accept every forged token.
+func randomSecret(nBytes int) string {
+	b := make([]byte, nBytes)
+	if _, err := rand.Read(b); err != nil {
+		return "mockgatehub-insecure-fallback-card-data-secret"
+	}
+	return base64.RawURLEncoding.EncodeToString(b)
 }
 
 // getEnv gets environment variable with fallback

@@ -128,45 +128,36 @@ func TestMatchPattern(t *testing.T) {
 	}
 }
 
-func TestMatchesPublicPattern(t *testing.T) {
-	tests := []struct {
-		name string
-		path string
-		want bool
-	}{
-		{
-			name: "user-specific fee GET endpoint",
-			path: "/admin/users/00000000-0000-0000-0000-000000000001/fees",
-			want: true,
-		},
-		{
-			name: "user-specific fee PUT endpoint",
-			path: "/admin/users/test-user-123/fees",
-			want: true,
-		},
-		{
-			name: "user-specific fee DELETE endpoint",
-			path: "/admin/users/abc-def-ghi/fees",
-			want: true,
-		},
-		{
-			name: "non-public endpoint",
-			path: "/core/v1/transactions",
-			want: false,
-		},
-		{
-			name: "global fees endpoint (not in patterns, but in PublicEndpoints)",
-			path: "/admin/fees",
-			want: false, // Should be handled by exact match in PublicEndpoints
-		},
+func TestMatchesPublicPattern_AdminPathsAreNoLongerExemptHere(t *testing.T) {
+	// The admin and test-support endpoints moved to their own listener, which
+	// has no authentication middleware. Exempting them on the application
+	// listener would widen its public surface for paths it no longer serves.
+	for _, path := range []string{
+		"/admin/fees",
+		"/admin/users/00000000-0000-0000-0000-000000000001/fees",
+		"/admin/users/test-user-123/kyc-state",
+		"/admin/card-transactions/simulate",
+		"/admin/withdrawals/tx-1/trigger-event",
+		"/test-webhook",
+		"/ui",
+		"/ui/users/abc",
+	} {
+		assert.False(t, matchesPublicPattern(path), "matchesPublicPattern(%q)", path)
+		assert.False(t, PublicEndpoints[path], "PublicEndpoints[%q]", path)
 	}
+}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := matchesPublicPattern(tt.path)
-			assert.Equal(t, tt.want, got, "matchesPublicPattern(%q)", tt.path)
-		})
-	}
+func TestMatchesPublicPattern_MatchesAWildcardWhenOneIsConfigured(t *testing.T) {
+	// PublicEndpointPatterns is empty today. The matcher is kept because it is
+	// how a future patterned exemption would be expressed, so it is exercised
+	// against a temporary entry rather than left untested.
+	original := PublicEndpointPatterns
+	PublicEndpointPatterns = []string{"/example/*/thing"}
+	t.Cleanup(func() { PublicEndpointPatterns = original })
+
+	assert.True(t, matchesPublicPattern("/example/anything/thing"))
+	assert.False(t, matchesPublicPattern("/example/anything/other"))
+	assert.False(t, matchesPublicPattern("/core/v1/transactions"))
 }
 
 // --- Middleware integration tests ---
@@ -228,7 +219,11 @@ func TestMiddleware_BadSignature(t *testing.T) {
 
 func TestMiddleware_PublicEndpointSkipsAuth(t *testing.T) {
 	mw := Middleware(testCreds)(okHandler)
-	for _, path := range []string{"/health", "/", "/iframe/onboarding", "/admin/fees"} {
+	for _, path := range []string{
+		"/health", "/", "/iframe/onboarding", "/iframe/submit",
+		"/transaction/complete", "/api/user-currencies",
+		"/cards/v1/token/card-data/data", "/cards/v1/token/pin/data",
+	} {
 		req := httptest.NewRequest("GET", path, nil)
 		w := httptest.NewRecorder()
 		mw.ServeHTTP(w, req)
@@ -237,11 +232,38 @@ func TestMiddleware_PublicEndpointSkipsAuth(t *testing.T) {
 }
 
 func TestMiddleware_PublicPatternSkipsAuth(t *testing.T) {
+	// A configured pattern is honoured. The list is empty in production, so a
+	// temporary entry is used rather than relying on an admin path that is no
+	// longer served here.
+	original := PublicEndpointPatterns
+	PublicEndpointPatterns = []string{"/example/*/thing"}
+	t.Cleanup(func() { PublicEndpointPatterns = original })
+
 	mw := Middleware(testCreds)(okHandler)
-	req := httptest.NewRequest("GET", "/admin/users/some-uuid/fees", nil)
+	req := httptest.NewRequest("GET", "/example/some-uuid/thing", nil)
 	w := httptest.NewRecorder()
 	mw.ServeHTTP(w, req)
 	assert.Equal(t, http.StatusOK, w.Code)
+}
+
+func TestMiddleware_AdminPathsAreNotExemptOnTheApplicationListener(t *testing.T) {
+	// These are served on the admin listener now. Reaching them here without
+	// credentials must not succeed, or the network guard would be pointless.
+	mw := Middleware(testCreds)(okHandler)
+
+	for _, path := range []string{
+		"/admin/fees",
+		"/admin/users/some-uuid/fees",
+		"/admin/users/some-uuid/kyc-state",
+		"/admin/card-transactions/simulate",
+		"/test-webhook",
+		"/ui",
+	} {
+		req := httptest.NewRequest("GET", path, nil)
+		w := httptest.NewRecorder()
+		mw.ServeHTTP(w, req)
+		assert.Equal(t, http.StatusUnauthorized, w.Code, "path %s", path)
+	}
 }
 
 func TestGetRegisteredAppIDs(t *testing.T) {

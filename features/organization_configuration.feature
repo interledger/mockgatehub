@@ -1,3 +1,4 @@
+@organization
 Feature: Organization Configuration Management
   As an application administrator
   I want to update organization-level configuration

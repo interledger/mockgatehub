@@ -51,10 +51,13 @@ Feature: Card management and lifecycle
 
   Scenario: Get card token for secure data access
     Given a managed customer with a card exists
-    When I POST /cards/v1/token/card-data with cardId and managed user UUID header
+    And the caller has generated an RSA key pair
+    When I POST /cards/v1/token/card-data with the cardId and the caller's public key
     Then the response status is 200
-    And the response contains a token starting with "mock-card-data-"
     And the response contains a links array with at least one entry
+    And the token link is an absolute URL
+    And the token link path is "/cards/v1/token/card-data/data"
+    And the token link method is "GET"
 
   Scenario: Get card limits
     Given a managed customer with a card exists
@@ -112,3 +115,106 @@ Feature: Card management and lifecycle
     When I POST /cards/v1/cards/{cardId}/plastic with managed user UUID header
     Then the response status is 201
     And the response contains orderId, cardId, status "PENDING", and type "PLASTIC"
+
+  Scenario: Card details are readable only by the caller that asked for them
+    Given a managed customer with a card exists
+    And the caller has generated an RSA key pair
+    When I POST /cards/v1/token/card-data with the cardId and the caller's public key
+    And the browser follows the card-data link with "the issued token"
+    Then the response status is 200
+    And the payload decrypts with the caller's private key to card details
+
+  Scenario: The same card always reports the same card number
+    Given a managed customer with a card exists
+    And the caller has generated an RSA key pair
+    When I POST /cards/v1/token/card-data with the cardId and the caller's public key
+    And the browser follows the card-data link with "the issued token"
+    Then the payload decrypts with the caller's private key to card details
+    When I POST /cards/v1/token/card-data with the cardId and the caller's public key
+    And the browser follows the card-data link with "the issued token"
+    Then the decrypted card number matches the previous read
+
+  Scenario: The card-data endpoint refuses a token it did not issue
+    Given a managed customer with a card exists
+    When the browser follows the card-data link with "a-forged-token"
+    Then the response status is 401
+    And no card data is disclosed
+
+  Scenario: The card-data endpoint refuses a request with no token
+    Given a managed customer with a card exists
+    When the browser follows the card-data link with "no token"
+    Then the response status is 401
+    And no card data is disclosed
+
+  Scenario: A card-data token cannot be used to read the PIN
+    Given a managed customer with a card exists
+    And the caller has generated an RSA key pair
+    When I POST /cards/v1/token/card-data with the cardId and the caller's public key
+    And the browser follows the pin link with "the issued token"
+    Then the response status is 401
+
+  Scenario: A card PIN can be read without ever having been set
+    Given a managed customer with a card exists
+    And the caller has generated an RSA key pair
+    When the caller reads the card PIN
+    Then the response status is 200
+    And the decrypted PIN looks like a PIN
+
+  Scenario: A card PIN that is set is the PIN that is read back
+    Given a managed customer with a card exists
+    And the caller has generated an RSA key pair
+    When the caller sets the card PIN to "4321"
+    Then the response status is 200
+    When the caller reads the card PIN
+    Then the response status is 200
+    And the decrypted PIN is "4321"
+
+  Scenario: Creating a card tells the consumer which identifiers were assigned
+    Given the webhook sink is empty
+    And a managed customer with a card exists
+    Then a "cards.card.created" webhook reports the assigned identifiers
+
+  Scenario: The card transaction catalogue is discoverable
+    When I GET the card transaction scenario catalogue
+    Then the response status is 200
+    And the catalogue lists 17 scenarios
+    And the catalogue includes the scenario "withdrawal.authorization.purchase-transaction-with-fx"
+    And the catalogue includes the scenario "none.insufficient-balance"
+
+  Scenario: A simulated card transaction reaches the card's transaction listing
+    Given a managed customer with a card exists
+    When I simulate the card transaction scenario "withdrawal.authorization.atm-withdrawal"
+    Then the response status is 201
+    And the simulated transaction has a numeric id and cardId
+    When I GET the card transactions page ""
+    Then the response status is 200
+    And the listing contains the simulated transaction with its unmodelled fields intact
+
+  Scenario: A simulated card transaction is announced with the transaction attached
+    Given the webhook sink is empty
+    And a managed customer with a card exists
+    When I simulate the card transaction scenario "withdrawal.authorization.purchase-transaction"
+    Then the response status is 201
+    And the "cards.transaction.authorization" webhook carries the full transaction
+
+  Scenario: Card transaction listings are paged
+    Given a managed customer with a card exists
+    And I simulate 5 card transactions of scenario "withdrawal.authorization.purchase-transaction"
+    When I GET the card transactions page "pageSize=2&pageNumber=1"
+    Then the response status is 200
+    And the listing holds 2 of 5 transactions across 3 pages
+    When I GET the card transactions page "pageSize=2&pageNumber=3"
+    Then the listing holds 1 of 5 transactions across 3 pages
+
+  Scenario: A simulated transaction's status can be advanced
+    Given a managed customer with a card exists
+    When I simulate the card transaction scenario "withdrawal.authorization.preauthorization"
+    And I set the simulated transaction status to "COMPLETED"
+    Then the response status is 200
+    And the stored transaction reports txStatus "COMPLETED"
+
+  Scenario: An unknown scenario is refused and the valid options are named
+    Given a managed customer with a card exists
+    When I simulate the card transaction scenario "not-a-real-scenario"
+    Then the response status is 400
+    And the error names the valid scenarios

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"mockgatehub/internal/logger"
@@ -539,6 +541,102 @@ func (s *RedisStorage) GetCardTransaction(id string) (*models.CardTransaction, e
 	return &tx, nil
 }
 
+// UpdateCardTransactionStatus changes a transaction's txStatus, keeping the raw
+// payload in step so a reader that prefers the raw JSON sees the new status too.
+func (s *RedisStorage) UpdateCardTransactionStatus(txID string, status string) error {
+	tx, err := s.GetCardTransaction(txID)
+	if err != nil {
+		return err
+	}
+	tx.TxStatus = &status
+
+	data, err := json.Marshal(tx)
+	if err != nil {
+		return fmt.Errorf("failed to marshal card transaction: %w", err)
+	}
+	if err := s.client.Set(s.ctx, s.cardTransactionKey(txID), data, 0).Err(); err != nil {
+		return fmt.Errorf("failed to update card transaction: %w", err)
+	}
+
+	if rawData, err := s.GetRawCardTransaction(txID); err == nil {
+		var m map[string]interface{}
+		if err := json.Unmarshal(rawData, &m); err == nil {
+			m["txStatus"] = status
+			if updated, err := json.Marshal(m); err == nil {
+				_ = s.StoreRawCardTransaction(txID, updated)
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *RedisStorage) StoreRawCardTransaction(txID string, data json.RawMessage) error {
+	if txID == "" {
+		return errors.New("txID is required")
+	}
+	if err := s.client.Set(s.ctx, s.cardTransactionRawKey(txID), []byte(data), 0).Err(); err != nil {
+		return fmt.Errorf("failed to store raw card transaction: %w", err)
+	}
+	return nil
+}
+
+func (s *RedisStorage) GetRawCardTransaction(txID string) (json.RawMessage, error) {
+	data, err := s.client.Get(s.ctx, s.cardTransactionRawKey(txID)).Bytes()
+	if err == redis.Nil {
+		return nil, errors.New("raw card transaction not found")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get raw card transaction: %w", err)
+	}
+	return json.RawMessage(data), nil
+}
+
+func (s *RedisStorage) SetCardPIN(cardID string, pin string) error {
+	if cardID == "" {
+		return errors.New("cardID is required")
+	}
+	if _, err := s.GetCard(cardID); err != nil {
+		return err
+	}
+	if err := s.client.Set(s.ctx, s.cardPINKey(cardID), pin, 0).Err(); err != nil {
+		return fmt.Errorf("failed to store card pin: %w", err)
+	}
+	return nil
+}
+
+func (s *RedisStorage) GetCardPIN(cardID string) (string, error) {
+	pin, err := s.client.Get(s.ctx, s.cardPINKey(cardID)).Result()
+	if err == redis.Nil {
+		return "", errors.New("card pin not set")
+	}
+	if err != nil {
+		return "", fmt.Errorf("failed to get card pin: %w", err)
+	}
+	return pin, nil
+}
+
+// NextCardTransactionSeqID atomically increments the shared counter, so
+// concurrent simulations never receive the same sequence id.
+func (s *RedisStorage) NextCardTransactionSeqID() (int, error) {
+	next, err := s.client.Incr(s.ctx, s.cardTransactionSeqKey()).Result()
+	if err != nil {
+		return 0, fmt.Errorf("failed to increment card transaction sequence: %w", err)
+	}
+	return int(next), nil
+}
+
+func (s *RedisStorage) PeekCardTransactionSeqID() (int, error) {
+	val, err := s.client.Get(s.ctx, s.cardTransactionSeqKey()).Int64()
+	if err == redis.Nil {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("failed to read card transaction sequence: %w", err)
+	}
+	return int(val), nil
+}
+
 func (s *RedisStorage) AddCardTransactionIndex(cardID string, transactionID string) error {
 	if cardID == "" || transactionID == "" {
 		return errors.New("cardID and transactionID are required")
@@ -638,7 +736,43 @@ func (s *RedisStorage) CreateTransaction(tx *models.Transaction) error {
 		return fmt.Errorf("failed to store transaction: %w", err)
 	}
 
+	// Index by user so the account's transactions can be listed without
+	// scanning every key.
+	if tx.UserID != "" {
+		if err := s.client.LPush(s.ctx, s.userTransactionsKey(tx.UserID), tx.ID).Err(); err != nil {
+			return fmt.Errorf("failed to index transaction by user: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// ListTransactionsByUser returns the user's transactions, most recent first.
+func (s *RedisStorage) ListTransactionsByUser(userID string) ([]*models.Transaction, error) {
+	ids, err := s.client.LRange(s.ctx, s.userTransactionsKey(userID), 0, -1).Result()
+	if err == redis.Nil {
+		return []*models.Transaction{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to list user transactions: %w", err)
+	}
+
+	out := make([]*models.Transaction, 0, len(ids))
+	for _, id := range ids {
+		tx, err := s.GetTransaction(id)
+		if err != nil {
+			// An indexed id with no transaction behind it is stale rather than
+			// fatal; skipping it is better than failing the whole listing.
+			logger.Debug("skipping stale transaction index entry", zap.String("tx_id", id))
+			continue
+		}
+		out = append(out, tx)
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		return out[i].CreatedAt.After(out[j].CreatedAt)
+	})
+	return out, nil
 }
 
 func (s *RedisStorage) GetTransaction(id string) (*models.Transaction, error) {
@@ -891,6 +1025,80 @@ func (s *RedisStorage) UpdateOrganization(org *models.Organization) error {
 
 // Key helpers
 
+// GetAllBalances returns the user's non-zero balances by currency. Balances are
+// stored one key per currency, so this scans the user's balance namespace.
+func (s *RedisStorage) GetAllBalances(userID string) (map[string]float64, error) {
+	pattern := s.balanceKey(userID, "*")
+	out := make(map[string]float64)
+
+	var cursor uint64
+	for {
+		keys, next, err := s.client.Scan(s.ctx, cursor, pattern, 100).Result()
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan balances: %w", err)
+		}
+		for _, key := range keys {
+			currency := key[strings.LastIndex(key, ":")+1:]
+			amount, err := s.client.Get(s.ctx, key).Float64()
+			if err != nil {
+				logger.Debug("skipping unreadable balance key", zap.String("key", key))
+				continue
+			}
+			if amount != 0 {
+				out[currency] = amount
+			}
+		}
+		if next == 0 {
+			break
+		}
+		cursor = next
+	}
+	return out, nil
+}
+
+// ListUsers returns every known user, ordered by creation time so a listing is
+// stable between calls.
+func (s *RedisStorage) ListUsers() ([]*models.User, error) {
+	out := make([]*models.User, 0)
+
+	var cursor uint64
+	for {
+		keys, next, err := s.client.Scan(s.ctx, cursor, "user:*", 100).Result()
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan users: %w", err)
+		}
+		for _, key := range keys {
+			// The user namespace also holds per-user index keys such as
+			// user:{id}:wallets, which are not user records.
+			if strings.Count(key, ":") != 1 {
+				continue
+			}
+			data, err := s.client.Get(s.ctx, key).Result()
+			if err != nil {
+				continue
+			}
+			var user models.User
+			if err := json.Unmarshal([]byte(data), &user); err != nil {
+				logger.Debug("skipping unparseable user record", zap.String("key", key))
+				continue
+			}
+			out = append(out, &user)
+		}
+		if next == 0 {
+			break
+		}
+		cursor = next
+	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].ID < out[j].ID
+		}
+		return out[i].CreatedAt.Before(out[j].CreatedAt)
+	})
+	return out, nil
+}
+
 func (s *RedisStorage) userKey(id string) string {
 	return fmt.Sprintf("user:%s", id)
 }
@@ -945,6 +1153,22 @@ func (s *RedisStorage) cardTransactionKey(id string) string {
 
 func (s *RedisStorage) cardTransactionsKey(cardID string) string {
 	return fmt.Sprintf("card:%s:transactions", cardID)
+}
+
+func (s *RedisStorage) cardTransactionRawKey(id string) string {
+	return fmt.Sprintf("cardtx:%s:raw", id)
+}
+
+func (s *RedisStorage) cardTransactionSeqKey() string {
+	return "cardtx:seq"
+}
+
+func (s *RedisStorage) userTransactionsKey(userID string) string {
+	return fmt.Sprintf("user:%s:transactions", userID)
+}
+
+func (s *RedisStorage) cardPINKey(cardID string) string {
+	return fmt.Sprintf("card:%s:pin", cardID)
 }
 
 func (s *RedisStorage) walletKey(address string) string {

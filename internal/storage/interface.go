@@ -1,6 +1,8 @@
 package storage
 
 import (
+	"encoding/json"
+
 	"mockgatehub/internal/models"
 )
 
@@ -39,8 +41,28 @@ type Storage interface {
 	// Card Transactions
 	CreateCardTransaction(tx *models.CardTransaction) error
 	GetCardTransaction(id string) (*models.CardTransaction, error)
+	UpdateCardTransactionStatus(txID string, status string) error
 	AddCardTransactionIndex(cardID string, transactionID string) error
 	GetCardTransactionIDs(cardID string) ([]string, error)
+
+	// Raw card transactions. A simulated transaction can carry fields the
+	// typed model does not know about, and consumers care about those fields,
+	// so the original JSON is kept verbatim alongside the typed record.
+	StoreRawCardTransaction(txID string, data json.RawMessage) error
+	GetRawCardTransaction(txID string) (json.RawMessage, error)
+
+	// ListUsers enumerates known users for the admin views.
+	ListUsers() ([]*models.User, error)
+
+	// Card PINs. Stored separately from the card because a PIN is set through
+	// its own encrypted endpoint, not as part of the card object.
+	SetCardPIN(cardID string, pin string) error
+	GetCardPIN(cardID string) (string, error)
+
+	// Card transaction sequence. GateHub numbers card transactions with a
+	// monotonically increasing integer `id` distinct from the transaction UUID.
+	NextCardTransactionSeqID() (int, error)
+	PeekCardTransactionSeqID() (int, error)
 
 	// Wallets
 	CreateWallet(wallet *models.Wallet) error
@@ -51,9 +73,15 @@ type Storage interface {
 	CreateTransaction(tx *models.Transaction) error
 	GetTransaction(id string) (*models.Transaction, error)
 	UpdateTransactionStatus(id string, status int) error
+	// ListTransactionsByUser returns the user's transactions, most recent
+	// first. Needed for statements, withdrawal listings and the admin views.
+	ListTransactionsByUser(userID string) ([]*models.Transaction, error)
 
 	// Balances (per user, per currency)
 	GetBalance(userID, currency string) (float64, error)
+	// GetAllBalances returns every non-zero balance the user holds, so a view
+	// can show an account at a glance without probing each currency.
+	GetAllBalances(userID string) (map[string]float64, error)
 	AddBalance(userID, currency string, amount float64) error
 	DeductBalance(userID, currency string, amount float64) error
 
