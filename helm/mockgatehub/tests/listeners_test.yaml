@@ -1,0 +1,66 @@
+suite: two listeners stay separate
+release:
+  name: mgh
+  namespace: mocks
+tests:
+  - it: exposes the application port on its own Service, and nothing else
+    template: service.yaml
+    asserts:
+      - equal:
+          path: spec.ports
+          value:
+            - port: 8080
+              targetPort: http
+              protocol: TCP
+              name: http
+
+  - it: exposes the admin port on a separate Service
+    template: service-admin.yaml
+    asserts:
+      - equal:
+          path: metadata.name
+          value: mgh-mockgatehub-admin
+      - equal:
+          path: spec.ports[0].targetPort
+          value: admin
+      - equal:
+          path: metadata.labels["app.kubernetes.io/component"]
+          value: admin
+
+  - it: omits the admin Service when it is disabled
+    set:
+      adminService.enabled: false
+    template: service-admin.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: keeps the admin Service pointing only at the admin port
+    template: service-admin.yaml
+    asserts:
+      - lengthEqual:
+          path: spec.ports
+          count: 1
+
+  - it: serves both ports from the container
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: http
+            containerPort: 8080
+            protocol: TCP
+      - contains:
+          path: spec.template.spec.containers[0].ports
+          content:
+            name: admin
+            containerPort: 8081
+            protocol: TCP
+
+  - it: refuses a configuration where both listeners share a port
+    set:
+      ports.admin: 8080
+    asserts:
+      - failedTemplate:
+          errorMessage: "ports.http and ports.admin must differ: MockGatehub refuses to start when the application and admin listeners share a port"

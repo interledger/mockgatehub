@@ -1,0 +1,41 @@
+{{- if .Values.ingress.admin.enabled -}}
+{{- if not .Values.adminService.enabled -}}
+{{- fail "ingress.admin.enabled requires adminService.enabled" -}}
+{{- end -}}
+{{- $fullName := printf "%s-admin" (include "mockgatehub.fullname" .) -}}
+{{- $svcPort := .Values.adminService.port -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ $fullName }}
+  labels:
+    {{- include "mockgatehub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+  {{- with .Values.ingress.admin.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.ingress.admin.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.admin.tls }}
+  tls:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- range .Values.ingress.admin.hosts }}
+    - host: {{ .host | quote }}
+      http:
+        paths:
+          {{- range .paths }}
+          - path: {{ .path }}
+            pathType: {{ .pathType }}
+            backend:
+              service:
+                name: {{ $fullName }}
+                port:
+                  number: {{ $svcPort }}
+          {{- end }}
+    {{- end }}
+{{- end }}

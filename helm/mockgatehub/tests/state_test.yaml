@@ -1,0 +1,86 @@
+suite: state and Valkey wiring
+release:
+  name: mgh
+  namespace: mocks
+tests:
+  - it: points MockGatehub at the bundled Valkey Service
+    template: configmap.yaml
+    asserts:
+      # Must match the name the subchart gives its Service, which is
+      # {{ .Release.Name }}-valkey.
+      - equal:
+          path: data.MOCKGATEHUB_REDIS_URL
+          value: redis://mgh-valkey:6379
+
+  - it: follows a renamed Valkey release
+    set:
+      valkey.fullnameOverride: shared-valkey
+    template: configmap.yaml
+    asserts:
+      - equal:
+          path: data.MOCKGATEHUB_REDIS_URL
+          value: redis://shared-valkey:6379
+
+  - it: follows a non-default Valkey port
+    set:
+      valkey.service.serverPort: 6380
+    template: configmap.yaml
+    asserts:
+      - equal:
+          path: data.MOCKGATEHUB_REDIS_URL
+          value: redis://mgh-valkey:6380
+
+  - it: uses an external instance when the bundled one is disabled
+    set:
+      valkey.enabled: false
+      externalRedis.url: redis://elsewhere:6379
+    template: configmap.yaml
+    asserts:
+      - equal:
+          path: data.MOCKGATEHUB_REDIS_URL
+          value: redis://elsewhere:6379
+
+  - it: leaves the URL empty for in-memory mode
+    set:
+      valkey.enabled: false
+    template: configmap.yaml
+    asserts:
+      - equal:
+          path: data.MOCKGATEHUB_REDIS_URL
+          value: ""
+
+  - it: refuses a webhook target that could never be delivered to
+    # No Redis means no webhook queue, so a configured webhook URL would
+    # silently never be used.
+    set:
+      valkey.enabled: false
+      config.webhookUrl: http://my-app/hooks
+    asserts:
+      - failedTemplate:
+          errorMessage: "mockgatehub: neither valkey.enabled nor externalRedis.url is set — running with in-memory storage and webhook delivery disabled, but config.webhookUrl is set and would never be delivered to"
+
+  - it: waits for Valkey before starting, so a fresh install does not crash-loop
+    template: deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.initContainers[0].name
+          value: wait-for-redis
+      - equal:
+          path: spec.template.spec.initContainers[0].env[0].value
+          value: redis://mgh-valkey:6379
+
+  - it: skips the wait when there is no Redis to wait for
+    set:
+      valkey.enabled: false
+    template: deployment.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.initContainers
+
+  - it: skips the wait when it is disabled
+    set:
+      waitForRedis.enabled: false
+    template: deployment.yaml
+    asserts:
+      - notExists:
+          path: spec.template.spec.initContainers

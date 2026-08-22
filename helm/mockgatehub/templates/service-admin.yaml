@@ -1,0 +1,25 @@
+{{- if .Values.adminService.enabled -}}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mockgatehub.fullname" . }}-admin
+  labels:
+    {{- include "mockgatehub.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin
+    {{- with .Values.adminService.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- with .Values.adminService.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.adminService.type }}
+  ports:
+    - port: {{ .Values.adminService.port }}
+      targetPort: admin
+      protocol: TCP
+      name: admin
+  selector:
+    {{- include "mockgatehub.selectorLabels" . | nindent 4 }}
+{{- end }}

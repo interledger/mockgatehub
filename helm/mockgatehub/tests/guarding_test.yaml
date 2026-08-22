@@ -1,0 +1,96 @@
+suite: guarding the admin surface
+release:
+  name: mgh
+  namespace: mocks
+tests:
+  - it: creates no policy unless asked
+    template: networkpolicy.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: permits the application port from anywhere by default
+    set:
+      networkPolicy.enabled: true
+    template: networkpolicy.yaml
+    asserts:
+      - equal:
+          path: spec.ingress[0].ports[0].port
+          value: http
+      # No `from` means any source, which is what a shared mock wants.
+      - notExists:
+          path: spec.ingress[0].from
+
+  - it: denies the admin port when no source is named
+    # The admin listener has no authentication, so an empty allow-list must mean
+    # "nobody", not "everybody". A rule with an empty `from` would allow all.
+    set:
+      networkPolicy.enabled: true
+    template: networkpolicy.yaml
+    asserts:
+      - lengthEqual:
+          path: spec.ingress
+          count: 1
+
+  - it: permits the admin port only from the named sources
+    set:
+      networkPolicy.enabled: true
+      networkPolicy.adminIngress:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ops
+    template: networkpolicy.yaml
+    asserts:
+      - lengthEqual:
+          path: spec.ingress
+          count: 2
+      - equal:
+          path: spec.ingress[1].ports[0].port
+          value: admin
+      - equal:
+          path: spec.ingress[1].from[0].namespaceSelector.matchLabels["kubernetes.io/metadata.name"]
+          value: ops
+
+  - it: narrows the application port when sources are named
+    set:
+      networkPolicy.enabled: true
+      networkPolicy.apiIngress:
+        - podSelector:
+            matchLabels:
+              app: wallet
+    template: networkpolicy.yaml
+    asserts:
+      - equal:
+          path: spec.ingress[0].from[0].podSelector.matchLabels.app
+          value: wallet
+
+  - it: creates no admin ingress by default
+    template: ingress-admin.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: refuses an admin ingress with no admin Service behind it
+    set:
+      ingress.admin.enabled: true
+      adminService.enabled: false
+    asserts:
+      - failedTemplate:
+          errorMessage: ingress.admin.enabled requires adminService.enabled
+
+  - it: routes the admin ingress to the admin Service
+    set:
+      ingress.admin.enabled: true
+      ingress.admin.hosts:
+        - host: admin.example.com
+          paths:
+            - path: /
+              pathType: Prefix
+    template: ingress-admin.yaml
+    asserts:
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.name
+          value: mgh-mockgatehub-admin
+      - equal:
+          path: spec.rules[0].http.paths[0].backend.service.port.number
+          value: 8081

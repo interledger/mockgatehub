@@ -1,0 +1,28 @@
+# Values used to render the chart in CI with the optional pieces switched on, so
+# the templates that are off by default still get exercised.
+config:
+  webhookUrl: http://example-app:3000/gatehub-webhooks
+  logLevel: debug
+
+networkPolicy:
+  enabled: true
+  apiIngress:
+    - podSelector:
+        matchLabels:
+          app: wallet
+  adminIngress:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: ops
+
+ingress:
+  enabled: true
+  hosts:
+    - host: mockgatehub.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+
+valkey:
+  storage:
+    requestedSize: 2Gi

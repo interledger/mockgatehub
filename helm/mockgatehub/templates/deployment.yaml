@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mockgatehub.fullname" . }}
+  labels:
+    {{- include "mockgatehub.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "mockgatehub.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        # Roll the pods when configuration changes, so a config edit takes
+        # effect without a manual restart.
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        {{- if not .Values.credentials.existingSecret }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- end }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "mockgatehub.selectorLabels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "mockgatehub.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      {{- $redisURL := include "mockgatehub.redisUrl" . }}
+      {{- if and .Values.waitForRedis.enabled $redisURL }}
+      initContainers:
+        - name: wait-for-redis
+          image: "{{ .Values.waitForRedis.image.repository }}:{{ .Values.waitForRedis.image.tag }}"
+          imagePullPolicy: {{ .Values.waitForRedis.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          command:
+            - sh
+            - -c
+            # Strip the scheme and any credentials, then poll the host:port until
+            # it accepts a connection.
+            - |
+              target=$(printf '%s' "$REDIS_URL" | sed -e 's#^[a-z]*://##' -e 's#^.*@##' -e 's#/.*$##')
+              host=${target%%:*}
+              port=${target##*:}
+              [ "$port" = "$host" ] && port=6379
+              echo "waiting for redis at $host:$port"
+              deadline=$(( $(date +%s) + {{ .Values.waitForRedis.timeoutSeconds }} ))
+              until nc -z "$host" "$port"; do
+                if [ "$(date +%s)" -ge "$deadline" ]; then
+                  echo "timed out waiting for $host:$port"
+                  exit 1
+                fi
+                sleep 1
+              done
+              echo "redis is accepting connections"
+          env:
+            - name: REDIS_URL
+              value: {{ $redisURL | quote }}
+          resources:
+            requests:
+              cpu: 10m
+              memory: 16Mi
+            limits:
+              cpu: 100m
+              memory: 32Mi
+      {{- end }}
+      containers:
+        - name: mockgatehub
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.ports.http }}
+              protocol: TCP
+            - name: admin
+              containerPort: {{ .Values.ports.admin }}
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: {{ include "mockgatehub.fullname" . }}
+            - secretRef:
+                name: {{ include "mockgatehub.secretName" . }}
+          {{- with .Values.config.extraEnv }}
+          env:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            # The root filesystem is read-only, so give the process somewhere to
+            # write if it ever needs a temporary file.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

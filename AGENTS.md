@@ -94,6 +94,7 @@ internal/
   storage/                    interface.go + memory.go + redis.go + seeder.go
   utils/                      UUID, mock XRPL address, transaction hash
   webhook/                    manager.go, queue.go (Streams), worker.go, job.go
+helm/mockgatehub/             Helm chart: MockGatehub plus a bundled Valkey
 features/                     Gherkin BDD features (13 files)
 testenv/                      Godog runner, step definitions, docker-compose
 test/integration/             Go integration tests
@@ -286,6 +287,7 @@ make unit-tests   # unit + integration
 make e2e-tests    # builds Docker, runs godog against containers
 make test         # lint + unit + e2e
 make lint         # gofmt (fails on unformatted), go vet, golangci-lint
+make helm-test    # chart lint, helm-unittest, kubeconform on rendered manifests
 make coverage
 ```
 
@@ -328,12 +330,44 @@ Prove a new test can fail. Break the behaviour deliberately, watch the suite go
 red, then restore it. Several bugs were caught this way, and one assertion was
 found to be vacuous.
 
+## Helm Chart
+
+`helm/mockgatehub` deploys MockGatehub with a single persistent Valkey
+(`groundhog2k/valkey`, vendored under `charts/`). Two Services, one per
+listener, so the admin surface can be exposed independently — or not at all.
+
+```bash
+make helm-test    # lint, unit tests, kubeconform
+```
+
+Chart tests live in `helm/mockgatehub/tests/*_test.yaml` and run with
+`helm unittest`. Test template behaviour there rather than in the cluster: it is
+faster and does not depend on the CNI. CI additionally installs the chart on a
+kind cluster and checks the things rendering cannot — that the pods start, that
+MockGatehub reaches Valkey, that each listener serves only its own surface, and
+that the volume survives a pod restart.
+
+When changing the chart:
+
+- A new environment variable needs adding to `templates/configmap.yaml` (or
+  `secret.yaml` if sensitive) and to `values.yaml` with a comment.
+- The Valkey connection URL is derived from the subchart's naming in
+  `_helpers.tpl`. If it drifts, MockGatehub silently falls back to in-memory
+  storage — which is why `tests/state_test.yaml` pins it.
+- An empty NetworkPolicy `from` allows every source. The admin rule is emitted
+  only when a source is named, so an empty allow-list denies.
+
 ## CI/CD
 
-- **`pr-validation.yml`** — Conventional Commits title check, unit and E2E
-  tests, Docker build without push.
-- **`release.yml`** on push to `main` — tests, semantic-release, multi-arch
-  Docker push to `ghcr.io/interledger/mockgatehub`.
+- **`pr-validation.yml`** — Conventional Commits title check, lint, unit and
+  E2E tests, chart validation, a chart install on a throwaway kind cluster, and
+  a Docker build without push.
+- **`release.yml`** on push to `main` — lint, tests, chart validation,
+  semantic-release, multi-arch Docker push to
+  `ghcr.io/interledger/mockgatehub`.
+- The lint job runs `make lint`, and the chart job runs `make helm-test`, so CI
+  and a developer's machine check the same things. `golangci-lint` is pinned in
+  the workflow and must satisfy the `version: "2"` schema in `.golangci.yml`.
 - **Versioning**: `feat` → minor; `fix`/`perf`/`docs`/`refactor`/`build`/`ci` →
   patch; `chore`/`test` → none. Config in `.releaserc.json`.
 
