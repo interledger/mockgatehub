@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MockGatehub Helm charts</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font: 16px/1.6 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    max-width: 46rem; margin: 4rem auto; padding: 0 1.25rem;
+  }
+  h1 { font-size: 1.5rem; margin-bottom: .25rem; }
+  p.sub { margin-top: 0; opacity: .7; }
+  pre {
+    background: rgba(127,127,127,.12); padding: .9rem 1rem; border-radius: 6px;
+    overflow-x: auto; font-size: .875rem;
+  }
+  a { color: inherit; }
+</style>
+</head>
+<body>
+  <h1>MockGatehub Helm charts</h1>
+  <p class="sub">A Helm repository, not a website. Point Helm at it rather than a browser.</p>
+
+  <pre>helm repo add mockgatehub https://interledger.github.io/mockgatehub/
+helm repo update
+helm search repo mockgatehub --versions</pre>
+
+  <p>
+    The chart deploys <a href="https://github.com/interledger/mockgatehub">MockGatehub</a>
+    — a mock of the GateHub API for development and testing — together with a single
+    Valkey instance for state and webhook delivery. Chart version and application
+    version are always the same number.
+  </p>
+
+  <p>
+    <a href="index.yaml">index.yaml</a> ·
+    <a href="https://github.com/interledger/mockgatehub">source</a> ·
+    <a href="https://github.com/interledger/mockgatehub/tree/main/helm/mockgatehub">chart</a>
+  </p>
+</body>
+</html>
