@@ -268,3 +268,102 @@ jobs:
             VERSION=v${{ needs.release.outputs.new_release_version }}
             COMMIT_SHA=${{ github.sha }}
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
+
+  # Package the Helm chart and publish it to the `published` branch, which
+  # GitHub Pages serves as https://interledger.github.io/mockgatehub/.
+  #
+  # Needs `docker` and not just `release`: an index entry pointing at an image
+  # that failed to build is worse than no entry at all, because a consumer
+  # resolves the chart, deploys it, and gets ImagePullBackOff instead of a
+  # failure at the point the mistake was made.
+  chart:
+    name: Publish Helm Chart
+    needs: [release, docker]
+    if: needs.release.outputs.new_release_published == 'true'
+    runs-on: ubuntu-latest
+    env:
+      # No leading `v`. This becomes both the chart version and the appVersion,
+      # and appVersion is used directly as an image tag.
+      VERSION: ${{ needs.release.outputs.new_release_version }}
+      PAGES_URL: https://interledger.github.io/mockgatehub/
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # A second, separate checkout rather than switching branches in place.
+      # `git checkout --orphan` keeps the index, so the next `git add` stages
+      # the entire source tree into the publish branch -- a mistake that is
+      # invisible until someone browses the branch. Two directories cannot make
+      # it. It also means this job never has to know how to create the branch:
+      # if `published` is missing, checkout fails here and says so, instead of
+      # inventing one.
+      - name: Checkout the published branch
+        uses: actions/checkout@v4
+        with:
+          ref: published
+          path: .published
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.17.0
+
+      - name: Package the chart
+        run: |
+          set -euo pipefail
+          # The same target a developer runs. A no-op while charts/*.tgz is
+          # vendored, which it is.
+          make helm-deps
+          mkdir -p .published/docs
+          # Chart.yaml carries 0.0.0 in git; the real version is stamped here,
+          # so there is no version to bump by hand and none to forget. A
+          # forgotten bump would not fail -- `helm repo index --merge` keeps the
+          # existing entry and the publish looks successful while changing
+          # nothing.
+          helm package helm/mockgatehub \
+            --version "${VERSION}" \
+            --app-version "${VERSION}" \
+            --destination .published/docs
+
+      - name: Regenerate the repository index
+        run: |
+          set -euo pipefail
+          cd .published
+          # --merge is not optional. Without it the index describes only the
+          # chart packaged in this run, and every previously published version
+          # becomes unresolvable even though its .tgz is still sitting next to
+          # it -- which reads as "the repo is broken" rather than "the index is
+          # truncated".
+          if [ -f docs/index.yaml ]; then
+            helm repo index docs --url "${PAGES_URL}" --merge docs/index.yaml
+          else
+            helm repo index docs --url "${PAGES_URL}"
+          fi
+
+      - name: Commit and push
+        run: |
+          set -euo pipefail
+          cd .published
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs
+          # A re-run for a version already published should be a successful
+          # no-op, not a failed `git commit` reported as a red release.
+          if git diff --cached --quiet; then
+            echo "Chart ${VERSION} is already published; nothing to do."
+            exit 0
+          fi
+          git commit -m "chore(chart): publish mockgatehub ${VERSION}"
+          git push origin published
+
+      - name: Summary
+        run: |
+          {
+            echo "### Helm chart published"
+            echo
+            echo '```'
+            echo "helm repo add mockgatehub ${PAGES_URL}"
+            echo "helm repo update"
+            echo "helm install mockgatehub mockgatehub/mockgatehub --version ${VERSION}"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

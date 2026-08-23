@@ -6,10 +6,30 @@ GateHub API for development and testing — together with a single persistent
 
 ## Install
 
+From the published repository, which is what a deployment should use:
+
+```bash
+helm repo add mockgatehub https://interledger.github.io/mockgatehub/
+helm repo update
+helm search repo mockgatehub --versions
+helm install mockgatehub mockgatehub/mockgatehub --version <version>
+```
+
+Or from a working tree, for developing the chart itself:
+
 ```bash
 helm dependency build helm/mockgatehub
-helm install mockgatehub helm/mockgatehub
+helm install mockgatehub helm/mockgatehub --set image.tag=<a released tag>
 ```
+
+`image.tag` is needed for the second form only. Chart.yaml carries `appVersion: 0.0.0`
+in git — the real version is stamped by CI at package time — so a working-tree render
+otherwise asks for an image tag that does not exist.
+
+**Chart version and application version are always the same number**, and that number is
+the image tag. So `mockgatehub 1.15.0` deploys `ghcr.io/interledger/mockgatehub:1.15.0`
+and there is no compatibility matrix to consult. See
+[Releasing](#releasing) at the bottom.
 
 Point your application at the API Service:
 
@@ -177,8 +197,35 @@ asserting on received webhooks needs a single replica to see them all.
 ## Development
 
 ```bash
+make helm-test    # dependency build (no-op while vendored), lint, unit tests, kubeconform
+```
+
+Or the individual steps:
+
+```bash
 helm dependency build helm/mockgatehub
 helm lint helm/mockgatehub
 helm unittest helm/mockgatehub
 helm template mockgatehub helm/mockgatehub | kubeconform -strict -summary -ignore-missing-schemas -
 ```
+
+## Releasing
+
+Nothing here is released by hand and there is no chart version to bump.
+
+The `chart` job in `.github/workflows/release.yml` runs on `main` after
+semantic-release has cut a version and the image has been pushed. It packages this
+directory with `--version` and `--app-version` both set to that version, regenerates
+`index.yaml` with `--merge`, and commits the result to the orphan `published` branch,
+which GitHub Pages serves.
+
+Three consequences:
+
+- **A chart-only change still needs a releasing commit type.** `fix(helm): ...` or
+  `feat(helm): ...` cuts a patch or minor; `chore:` cuts nothing, so a `chore`-titled
+  chart fix is never published. See `.releaserc.json` for the mapping.
+- **The chart is published only if the image build succeeded.** The job depends on
+  `docker`, so an index entry never points at an image that is not there.
+- **A published version is immutable.** Re-running the workflow for a version already
+  in the index is a deliberate no-op. A wrong chart is fixed by releasing a new version,
+  never by editing the `published` branch.
