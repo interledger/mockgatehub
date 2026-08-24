@@ -1,3 +1,31 @@
 apiVersion: v1
-entries: {}
-generated: "2026-08-23T11:57:30.795774212+02:00"
+entries:
+  mockgatehub:
+  - apiVersion: v2
+    appVersion: 1.16.0
+    created: "2026-08-24T08:14:18.699945921Z"
+    dependencies:
+    - condition: valkey.enabled
+      name: valkey
+      repository: https://groundhog2k.github.io/helm-charts/
+      version: 2.3.3
+    description: 'MockGatehub — a mock of the GateHub API for local development and
+      testing, with a bundled single-instance Valkey for state and webhook delivery. '
+    digest: f3df1ade35ee699d621724661439842db0fceff1306019029cd1fea6300256f7
+    home: https://github.com/interledger/mockgatehub
+    keywords:
+    - gatehub
+    - mock
+    - interledger
+    - testing
+    maintainers:
+    - name: Interledger Foundation
+      url: https://interledger.org
+    name: mockgatehub
+    sources:
+    - https://github.com/interledger/mockgatehub
+    type: application
+    urls:
+    - https://interledger.github.io/mockgatehub/mockgatehub-1.16.0.tgz
+    version: 1.16.0
+generated: "2026-08-24T08:14:18.697791634Z"
