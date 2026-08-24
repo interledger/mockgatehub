@@ -349,6 +349,16 @@ that the volume survives a pod restart.
 
 When changing the chart:
 
+- **Do not set a version in `Chart.yaml`.** Both `version` and `appVersion` are
+  `0.0.0` placeholders; the release workflow stamps them from semantic-release at
+  package time and does not commit the result back. They are always equal, and
+  always equal the image tag, so a published `mockgatehub 1.15.0` deploys
+  `ghcr.io/interledger/mockgatehub:1.15.0`. A hand-edited version is either
+  overwritten or, worse, silently ignored — `helm repo index --merge` keeps the
+  entry it already has, so republishing an existing version looks successful and
+  changes nothing.
+- **A chart-only fix needs a releasing commit type.** `chore` cuts no release, so
+  a `chore`-titled chart fix is never published. Use `fix(helm):` or `feat(helm):`.
 - A new environment variable needs adding to `templates/configmap.yaml` (or
   `secret.yaml` if sensitive) and to `values.yaml` with a comment.
 - The Valkey connection URL is derived from the subchart's naming in
@@ -364,8 +374,14 @@ When changing the chart:
   a Docker build without push.
 - **`release.yml`** on push to `main` — lint, tests, chart validation,
   semantic-release, multi-arch Docker push to
-  `ghcr.io/interledger/mockgatehub`.
-- The lint job runs `make lint`, and the chart job runs `make helm-test`, so CI
+  `ghcr.io/interledger/mockgatehub`, then a Helm chart publish.
+- **Chart publishing**: the `chart` job packages `helm/mockgatehub` and pushes it
+  to the orphan **`published`** branch, whose `docs/` folder GitHub Pages serves as
+  `https://interledger.github.io/mockgatehub/`. It depends on `docker` as well as
+  `release`, so an index entry can never point at an image that failed to build.
+  The branch holds only `.tgz` files and `index.yaml` — never source. Its own
+  `README.md` documents the contract.
+- The `lint` job runs `make lint`, and the `helm` job runs `make helm-test`, so CI
   and a developer's machine check the same things. `golangci-lint` is pinned in
   the workflow and must satisfy the `version: "2"` schema in `.golangci.yml`.
 - **Versioning**: `feat` → minor; `fix`/`perf`/`docs`/`refactor`/`build`/`ci` →

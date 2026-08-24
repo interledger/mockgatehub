@@ -9,10 +9,24 @@ sources:
 
 type: application
 
-# version is the chart version; appVersion is the MockGatehub image tag used
-# when image.tag is left unset.
-version: 0.1.0
-appVersion: "1.14.0"
+# Both are placeholders. The release workflow stamps them from semantic-release
+# at package time and does not commit the result back, so what is published is
+# always `version == appVersion == <the release>`.
+#
+# They are deliberately the same value. This chart exists only to deploy this
+# repository's image, so a chart version that does not match the image it
+# deploys is not a state worth being able to publish -- and keeping them in
+# lockstep is what stops appVersion drifting behind the newest tag, which it
+# already had once.
+#
+# appVersion has no leading `v`: it is used directly as the image tag
+# (`image.tag | default .Chart.AppVersion` in deployment.yaml), and the tags the
+# release workflow pushes are `1.15.0`, not `v1.15.0`.
+#
+# 0.0.0 means "rendered from a working tree", which is the honest answer for a
+# local `helm template`. Set `image.tag` when rendering locally.
+version: 0.0.0
+appVersion: "0.0.0"
 
 keywords:
   - gatehub
