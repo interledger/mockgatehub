@@ -212,6 +212,26 @@ func TestGetWalletBalance_NotFound(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, w.Code)
 }
 
+// ---- ListGatewayTransactions ----
+
+func TestListGatewayTransactions_EmptyEvenWithPendingTransaction(t *testing.T) {
+	h, store := newSeededHandler(t)
+	require.NoError(t, store.CreateTransaction(&models.Transaction{
+		ID:     "pending-tx",
+		UserID: consts.TestUser1ID,
+		Status: consts.TransactionStatusPending,
+	}))
+
+	req := httptest.NewRequest(http.MethodPost, "/core/v1/gateways/gw/transactions", bytes.NewBufferString(`{"filters":{"state":{"value":3}}}`))
+	req = withChiParams(req, map[string]string{"gatewayID": "gw"})
+
+	w := httptest.NewRecorder()
+	h.ListGatewayTransactions(w, req)
+
+	assert.Equal(t, http.StatusOK, w.Code)
+	assert.JSONEq(t, `[]`, w.Body.String())
+}
+
 // ---- CreateTransaction ----
 
 func TestCreateTransaction_SuccessCore(t *testing.T) {

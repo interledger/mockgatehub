@@ -457,6 +457,14 @@ func (h *Handler) GetTransaction(w http.ResponseWriter, r *http.Request) {
 	h.sendJSON(w, http.StatusOK, response)
 }
 
+// ListGatewayTransactions serves GateHub's pending-transaction listing, which a
+// sandbox consumer polls to approve deposits awaiting review. Transactions here
+// complete on their own and never wait for approval, so the list is always empty.
+func (h *Handler) ListGatewayTransactions(w http.ResponseWriter, r *http.Request) {
+	logger.Debug("listing gateway transactions", zap.String("gateway_id", chi.URLParam(r, "gatewayID")))
+	h.sendJSON(w, http.StatusOK, []models.Transaction{})
+}
+
 // GetUserCurrencies returns the list of currencies the user has accounts for
 func (h *Handler) GetUserCurrencies(w http.ResponseWriter, r *http.Request) {
 	bearer := r.URL.Query().Get("bearer")

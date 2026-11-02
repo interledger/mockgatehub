@@ -255,6 +255,7 @@ func setupRoutes(r chi.Router, h *handler.Handler) {
 		r.Get("/wallets/{walletID}/balances", h.GetWalletBalance)
 		r.Post("/transactions", h.CreateTransaction)
 		r.Get("/transactions/{txID}", h.GetTransaction)
+		r.Post("/gateways/{gatewayID}/transactions", h.ListGatewayTransactions)
 	})
 	// Some consumers address the card endpoints without the /cards prefix,
 	// because GateHub serves them under a bare /v1 as well. These are aliases
