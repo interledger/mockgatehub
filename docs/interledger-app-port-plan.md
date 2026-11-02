@@ -465,7 +465,7 @@ cards scope and are left for a decision.
 | `GET /auth/v1/users/organization/{orgId}` | Open — only `PATCH` is routed. |
 | `PUT /auth/v1/users/managed` | Open — only `POST` and `GET` are routed. |
 | `PUT /core/v1/transactions/{uuid}/serviceStatus` | Open — pending-transaction approval. |
-| `POST /core/v1/gateways/{uuid}/transactions` | Open — pending-transaction listing. |
+| `POST /core/v1/gateways/{uuid}/transactions` | **Fixed** — always an empty list, since no transaction here waits for approval. |
 | `POST /core/v1/users/{orgUuid}/accounts` | Open — SEPA details. |
 
 `GATEHUB_API_BASE_URL` is a bare host with no path prefix, so the `/v1/...`

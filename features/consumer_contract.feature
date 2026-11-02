@@ -29,6 +29,7 @@ Feature: Consumer API contract
     And GET /core/v1/users/{userId}/wallets/{walletAddress} is served
     And GET /core/v1/wallets/{walletAddress}/balances is served
     And POST /core/v1/transactions is served
+    And POST /core/v1/gateways/gw/transactions is served
 
   Scenario: Rates endpoints are reachable
     Then GET /rates/v1/liquidity_provider/vaults is served
